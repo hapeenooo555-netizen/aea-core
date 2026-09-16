@@ -53,6 +53,31 @@ def test_explicit_state_transitions_reject_invalid_edges():
     assert orchestration.resume(mission["id"])["success"] is False
 
 
+def test_mission_payload_omits_unsupported_error_field_and_keeps_error_in_result():
+    orchestration = MissionOrchestrationService("owner-1")
+
+    created = orchestration.create_mission("Create a campaign")
+    assert created["success"] is True
+    mission = created["mission"]
+    stored = orchestration._memory_missions[mission["id"]]
+
+    assert "error" not in mission
+    assert "error" not in stored
+
+    assert orchestration.transition(mission["id"], "active")["success"] is True
+    failed = orchestration.transition(
+        mission["id"],
+        "failed",
+        result={"success": False, "status": "FAIL"},
+        error="Mission failed",
+    )
+    assert failed["success"] is True
+
+    persisted = orchestration.get_mission(mission["id"])
+    assert "error" not in persisted
+    assert persisted["result"]["error"] == "Mission failed"
+
+
 def test_priority_reason_is_deterministic_and_explains_selection():
     orchestration = service("p18-owner-c")
     low = orchestration.create_mission("Low content task", priority="low")["mission"]
