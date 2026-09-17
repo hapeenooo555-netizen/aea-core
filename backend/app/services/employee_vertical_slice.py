@@ -494,32 +494,41 @@ class EmployeeVerticalSlice:
     def _build_plan(self, objective: Any, discovered: dict[str, Any]) -> list[dict[str, Any]]:
         goal = objective.goal.lower()
         required_payload = dict(getattr(objective, "content_inputs", {}) or {})
+        platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
-        if "pinterest" in goal or "board" in goal or "account" in goal:
+        is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
+        if is_pinterest or "board" in goal or "account" in goal:
+            affiliate_meta = {
+                k: v for k, v in required_payload.items()
+                if k not in {"platform"}
+            }
             status_payload = {"platform": "pinterest", **required_payload}
             steps.append({
                 "step_name": "check_connection_status",
                 "tool_name": "pinterest.get_account_status",
-                "input": status_payload,
+                "input": {"platform": "pinterest"},
                 "action_type": "pinterest.get_account_status",
                 "action_payload": status_payload,
+                "metadata": affiliate_meta,
             })
             if any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")):
                 steps.append({
                     "step_name": "start_onboarding",
                     "tool_name": "start_platform_onboarding",
-                    "input": {"platform": "pinterest", **required_payload},
+                    "input": {"platform": "pinterest"},
                     "action_type": "start_platform_onboarding",
                     "action_payload": {"platform": "pinterest", **required_payload},
                     "requires_approval": True,
+                    "metadata": affiliate_meta,
                 })
         if not steps:
             steps.append({
                 "step_name": "record_goal",
                 "tool_name": "log",
-                "input": {"message": objective.goal, **required_payload},
+                "input": {"message": objective.goal},
                 "action_type": "log",
                 "action_payload": {"message": objective.goal, **required_payload},
+                "metadata": required_payload if required_payload else None,
             })
         return steps
 

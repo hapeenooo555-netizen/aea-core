@@ -112,11 +112,22 @@ class ObjectiveParser:
         metadata = metadata if isinstance(metadata, dict) else {}
         actions = metadata.get("requested_actions", [])
         criteria = metadata.get("success_criteria", [])
+        content_inputs = dict(metadata.get("content_inputs", {}))
+        if metadata.get("platform") and "platform" not in content_inputs:
+            content_inputs["platform"] = metadata["platform"]
+        if metadata.get("vertical") and "vertical" not in content_inputs:
+            content_inputs["vertical"] = metadata["vertical"]
+        for affiliate_key in ("country", "language", "niche", "daily_limit", "human_approval_required"):
+            if affiliate_key in metadata and affiliate_key not in content_inputs:
+                content_inputs[affiliate_key] = metadata[affiliate_key]
+        platform_constraints = list(metadata.get("platform_constraints", []))
+        if metadata.get("platform") and metadata["platform"] not in platform_constraints:
+            platform_constraints.append(metadata["platform"])
         return Objective(
             goal=goal or "",
             desired_outcome=metadata.get("desired_outcome"),
-            platform_constraints=list(metadata.get("platform_constraints", [])),
-            content_inputs=dict(metadata.get("content_inputs", {})),
+            platform_constraints=platform_constraints,
+            content_inputs=content_inputs,
             requested_actions=list(actions) if isinstance(actions, list) else [],
             deadline=metadata.get("deadline"),
             approval_preferences=dict(metadata.get("approval_preferences", {})),
