@@ -45,11 +45,17 @@ def get_worker_runtime(current_user_id: str = Depends(get_current_user_id)) -> W
     return WorkerRuntime(connector_registry=registry, owner_id=current_user_id)
 
 
-def get_human_intervention_manager() -> HumanInterventionManager:
-    """Get or initialize the human intervention manager."""
+def get_human_intervention_manager(
+    client: Any | None = None,
+) -> HumanInterventionManager:
+    """Get or initialize the human intervention manager.
+
+    When a user-scoped ``client`` is supplied it is forwarded so that RLS
+    policies evaluate against the authenticated user identity.
+    """
     global _human_intervention_manager
     if _human_intervention_manager is None:
-        _human_intervention_manager = HumanInterventionManager()
+        _human_intervention_manager = HumanInterventionManager(client=client)
     return _human_intervention_manager
 
 
@@ -239,7 +245,7 @@ async def list_pending_checkpoints(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """List pending human intervention checkpoints for the current user's missions."""
-    manager = get_human_intervention_manager()
+    manager = get_human_intervention_manager(client=client)
     checkpoints = manager.list_pending_checkpoints(
         mission_id=mission_id,
         platform=platform,
@@ -271,7 +277,7 @@ async def get_checkpoint(
 
     The checkpoint itself must resolve to a mission that belongs to current_user_id.
     """
-    manager = get_human_intervention_manager()
+    manager = get_human_intervention_manager(client=client)
     checkpoint = manager.get_checkpoint(checkpoint_id)
 
     if not checkpoint:
@@ -316,7 +322,7 @@ async def complete_checkpoint(
 
     The checkpoint must resolve to a mission that belongs to current_user_id.
     """
-    manager = get_human_intervention_manager()
+    manager = get_human_intervention_manager(client=client)
     checkpoint = manager.get_checkpoint(checkpoint_id)
 
     if not checkpoint:

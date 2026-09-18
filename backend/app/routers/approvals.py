@@ -80,7 +80,7 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
     return ApprovalResumeService(
         approval_gateway=ApprovalGateway(client=client),
         connector_registry=registry,
-        human_intervention_manager=HumanInterventionManager(),
+        human_intervention_manager=HumanInterventionManager(client=client),
     )
 
 

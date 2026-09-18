@@ -48,7 +48,7 @@ class WorkerRuntime:
         self._action_engine = ActionEngine(owner_id=owner_id)
         self._approval_gateway = ApprovalGateway()
         self._connector_registry = connector_registry
-        self._human_intervention_manager = HumanInterventionManager()
+        self._human_intervention_manager = HumanInterventionManager(client=client)
         self._employee_engine = EmployeeEngine(
             connector_registry=connector_registry,
             owner_id=owner_id,

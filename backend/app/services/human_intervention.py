@@ -109,8 +109,18 @@ class HumanInterventionManager:
         "manual_platform_step_required": "Manual step on platform required",
     }
 
-    def __init__(self) -> None:
-        """Initialize the human intervention manager."""
+    def __init__(self, client: Any | None = None) -> None:
+        """Initialize the human intervention manager.
+
+        Args:
+            client: Optional pre-resolved Supabase client. When ``None`` the
+                manager resolves ``app.database.supabase_client`` lazily.
+                Passing a user-scoped client (see
+                :func:`app.database.get_supabase_client_for_user`) ensures
+                RLS policies enforce row-level ownership on every checkpoint
+                operation.
+        """
+        self._explicit_client = client
         self._client = self._get_client()
         # In-memory store for checkpoints (for testing and fallback)
         self._memory_store: dict[str, HumanInterventionCheckpoint] = {}
@@ -413,8 +423,13 @@ class HumanInterventionManager:
         """Get the Supabase client.
 
         Returns:
-            Supabase client or None.
+            Supabase client or None. If an explicit (typically user-scoped)
+            client was injected at construction time it is used so that RLS
+            evaluates against the owning user identity. Otherwise the global
+            ``supabase_client`` is returned as a fallback.
         """
+        if self._explicit_client is not None:
+            return self._explicit_client
         if database_module:
             return getattr(database_module, "supabase_client", None)
         return None
