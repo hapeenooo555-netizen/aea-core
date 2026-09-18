@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover - fallback for missing runtime config
 
 
 TABLE_NAME = "published_pins"
+_GLOBAL_MEMORY_STORE: dict[str, dict[str, Any]] = {}
 
 
 class PinPublishStore:
@@ -52,7 +53,7 @@ class PinPublishStore:
         """
         self._explicit_client = client
         self._durable_required = durable_required
-        self._memory_store: dict[str, dict[str, Any]] = {}
+        self._memory_store: dict[str, dict[str, Any]] = _GLOBAL_MEMORY_STORE
 
     # ------------------------------------------------------------------
     # Public API
@@ -178,6 +179,7 @@ class PinPublishStore:
                 response = (
                     client.table(TABLE_NAME)
                     .select("*")
+                    .eq("owner_id", owner_id)
                     .eq("operation_key", operation_key)
                     .limit(1)
                     .execute()
@@ -192,7 +194,7 @@ class PinPublishStore:
                 return None
 
         record = self._memory_store.get(operation_key)
-        if record is not None:
+        if record is not None and record.get("owner_id") == owner_id:
             return self._normalize_row(record)
         return None
 

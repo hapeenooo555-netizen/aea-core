@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app.routers.affiliate_jobs import _normalize_job
 from app.services.approval_gateway import ApprovalGateway
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.mission_execution_service import MissionExecutionService
@@ -23,6 +24,7 @@ from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.stores.platform_connection_store import PlatformConnectionStore
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
+from app.services.stores.pin_publish_store import PinPublishStore
 
 
 def _in_memory_approval_gateway() -> ApprovalGateway:
@@ -190,3 +192,204 @@ def test_affiliate_pinterest_owner_isolation():
 
     cross_approve = owner_b._approvals.approve_request(approval_id, approved_by="user-b")
     assert cross_approve["success"] is False
+
+
+def test_affiliate_job_status_maps_to_publish_lifecycle_and_publish_metadata():
+    pin_store = PinPublishStore(client=None)
+    pin_store._memory_store["p1-11:approval-123"] = {
+        "id": "published-123",
+        "owner_id": "user-a",
+        "worker_id": "worker-123",
+        "platform": "pinterest",
+        "operation_key": "p1-11:approval-123",
+        "approval_request_id": "approval-123",
+        "board_name": "My Board",
+        "pin_text": "AI tools",
+        "link_url": "https://example.com/product?utm_source=aea",
+        "pin_id": "pin-456",
+        "status": "published",
+        "content": {"opportunity_id": "opp-123"},
+        "created_at": "2026-09-18T00:00:00+00:00",
+        "updated_at": "2026-09-18T00:00:00+00:00",
+    }
+
+    job = _normalize_job(
+        {
+            "id": "job-publish-1",
+            "title": "Affiliate Pinterest job",
+            "objective": "Start affiliate marketing on pinterest",
+            "status": "completed",
+            "priority": "normal",
+            "urgency": "normal",
+            "business_importance": 2,
+            "metadata": {
+                "platform": "pinterest",
+                "country": "USA",
+                "language": "en",
+                "niche": "AI tools",
+                "daily_limit": 25,
+                "human_approval_required": True,
+            },
+            "result": {
+                "action_type": "publish_content",
+                "approval_request_id": "approval-123",
+                "operation_key": "p1-11:approval-123",
+                "pin_id": "pin-456",
+                "link_url": "https://example.com/product?utm_source=aea",
+                "published_at": "2026-09-18T00:00:00+00:00",
+                "status": "published",
+            },
+            "created_at": "2026-09-17T00:00:00+00:00",
+            "updated_at": "2026-09-18T00:00:00+00:00",
+        },
+        owner_id="user-a",
+        client=None,
+    )
+
+    assert job["status"] == "published"
+    assert job["lifecycle_status"] == "published"
+    assert job["approval_request_id"] == "approval-123"
+    assert job["operation_key"] == "p1-11:approval-123"
+    assert job["pin_id"] == "pin-456"
+    assert job["publish_link_url"] == "https://example.com/product?utm_source=aea"
+    assert job["duplicate_safe"] is False
+
+
+def test_affiliate_job_duplicate_publish_is_marked_duplicate_safe_and_sensitive_fields_not_exposed():
+    pin_store = PinPublishStore(client=None)
+    pin_store._memory_store["p1-11:approval-999"] = {
+        "id": "published-999",
+        "owner_id": "user-a",
+        "worker_id": "worker-999",
+        "platform": "pinterest",
+        "operation_key": "p1-11:approval-999",
+        "approval_request_id": "approval-999",
+        "board_name": "My Board",
+        "pin_text": "AI tools",
+        "link_url": "https://example.com/duplicate",
+        "pin_id": "pin-111",
+        "status": "published",
+        "content": {"opportunity_id": "opp-999"},
+        "created_at": "2026-09-18T00:00:00+00:00",
+        "updated_at": "2026-09-18T00:00:00+00:00",
+    }
+
+    job = _normalize_job(
+        {
+            "id": "job-dupe-1",
+            "title": "Affiliate Pinterest job",
+            "objective": "Start affiliate marketing on pinterest",
+            "status": "completed",
+            "priority": "normal",
+            "urgency": "normal",
+            "business_importance": 2,
+            "metadata": {
+                "platform": "pinterest",
+                "country": "USA",
+                "language": "en",
+                "niche": "AI tools",
+                "daily_limit": 25,
+                "human_approval_required": True,
+            },
+            "result": {
+                "note": "pin_already_published",
+                "status": "duplicate",
+                "pin_id": "pin-111",
+                "approval_request_id": "approval-999",
+                "operation_key": "p1-11:approval-999",
+                "link_url": "https://example.com/duplicate",
+            },
+            "created_at": "2026-09-17T00:00:00+00:00",
+            "updated_at": "2026-09-18T00:00:00+00:00",
+        },
+        owner_id="user-a",
+        client=None,
+    )
+
+    assert job["status"] == "published"
+    assert job["duplicate_safe"] is True
+    assert "access_token" not in job
+    assert "oauth_code" not in job
+    assert "client_secret" not in job
+    assert job["pin_id"] == "pin-111"
+
+
+def test_affiliate_job_requires_durable_publish_record_before_marking_published():
+    job = _normalize_job(
+        {
+            "id": "job-no-durable-publish",
+            "title": "Affiliate Pinterest job",
+            "objective": "Start affiliate marketing on pinterest",
+            "status": "completed",
+            "priority": "normal",
+            "urgency": "normal",
+            "business_importance": 2,
+            "metadata": {"platform": "pinterest"},
+            "result": {
+                "action_type": "publish_content",
+                "approval_request_id": "approval-777",
+                "operation_key": "p1-11:approval-777",
+                "pin_id": "pin-777",
+                "link_url": "https://example.com/never-published",
+                "status": "published",
+            },
+            "created_at": "2026-09-17T00:00:00+00:00",
+            "updated_at": "2026-09-18T00:00:00+00:00",
+        },
+        owner_id="user-a",
+        client=None,
+    )
+
+    assert job["status"] == "completed"
+    assert job["lifecycle_status"] == "completed"
+    assert job["operation_key"] == "p1-11:approval-777"
+
+
+def test_affiliate_job_uses_durable_published_record_when_present():
+    pin_store = PinPublishStore(client=None)
+    pin_store._memory_store["p1-11:approval-1001"] = {
+        "id": "published-1001",
+        "owner_id": "user-a",
+        "worker_id": "worker-1001",
+        "platform": "pinterest",
+        "operation_key": "p1-11:approval-1001",
+        "approval_request_id": "approval-1001",
+        "board_name": "My Board",
+        "pin_text": "AI tools",
+        "link_url": "https://example.com/real-publish",
+        "pin_id": "pin-1001",
+        "status": "published",
+        "content": {"opportunity_id": "opp-1001"},
+        "created_at": "2026-09-17T00:00:00+00:00",
+        "updated_at": "2026-09-18T00:00:00+00:00",
+    }
+
+    job = _normalize_job(
+        {
+            "id": "job-durable-publish",
+            "title": "Affiliate Pinterest job",
+            "objective": "Start affiliate marketing on pinterest",
+            "status": "completed",
+            "priority": "normal",
+            "urgency": "normal",
+            "business_importance": 2,
+            "metadata": {"platform": "pinterest"},
+            "result": {
+                "action_type": "publish_content",
+                "approval_request_id": "approval-1001",
+                "operation_key": "p1-11:approval-1001",
+                "pin_id": "older-pin",
+                "link_url": "https://example.com/stale",
+                "status": "published",
+            },
+            "created_at": "2026-09-17T00:00:00+00:00",
+            "updated_at": "2026-09-18T00:00:00+00:00",
+        },
+        owner_id="user-a",
+        client=None,
+    )
+
+    assert job["status"] == "published"
+    assert job["lifecycle_status"] == "published"
+    assert job["pin_id"] == "pin-1001"
+    assert job["publish_link_url"] == "https://example.com/real-publish"

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.mission_orchestration import MissionOrchestrationService
+from app.services.stores.pin_publish_store import PinPublishStore
 
 router = APIRouter(prefix="/affiliate", tags=["affiliate"])
 
@@ -46,6 +47,8 @@ class AffiliateJobResponse(BaseModel):
     objective: str
     title: str | None = None
     status: str
+    raw_status: str | None = None
+    lifecycle_status: str | None = None
     priority: str
     urgency: str
     business_importance: int
@@ -60,6 +63,12 @@ class AffiliateJobResponse(BaseModel):
     niche: str | None = None
     daily_limit: int | None = None
     human_approval_required: bool | None = None
+    approval_request_id: str | None = None
+    operation_key: str | None = None
+    pin_id: str | None = None
+    publish_link_url: str | None = None
+    published_at: str | None = None
+    duplicate_safe: bool | None = None
     created_at: str
     updated_at: str
 
@@ -76,17 +85,114 @@ class AffiliateJobListResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-def _normalize_job(row: dict[str, Any]) -> dict[str, Any]:
+def _extract_publish_field(result: dict[str, Any], field_name: str) -> Any:
+    """Extract a durable publish field from either the top-level result or the nested result payload."""
+    if not isinstance(result, dict):
+        return None
+    value = result.get(field_name)
+    if value is not None:
+        return value
+    nested = result.get("result")
+    if isinstance(nested, dict):
+        value = nested.get(field_name)
+        if value is not None:
+            return value
+    return None
+
+
+def _product_lifecycle_status(
+    raw_status: str | None,
+    result: dict[str, Any] | None,
+    *,
+    owner_id: str | None = None,
+    client: Any | None = None,
+) -> dict[str, Any]:
+    """Map raw mission state to the user-visible lifecycle.
+
+    A mission is only reported as published when there is a durable row in the
+    authenticated user's ``public.published_pins`` table for the derived
+    ``operation_key``. This prevents transient ``mission.result`` payloads from
+    being mistaken for final published state.
+    """
+    raw = str(raw_status or "pending").lower()
+    result = result or {}
+    if isinstance(result, str):
+        result = {}
+
+    note = str((result.get("note") or _extract_publish_field(result, "note") or "")).lower()
+    nested_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+    operation_key = _extract_publish_field(result, "operation_key")
+    durable_publish = None
+    if owner_id and operation_key:
+        durable_publish = PinPublishStore(client=client).get_by_operation_key(owner_id, str(operation_key))
+
+    if raw in {"pending", "scheduled"}:
+        lifecycle = "created"
+    elif raw == "waiting_approval":
+        lifecycle = "approval_pending"
+    elif raw == "waiting_human":
+        lifecycle = "human_action_required"
+    elif raw == "active":
+        lifecycle = "running"
+    elif raw == "retrying":
+        lifecycle = "retryable"
+    elif raw == "failed":
+        lifecycle = "failed"
+    elif raw == "cancelled":
+        lifecycle = "cancelled"
+    elif raw == "paused":
+        lifecycle = "paused"
+    elif raw == "completed":
+        if durable_publish is not None:
+            lifecycle = "published"
+        else:
+            lifecycle = "completed"
+    else:
+        lifecycle = raw or "created"
+
+    return {
+        "raw_status": raw,
+        "lifecycle_status": lifecycle,
+        "duplicate_safe": note == "pin_already_published" or result.get("status") == "duplicate" or nested_result.get("status") == "duplicate",
+    }
+
+
+def _normalize_job(row: dict[str, Any], *, owner_id: str | None = None, client: Any | None = None) -> dict[str, Any]:
     """Normalize a mission row into a product-friendly affiliate job dict."""
     metadata = row.get("metadata") or {}
     if isinstance(metadata, str):
         from json import loads as _json_loads
         metadata = _json_loads(metadata)
+    result = row.get("result") or {}
+    if isinstance(result, str):
+        from json import loads as _json_loads
+        try:
+            result = _json_loads(result)
+        except Exception:
+            result = {}
+
+    operation_key = _extract_publish_field(result, "operation_key")
+    durable_publish = None
+    if owner_id and operation_key:
+        durable_publish = PinPublishStore(client=client).get_by_operation_key(owner_id, str(operation_key))
+
+    lifecycle = _product_lifecycle_status(row.get("status"), result, owner_id=owner_id, client=client)
+    approval_request_id = durable_publish.get("approval_request_id") if durable_publish else _extract_publish_field(result, "approval_request_id")
+    pin_id = durable_publish.get("pin_id") if durable_publish else _extract_publish_field(result, "pin_id")
+    publish_link_url = durable_publish.get("link_url") if durable_publish else _extract_publish_field(result, "link_url")
+    published_at = durable_publish.get("created_at") if durable_publish else _extract_publish_field(result, "published_at")
+
+    if durable_publish and durable_publish.get("status") == "published":
+        lifecycle["lifecycle_status"] = "published"
+        lifecycle["raw_status"] = "completed"
+
     return {
         "id": row.get("id"),
         "objective": row.get("objective") or row.get("description") or row.get("title") or "",
         "title": row.get("title"),
-        "status": row.get("status"),
+        "status": lifecycle["lifecycle_status"],
+        "raw_status": lifecycle["raw_status"],
+        "lifecycle_status": lifecycle["lifecycle_status"],
         "priority": row.get("priority", "normal"),
         "urgency": row.get("urgency", "normal"),
         "business_importance": row.get("business_importance", 1),
@@ -101,6 +207,12 @@ def _normalize_job(row: dict[str, Any]) -> dict[str, Any]:
         "niche": metadata.get("niche") if isinstance(metadata, dict) else None,
         "daily_limit": metadata.get("daily_limit") if isinstance(metadata, dict) else None,
         "human_approval_required": metadata.get("human_approval_required") if isinstance(metadata, dict) else None,
+        "approval_request_id": approval_request_id,
+        "operation_key": operation_key,
+        "pin_id": pin_id,
+        "publish_link_url": publish_link_url,
+        "published_at": published_at,
+        "duplicate_safe": lifecycle["duplicate_safe"],
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -179,7 +291,7 @@ async def create_affiliate_job(
         raise HTTPException(status_code=code, detail=error)
 
     mission = result.get("mission") or {}
-    normalized = _normalize_job(mission)
+    normalized = _normalize_job(mission, owner_id=current_user_id, client=client)
 
     response: dict[str, Any] = {
         "success": True,
@@ -192,7 +304,7 @@ async def create_affiliate_job(
         response["run"] = run_result
         if run_result.get("success"):
             mission = service.get_mission(normalized["id"]) or {}
-            response["job"] = _normalize_job(mission)
+            response["job"] = _normalize_job(mission, owner_id=current_user_id, client=client)
 
     if result.get("idempotent"):
         response["idempotent"] = True
@@ -217,7 +329,7 @@ async def list_affiliate_jobs(
         if not isinstance(metadata, dict):
             metadata = {}
         if metadata.get("vertical") == "affiliate" or metadata.get("platform") == "pinterest":
-            affiliate_jobs.append(_normalize_job(m))
+            affiliate_jobs.append(_normalize_job(m, owner_id=current_user_id, client=client))
 
     return AffiliateJobListResponse(
         success=True,
@@ -239,5 +351,5 @@ async def get_affiliate_job(
     if mission is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Affiliate job not found")
 
-    normalized = _normalize_job(mission)
+    normalized = _normalize_job(mission, owner_id=current_user_id, client=client)
     return {"success": True, "job": normalized}
