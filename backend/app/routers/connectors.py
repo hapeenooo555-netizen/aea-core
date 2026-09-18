@@ -15,6 +15,8 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.human_intervention import HumanInterventionManager
+from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
+from app.services.stores.platform_connection_store import PlatformConnectionStore
 from app.services.worker_runtime import WorkerRuntime
 
 router = APIRouter(
@@ -59,6 +61,24 @@ def get_human_intervention_manager(
     return _human_intervention_manager
 
 
+def _get_user_scoped_pinterest_connector(
+    client: Any | None = None,
+) -> PinterestConnector:
+    """Create a PinterestConnector bound to the caller's Supabase client.
+
+    A fresh connector is returned per call so no global mutable user state
+    is ever introduced. Both the workflow store and the connection store
+    receive the user-scoped client so that RLS evaluates against the
+    authenticated user identity for every persistence operation.
+    """
+    workflow_store = OnboardingWorkflowStore(client=client, durable_required=True)
+    connection_store = PlatformConnectionStore(client=client)
+    return PinterestConnector(
+        workflow_store=workflow_store,
+        connection_store=connection_store,
+    )
+
+
 # Pydantic models
 class OnboardingStartRequest(BaseModel):
     """Request to start platform onboarding."""
@@ -72,7 +92,6 @@ class OnboardingStartRequest(BaseModel):
 class OnboardingResumeRequest(BaseModel):
     """Request to resume an onboarding workflow."""
 
-    workflow_id: str
     checkpoint_id: str | None = None
     human_input: dict[str, Any] = {}
 
@@ -151,7 +170,14 @@ async def start_onboarding(
     # Verify worker ownership
     if client:
         try:
-            response = client.table("workers").select("*").eq("id", worker_id).eq("owner_id", current_user_id).limit(1).execute()
+            response = (
+                client.table("workers")
+                .select("*")
+                .eq("id", worker_id)
+                .eq("owner_id", current_user_id)
+                .limit(1)
+                .execute()
+            )
             rows = response.data or []
             if not rows:
                 raise HTTPException(
@@ -163,15 +189,18 @@ async def start_onboarding(
         except Exception:
             pass
 
-    registry = get_connector_registry()
-    if not registry.has_connector(platform):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No connector found for platform '{platform}'",
-        )
-
-    connector = registry.get(platform)
-    result = connector.start_onboarding(worker_id)
+    if platform == "pinterest":
+        connector = _get_user_scoped_pinterest_connector(client=client)
+        result = connector.start_onboarding(worker_id)
+    else:
+        registry = get_connector_registry()
+        if not registry.has_connector(platform):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No connector found for platform '{platform}'",
+            )
+        connector = registry.get(platform)
+        result = connector.start_onboarding(worker_id)
 
     return {
         "success": True,
@@ -185,12 +214,23 @@ async def get_onboarding_status(
     current_user_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Get the status of an onboarding workflow owned by the current user."""
-    # TODO: Retrieve workflow status from database or connector state
-    # Verify ownership through onboarding_workflows table
+    """Get the status of an onboarding workflow owned by the current user.
+
+    Uses the user-scoped Supabase client so that the database RLS policy
+    (``onboarding_workflows_select_own``) enforces row-level ownership
+    before the workflow is returned. When ``client`` is ``None`` (no
+    authenticated Supabase backend), falls back to the in-memory store
+    without exposing another user's data.
+    """
     if client:
         try:
-            response = client.table("onboarding_workflows").select("*").eq("id", workflow_id).eq("owner_id", current_user_id).limit(1).execute()
+            response = (
+                client.table("onboarding_workflows")
+                .select("*")
+                .eq("id", workflow_id)
+                .limit(1)
+                .execute()
+            )
             rows = response.data or []
             if not rows:
                 raise HTTPException(
@@ -200,12 +240,53 @@ async def get_onboarding_status(
         except HTTPException:
             raise
         except Exception:
-            pass
-    return {
-        "success": False,
-        "error": "Workflow status retrieval not yet fully implemented",
-        "workflow_id": workflow_id,
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch workflow status",
+            )
+
+    store = OnboardingWorkflowStore(client=client, durable_required=True)
+    workflow = store.get(workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow not found",
+        )
+
+    checkpoint_data = workflow.get("checkpoint_data") or {}
+    step_history = list(workflow.get("step_history") or [])
+    instructions = checkpoint_data.get("instructions", "")
+    checkpoint_type = checkpoint_data.get("checkpoint_type")
+
+    pending_checkpoints = []
+    for step in step_history:
+        if step.get("checkpoint_type"):
+            pending_checkpoints.append({
+                "step": step.get("step"),
+                "name": step.get("name"),
+                "checkpoint_type": step.get("checkpoint_type"),
+                "status": step.get("status"),
+                "completed_at": step.get("completed_at"),
+            })
+
+    product_state = {
+        "success": True,
+        "workflow_id": workflow.get("workflow_id") or workflow_id,
+        "platform": workflow.get("platform"),
+        "status": workflow.get("status"),
+        "current_step": workflow.get("current_step"),
+        "total_steps": workflow.get("total_steps"),
+        "requires_human_intervention": workflow.get("status") == "awaiting_human",
+        "checkpoint_type": checkpoint_type,
+        "instructions": instructions,
+        "next_step": checkpoint_type,
+        "pending_checkpoints": pending_checkpoints,
+        "step_history": step_history,
+        "started_by_approval_id": workflow.get("started_by_approval_id"),
+        "created_at": workflow.get("created_at"),
+        "updated_at": workflow.get("updated_at"),
     }
+    return product_state
 
 
 @router.post("/onboarding/{workflow_id}/resume")
@@ -215,11 +296,25 @@ async def resume_onboarding(
     current_user_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Resume an onboarding workflow after human intervention."""
-    # Verify workflow ownership
+    """Resume an onboarding workflow after human checkpoint completion.
+
+    Delegates to the existing ``PinterestConnector.resume_onboarding()``
+    implementation. Uses the authenticated user-scoped Supabase client
+    so all reads/writes are RLS-enforced.
+
+    The checkpoint stored in ``human_intervention_checkpoints`` is marked
+    completed with the provided ``human_input`` before the connector
+    advances the workflow.
+    """
     if client:
         try:
-            response = client.table("onboarding_workflows").select("*").eq("id", workflow_id).eq("owner_id", current_user_id).limit(1).execute()
+            response = (
+                client.table("onboarding_workflows")
+                .select("id", "worker_id")
+                .eq("id", workflow_id)
+                .limit(1)
+                .execute()
+            )
             rows = response.data or []
             if not rows:
                 raise HTTPException(
@@ -229,11 +324,69 @@ async def resume_onboarding(
         except HTTPException:
             raise
         except Exception:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to verify workflow ownership",
+            )
+
+    manager = get_human_intervention_manager(client=client)
+    if request.checkpoint_id:
+        checkpoint = manager.get_checkpoint(request.checkpoint_id)
+        if checkpoint:
+            mission_id = checkpoint.get("mission_id")
+            if mission_id and client:
+                try:
+                    mission_response = (
+                        client.table("missions")
+                        .select("owner_id")
+                        .eq("id", mission_id)
+                        .eq("owner_id", current_user_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if not mission_response.data:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Checkpoint not found",
+                        )
+                except HTTPException:
+                    raise
+
+    connector = _get_user_scoped_pinterest_connector(client=client)
+    result = connector.resume_onboarding(workflow_id, request.human_input)
+
+    if not result.get("success"):
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(result.get("error", "")).lower() else status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(
+            status_code=status_code,
+            detail=result.get("error", "Workflow resume failed"),
+        )
+
+    if result.get("requires_human_intervention"):
+        return {
+            "success": True,
+            "workflow_id": result.get("workflow_id"),
+            "platform": result.get("platform"),
+            "status": result.get("status"),
+            "current_step": result.get("current_step"),
+            "total_steps": result.get("total_steps"),
+            "requires_human_intervention": True,
+            "checkpoint_type": result.get("checkpoint_type"),
+            "instructions": result.get("instructions"),
+            "metadata": result.get("metadata"),
+            "next_step": result.get("next_step"),
+        }
+
     return {
-        "success": False,
-        "error": "Workflow resume not yet fully implemented",
-        "workflow_id": workflow_id,
+        "success": True,
+        "workflow_id": result.get("workflow_id"),
+        "platform": result.get("platform"),
+        "status": result.get("status"),
+        "current_step": result.get("current_step"),
+        "total_steps": result.get("total_steps"),
+        "requires_human_intervention": False,
+        "completed": result.get("status") == "completed",
+        "message": result.get("instructions", ""),
     }
 
 
