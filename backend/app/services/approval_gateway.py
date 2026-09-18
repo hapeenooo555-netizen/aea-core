@@ -172,6 +172,7 @@ class ApprovalRequest:
         approved_by: str | None = None,
         rejected_by: str | None = None,
         rejection_reason: str | None = None,
+        owner_id: str | None = None,
     ) -> None:
         self.request_id = request_id
         self.mission_id = mission_id
@@ -186,6 +187,7 @@ class ApprovalRequest:
         self.approved_by = approved_by
         self.rejected_by = rejected_by
         self.rejection_reason = rejection_reason
+        self.owner_id = owner_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +197,7 @@ class ApprovalRequest:
             "risk_level": self.risk_level,
             "status": self.status,
             "payload": self.payload,
+            "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat(),
             "expires_at": self.expires_at.isoformat(),
             "approved_at": self.approved_at.isoformat() if self.approved_at else None,
@@ -800,6 +803,7 @@ class ApprovalGateway:
                 approved_by=normalized.get("approved_by"),
                 rejected_by=normalized.get("rejected_by"),
                 rejection_reason=normalized.get("rejection_reason"),
+                owner_id=normalized.get("owner_id"),
             )
             self._memory_store[record.request_id] = record
         except Exception:  # pragma: no cover - defensive
@@ -977,6 +981,7 @@ class ApprovalGateway:
             "risk_level": row.get("risk_level"),
             "status": row.get("status", STATUS_PENDING),
             "payload": row.get("metadata") or {},
+            "owner_id": row.get("owner_id"),
             "created_at": created_at,
             "expires_at": row.get("expires_at"),
             "approved_at": row.get("approved_at"),

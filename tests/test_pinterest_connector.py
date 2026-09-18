@@ -22,7 +22,7 @@ def test_pinterest_capabilities():
     assert caps.account_status
     assert caps.onboarding
     assert caps.connect_account
-    assert not caps.publish_content  # Not yet implemented
+    assert caps.publish_content  # Now implemented
     assert not caps.get_analytics  # Not yet implemented
 
 
@@ -171,3 +171,125 @@ def test_pinterest_connect_account_missing_oauth():
 
     assert not result["success"]
     assert "authorization code" in result["error"].lower()
+
+
+def test_pinterest_publish_content_requires_connection(supabase_disabled):
+    """publish_content fails when the platform connection is not established."""
+    connector = PinterestConnector()
+
+    result = connector.publish_content("worker-123", {"board_name": "board", "pin_text": "text", "link_url": "https://a.co"})
+
+    assert not result["success"]
+    assert "connection is not established" in result["error"].lower()
+
+
+def test_pinterest_publish_content_validates_required_fields(supabase_disabled):
+    """publish_content fails when required fields are missing."""
+    connector = PinterestConnector()
+
+    # No board_name
+    result = connector.publish_content("worker-123", {"pin_text": "text", "link_url": "https://a.co"})
+    assert not result["success"]
+    assert "board_name" in result["error"].lower()
+
+    # No pin_text
+    result = connector.publish_content("worker-123", {"board_name": "board", "link_url": "https://a.co"})
+    assert not result["success"]
+    assert "pin_text" in result["error"].lower()
+
+    # No link_url
+    result = connector.publish_content("worker-123", {"board_name": "board", "pin_text": "text"})
+    assert not result["success"]
+    assert "link_url" in result["error"].lower()
+
+
+def test_pinterest_publish_content_success(supabase_disabled):
+    """publish_content succeeds when connected with valid content."""
+    connector = PinterestConnector()
+
+    # Establish connection first
+    connector.connect_account("worker-123", {"oauth_code": "test-code"})
+
+    result = connector.publish_content(
+        "worker-123",
+        {
+            "board_name": "My Board",
+            "pin_text": "Check this out!",
+            "link_url": "https://example.com/product",
+        },
+        idempotency_key="p1-11:test-approval-1",
+        owner_id="user-uuid-123",
+    )
+
+    assert result["success"]
+    assert result["status"] == "published"
+    assert result["platform"] == "pinterest"
+    assert result["board_name"] == "My Board"
+    assert result["pin_text"] == "Check this out!"
+    assert result["pin_id"]
+    assert result["operation_key"] == "p1-11:test-approval-1"
+
+
+def test_pinterest_publish_content_strips_sensitive_keys(supabase_disabled):
+    """publish_content must not include sensitive auth keys in the result."""
+    connector = PinterestConnector()
+    connector.connect_account("worker-123", {"oauth_code": "test-code"})
+
+    result = connector.publish_content(
+        "worker-123",
+        {
+            "board_name": "My Board",
+            "pin_text": "Text",
+            "link_url": "https://example.com",
+            "access_token": "SHOULD-NOT-APPEAR",
+            "refresh_token": "SHOULD-NOT-APPEAR",
+            "oauth_code": "SHOULD-NOT-APPEAR",
+        },
+        idempotency_key="p1-11:test-approval-2",
+        owner_id="user-uuid-123",
+    )
+
+    assert result["success"]
+    assert "access_token" not in result
+    assert "refresh_token" not in result
+    assert "oauth_code" not in result
+
+
+def test_pinterest_publish_content_appends_affiliate_tracking(supabase_disabled):
+    """publish_content appends utm_source/utm_campaign for opportunity_id."""
+    connector = PinterestConnector()
+    connector.connect_account("worker-123", {"oauth_code": "test-code"})
+
+    result = connector.publish_content(
+        "worker-123",
+        {
+            "board_name": "Board",
+            "pin_text": "Text",
+            "link_url": "https://example.com/product",
+            "opportunity_id": "opp-42",
+        },
+        idempotency_key="p1-11:test-approval-3",
+        owner_id="user-uuid-123",
+    )
+
+    assert result["success"]
+    assert "utm_source=aea" in result["link_url"]
+    assert "utm_campaign=opportunity_opp-42" in result["link_url"]
+
+
+def test_pinterest_publish_content_idempotency(supabase_disabled):
+    """publish_content with the same idempotency_key returns the prior pin."""
+    connector = PinterestConnector()
+    connector.connect_account("worker-123", {"oauth_code": "test-code"})
+
+    content = {"board_name": "Board", "pin_text": "Text", "link_url": "https://example.com"}
+    first = connector.publish_content(
+        "worker-123", content, idempotency_key="p1-11:dedup-test", owner_id="user-uuid-123"
+    )
+    second = connector.publish_content(
+        "worker-123", content, idempotency_key="p1-11:dedup-test", owner_id="user-uuid-123"
+    )
+
+    assert first["success"]
+    assert "duplicate" in second.get("status", "")
+    assert second["pin_id"] == first["pin_id"]

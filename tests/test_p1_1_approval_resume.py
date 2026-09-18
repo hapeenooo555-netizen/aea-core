@@ -21,14 +21,15 @@ from app.services.connectors.registry import ConnectorRegistry  # noqa: E402
 from app.services.human_intervention import HumanInterventionManager  # noqa: E402
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore  # noqa: E402
 from app.services.stores.platform_connection_store import PlatformConnectionStore  # noqa: E402
+from app.services.stores.pin_publish_store import PinPublishStore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def stores():
-    """Construct fresh stores for every test."""
+def stores(supabase_disabled):
+    """Construct fresh stores for every test (in-memory mode)."""
     return {
         "workflow": OnboardingWorkflowStore(client=None),
         "connection": PlatformConnectionStore(client=None),
@@ -36,12 +37,12 @@ def stores():
 
 
 @pytest.fixture
-def approval_gateway() -> ApprovalGateway:
+def approval_gateway(supabase_disabled) -> ApprovalGateway:
     return ApprovalGateway()
 
 
 @pytest.fixture
-def human_intervention_manager() -> HumanInterventionManager:
+def human_intervention_manager(supabase_disabled) -> HumanInterventionManager:
     return HumanInterventionManager()
 
 
@@ -52,6 +53,7 @@ def resume_service(stores, approval_gateway, human_intervention_manager):
         PinterestConnector(
             workflow_store=stores["workflow"],
             connection_store=stores["connection"],
+            pin_store=PinPublishStore(),
         )
     )
     return ApprovalResumeService(
@@ -472,3 +474,295 @@ def test_existing_p0_5_persistence_still_works(stores):
         status="connected",
     )
     assert stores["connection"].get("w", "pinterest")["status"] == "connected"
+
+
+# ---------------------------------------------------------------------------
+# 15: publish_content approval → resume pipeline (P1-11)
+# ---------------------------------------------------------------------------
+def test_publish_content_requires_platform_connection(resume_service, approval_gateway):
+    """publish_content resume fails when the platform is not connected."""
+    request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "worker-1",
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+        },
+    )
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id)
+    assert result["status"] == "resume_failed"
+    assert "connection" in result["error"].lower()
+
+
+def test_publish_content_resume_success(resume_service, approval_gateway):
+    """A fully-connected platform resumes publish_content successfully."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "pub-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "pub-worker",
+            "content": {
+                "board_name": "My Board",
+                "pin_text": "Check this out!",
+                "link_url": "https://example.com/product",
+                "opportunity_id": "opp-42",
+            },
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert result["status"] == "resumed"
+    assert result["action_type"] == "publish_content"
+    assert result["platform"] == "pinterest"
+    assert result["worker_id"] == "pub-worker"
+    assert result["pin_id"]
+    # Server-derived operation_key must be p1-11:{approval_request_id}.
+    assert result["operation_key"] == f"p1-11:{publish_request_id}"
+    inner = result["result"]
+    assert inner["success"]
+    assert inner["status"] == "published"
+    assert "utm_source=aea" in inner["link_url"]
+
+
+def test_publish_content_server_ignores_client_operation_key(
+    resume_service, approval_gateway
+):
+    """Caller-supplied operation_key must not override the server-derived key."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "ignore-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "ignore-worker",
+            "operation_key": "client-should-be-ignored",
+            "content": {
+                "board_name": "B",
+                "pin_text": "T",
+                "link_url": "https://a.co",
+            },
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert result["status"] == "resumed"
+    assert result["operation_key"] == f"p1-11:{publish_request_id}"
+    assert result["operation_key"] != "client-should-be-ignored"
+
+
+def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway):
+    """publish_content resume strips OAuth secrets from the content payload."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "strip-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "strip-worker",
+            "content": {
+                "board_name": "B",
+                "pin_text": "T",
+                "link_url": "https://a.co",
+                "access_token": "SECRET-TOK",
+                "oauth_code": "SECRET-CODE",
+                "client_secret": "SECRET-SECRET",
+            },
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert result["status"] == "resumed"
+    inner = result["result"]
+    assert inner["success"]
+    # Sensitive keys must not appear in the published result or content.
+    assert "access_token" not in inner
+    assert "oauth_code" not in inner
+    assert "client_secret" not in inner
+    if "content" in inner:
+        content = inner["content"]
+        assert "access_token" not in content
+        assert "oauth_code" not in content
+        assert "client_secret" not in content
+
+
+def test_publish_content_duplicate_is_completed(resume_service, approval_gateway):
+    """A second resume of the same publish_content approval returns completed."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "dup-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "dup-worker",
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    first = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert first["status"] == "resumed"
+
+    # Second resume must return completed with pin_already_published.
+    second = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert second["status"] == "completed"
+    assert second.get("note") == "pin_already_published"
+
+
+def test_publish_content_duplicate_after_restart(resume_service, approval_gateway):
+    """Durable idempotency: a fresh connector/store sees the prior pin."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "restart-dup-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "restart-dup-worker",
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    first = resume_service.resume(
+        publish_request_id, current_user_id="test-user-123"
+    )
+    assert first["status"] == "resumed"
+
+    # Simulate process restart: the in-process _executed cache is lost, but
+    # the pin store (simulating DB persistence) retains the published pin.
+    # The state guard should detect the duplicate via the pin store.
+    resume_service._executed.clear()
+
+    second = resume_service.resume(
+        publish_request_id, current_user_id="test-user-123"
+    )
+    assert second["status"] == "completed"
+    assert second.get("note") == "pin_already_published"
+
+
+def test_publish_content_missing_worker_id_fails(resume_service, approval_gateway):
+    """publish_content without worker_id returns resume_failed."""
+    request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            # no worker_id
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+        },
+    )
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id)
+    assert result["status"] == "resume_failed"
+    assert "worker_id" in result["error"].lower()
+
+
+def test_publish_content_unknown_platform_fails(resume_service, approval_gateway):
+    """publish_content with an unknown platform fails gracefully."""
+    request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={"platform": "unknown-platform", "worker_id": "w"},
+    )
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id)
+    assert result["status"] == "resume_failed"
+    assert "no connector registered" in result["error"].lower()
+
+
+def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
+    """publish_content rejects non-http(s) link_url schemes."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "url-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id)
+
+    publish_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="publish_content",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "url-worker",
+            "content": {
+                "board_name": "B",
+                "pin_text": "T",
+                "link_url": "javascript:alert(1)",
+            },
+        },
+    )
+    approval_gateway.approve_request(publish_request_id)
+
+    result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
+    assert result["status"] == "resume_failed"
+    assert "scheme" in result["error"].lower() or "http" in result["error"].lower()

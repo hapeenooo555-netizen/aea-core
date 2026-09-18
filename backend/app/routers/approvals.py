@@ -15,6 +15,8 @@ from app.services.human_intervention import HumanInterventionManager
 from app.services.mission_execution_service import MissionExecutionService
 from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
+from app.services.stores.pin_publish_store import PinPublishStore
+from app.services.stores.platform_connection_store import PlatformConnectionStore
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -75,6 +77,8 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
                 client=client,
                 durable_required=True,
             ),
+            connection_store=PlatformConnectionStore(client=client),
+            pin_store=PinPublishStore(client=client, durable_required=True),
         ),
     )
     return ApprovalResumeService(
