@@ -12,9 +12,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.main import app
+from app.routers import approvals as approvals_router
 from app.routers.affiliate_jobs import _normalize_job
 from app.services.approval_gateway import ApprovalGateway
 from app.services.approval_resume_service import ApprovalResumeService
@@ -535,3 +539,168 @@ def test_affiliate_job_uses_durable_published_record_when_present():
     assert job["lifecycle_status"] == "published"
     assert job["pin_id"] == "pin-1001"
     assert job["publish_link_url"] == "https://example.com/real-publish"
+
+
+def test_affiliate_employee_api_e2e_approval_and_publish_requires_durable_record(supabase_disabled):
+    owner = "user-a"
+    other = "user-b"
+    current_user = {"id": owner}
+    client = TestClient(app)
+
+    def _current_user_id() -> str:
+        return current_user["id"]
+
+    shared_gateway = ApprovalGateway(client=None)
+    shared_connection_store = PlatformConnectionStore(client=None)
+    shared_connector = PinterestConnector(
+        connection_store=shared_connection_store,
+        pin_store=PinPublishStore(client=None),
+    )
+    shared_registry = ConnectorRegistry()
+    shared_registry.register(shared_connector)
+    shared_resume_service = ApprovalResumeService(
+        approval_gateway=shared_gateway,
+        connector_registry=shared_registry,
+    )
+    original_get_approval_gateway = approvals_router._get_approval_gateway
+    original_get_resume_service = approvals_router._get_resume_service
+    approvals_router._get_approval_gateway = lambda client=None: shared_gateway
+    approvals_router._get_resume_service = lambda current_user_id_arg, client=None: shared_resume_service
+
+    app.dependency_overrides[get_current_user_id] = _current_user_id
+    app.dependency_overrides[get_user_scoped_client] = lambda: None
+
+    try:
+        create_response = client.post(
+            "/affiliate",
+            json={
+                "platform": "pinterest",
+                "country": "USA",
+                "language": "en",
+                "niche": "AI tools",
+                "daily_limit": 30,
+                "human_approval_required": True,
+                "title": "Affiliate Pinterest job",
+            },
+        )
+        assert create_response.status_code == 201
+        payload = create_response.json()
+        mission_id = payload["mission_id"]
+        assert payload["job"]["status"] == "created"
+        assert payload["job"]["platform"] == "pinterest"
+        assert "oauth_code" not in str(payload)
+
+        fetch_response = client.get(f"/affiliate/{mission_id}")
+        assert fetch_response.status_code == 200
+        fetched = fetch_response.json()["job"]
+        assert fetched["id"] == mission_id
+        assert fetched["status"] == "created"
+        assert "access_token" not in str(fetched)
+
+        employee = EmployeeVerticalSlice(
+            owner,
+            connection_store=shared_connection_store,
+            execution_service=MissionExecutionService(client=None),
+            approval_gateway=shared_gateway,
+        )
+        pending = employee.run(
+            "Connect my Pinterest affiliate account",
+            mission_id=mission_id,
+            metadata={
+                "vertical": "affiliate",
+                "platform": "pinterest",
+                "country": "USA",
+                "language": "en",
+                "niche": "AI tools",
+                "daily_limit": 30,
+                "human_approval_required": True,
+            },
+        )
+        assert pending["status"] == "WAIT_FOR_APPROVAL"
+        approval_id = pending["report"]["resume_information"]["approval_request_id"]
+        assert approval_id
+
+        approve_response = client.post(f"/approvals/{approval_id}/approve", json={})
+        assert approve_response.status_code == 200
+        approval_body = approve_response.json()
+        assert approval_body["success"] is True
+        assert "oauth_code" not in str(approval_body)
+        assert approval_body["resume"]["status"] in {"awaiting_human_intervention", "resumed", "completed"}
+
+        connection_store = PlatformConnectionStore(client=None)
+        connection_store.upsert(owner_id=owner, platform="pinterest", status="connected")
+        connector = PinterestConnector(
+            connection_store=connection_store,
+            pin_store=PinPublishStore(client=None),
+        )
+        registry = ConnectorRegistry()
+        registry.register(connector)
+
+        publish_gateway = ApprovalGateway(client=None)
+        publish_request = publish_gateway.create_request(
+            mission_id=mission_id,
+            action_type="publish_content",
+            risk_level="sensitive",
+            payload={
+                "platform": "pinterest",
+                "worker_id": owner,
+                "content": {
+                    "board_name": "My Board",
+                    "pin_text": "AI tools",
+                    "link_url": "https://example.com/product",
+                    "opportunity_id": "opp-123",
+                },
+            },
+            owner_id=owner,
+        )
+        assert publish_request["success"] is True
+        approval_id_publish = publish_request["request"]["id"]
+        approve_publish = publish_gateway.approve_request(approval_id_publish, approved_by=owner)
+        assert approve_publish["success"] is True
+
+        publish_result = ApprovalResumeService(
+            approval_gateway=publish_gateway,
+            connector_registry=registry,
+        ).resume(approval_id_publish, current_user_id=owner)
+        assert publish_result["status"] in {"resumed", "completed"}
+        operation_key = publish_result["operation_key"]
+        durable_publish = connector._pin_store.get_by_operation_key(owner, operation_key)
+        assert durable_publish is not None
+        assert durable_publish["status"] == "published"
+        assert durable_publish["link_url"].startswith("https://example.com/product")
+
+        mission_row = {
+            "id": mission_id,
+            "objective": payload["job"]["objective"],
+            "title": payload["job"]["title"],
+            "status": "completed",
+            "priority": "normal",
+            "urgency": "normal",
+            "business_importance": 1,
+            "metadata": {"platform": "pinterest"},
+            "result": {
+                "action_type": "publish_content",
+                "approval_request_id": approval_id_publish,
+                "operation_key": operation_key,
+                "pin_id": durable_publish["pin_id"],
+                "link_url": durable_publish["link_url"],
+                "status": "published",
+            },
+            "created_at": payload["job"]["created_at"],
+            "updated_at": payload["job"]["updated_at"],
+        }
+        job = _normalize_job(mission_row, owner_id=owner, client=None)
+        assert job["status"] == "published"
+        assert job["lifecycle_status"] == "published"
+        assert job["operation_key"] == operation_key
+        assert job["publish_link_url"] == durable_publish["link_url"]
+
+        current_user["id"] = other
+        cross_user = client.get(f"/affiliate/{mission_id}")
+        assert cross_user.status_code == 404
+        assert cross_user.json()["detail"] == "Affiliate job not found"
+    finally:
+        approvals_router._get_approval_gateway = original_get_approval_gateway
+        approvals_router._get_resume_service = original_get_resume_service
+        app.dependency_overrides.pop(get_current_user_id, None)
+        app.dependency_overrides.pop(get_user_scoped_client, None)

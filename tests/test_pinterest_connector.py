@@ -49,6 +49,17 @@ def test_pinterest_account_status_default():
     assert not result["details"]["connected"]
 
 
+def test_pinterest_connect_account_rejects_placeholder_worker_ids():
+    """A default/placeholder worker ID must never create an implicit Pinterest connection."""
+    connector = PinterestConnector()
+
+    result = connector.connect_account("default", {"oauth_code": "test-code"})
+
+    assert not result["success"]
+    assert "explicit" in result["error"].lower()
+    assert connector.get_account_status("default")["status"] == "not_started"
+
+
 def test_pinterest_start_onboarding():
     """Test starting Pinterest onboarding."""
     connector = PinterestConnector()

@@ -84,6 +84,24 @@ class PinterestConnector(BaseConnector):
         self._account_status_cache: dict[str, dict[str, Any]] = {}
         self._onboarding_workflows: dict[str, dict[str, Any]] = {}
 
+    @staticmethod
+    def _is_explicit_worker_id(worker_id: str | None) -> bool:
+        """Return True only for a real user-scoped worker identifier."""
+        if worker_id is None:
+            return False
+        normalized = str(worker_id).strip()
+        if not normalized:
+            return False
+        return normalized.lower() not in {
+            "default",
+            "anonymous",
+            "none",
+            "null",
+            "unknown",
+            "placeholder",
+            "system",
+        }
+
     @property
     def platform(self) -> str:
         """Get the platform name.
@@ -148,6 +166,17 @@ class PinterestConnector(BaseConnector):
         Returns:
             Dictionary with account state.
         """
+        if worker_id and not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": True,
+                "status": "not_started",
+                "details": {
+                    "connected": False,
+                    "requires_action": False,
+                    "explicit_user_required": True,
+                },
+            }
+
         if worker_id:
             persisted = self._connection_store.get(worker_id, "pinterest")
             if persisted:
@@ -544,6 +573,11 @@ class PinterestConnector(BaseConnector):
         Returns:
             Dictionary with connection result.
         """
+        if not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": False,
+                "error": "Explicit authenticated worker_id is required to connect a Pinterest account",
+            }
         if not auth_data or "oauth_code" not in auth_data:
             return {
                 "success": False,
@@ -616,6 +650,12 @@ class PinterestConnector(BaseConnector):
             return {
                 "success": False,
                 "error": "content must be a non-empty dictionary",
+            }
+        if not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": False,
+                "error": "Explicit authenticated worker_id is required to publish to Pinterest",
+                "requires": ["connect_platform"],
             }
 
         board_name = content.get("board_name")
