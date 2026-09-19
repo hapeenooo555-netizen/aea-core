@@ -659,6 +659,9 @@ class PinterestConnector(BaseConnector):
         sanitized_content = self._sanitize_content(content)
 
         pin_id = str(uuid4())
+        approval_request_id = None
+        if idempotency_key and str(idempotency_key).startswith("p1-11:"):
+            approval_request_id = str(idempotency_key).removeprefix("p1-11:")
         final_url = link_url
         opportunity_id = sanitized_content.get("opportunity_id")
         if opportunity_id:
@@ -672,6 +675,7 @@ class PinterestConnector(BaseConnector):
             "success": True,
             "status": "published",
             "pin_id": pin_id,
+            "approval_request_id": approval_request_id,
             "platform": "pinterest",
             "board_name": board_name,
             "pin_text": pin_text,
@@ -696,7 +700,7 @@ class PinterestConnector(BaseConnector):
                 pin_text=pin_text,
                 link_url=final_url,
                 pin_id=pin_id,
-                approval_request_id=sanitized_content.get("approval_request_id"),
+                approval_request_id=approval_request_id,
                 content=sanitized_content,
             )
             if not store_result.get("success"):

@@ -392,7 +392,7 @@ class EmployeeVerticalSlice:
             approval_gateway=self._approvals,
             connector_registry=self._connectors,
         )
-        result = resume_service.resume(approval_request_id)
+        result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
         safe_result = sanitize_payload(result)
         payload = request.get("payload") or {}
         execution_id = payload.get("execution_id")

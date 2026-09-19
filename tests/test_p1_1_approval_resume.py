@@ -492,7 +492,7 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "connection" in result["error"].lower()
 
@@ -702,6 +702,44 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
     assert second.get("note") == "pin_already_published"
 
 
+def test_publish_content_resume_rejects_request_owner_fallback_when_user_identity_missing(
+    resume_service, approval_gateway
+):
+    """A forged owner_id in the approval payload must never authorize a publish for another user."""
+    connect_request_id = _make_approval_request(
+        approval_gateway,
+        action_type="connect_platform",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "owner-hardening-worker",
+            "auth_data": {"oauth_code": "test-code"},
+        },
+        ttl_hours=24,
+    )
+    approval_gateway.approve_request(connect_request_id)
+    resume_service.resume(connect_request_id, current_user_id="user-a")
+
+    malicious_request_id = approval_gateway.create_request(
+        mission_id="mission-malicious",
+        action_type="publish_content",
+        risk_level="sensitive",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "owner-hardening-worker",
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+        },
+        owner_id="user-b",
+    )["request"]["id"]
+    approval_gateway.approve_request(malicious_request_id)
+
+    # The request record's owner_id must be authoritative; a missing
+    # authenticated user cannot be used as a fallback to another owner's
+    # protected publish operation.
+    result = resume_service.resume(malicious_request_id)
+    assert result["status"] in {"approval_unauthorized", "resume_failed"}
+    assert "authenticated user" in result["error"].lower() or "owner" in result["error"].lower()
+
+
 def test_publish_content_missing_worker_id_fails(resume_service, approval_gateway):
     """publish_content without worker_id returns resume_failed."""
     request_id = _make_approval_request(
@@ -715,7 +753,7 @@ def test_publish_content_missing_worker_id_fails(resume_service, approval_gatewa
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "worker_id" in result["error"].lower()
 

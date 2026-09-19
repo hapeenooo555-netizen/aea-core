@@ -521,6 +521,7 @@ class ApprovalGateway:
             risk_level=risk_level,
             payload=safe_payload,
             expires_at=datetime.fromisoformat(expires_iso),
+            owner_id=owner_id,
         )
         self._memory_store[request_id] = request
         return {"success": True, "request": request.to_dict()}

@@ -151,12 +151,21 @@ class PinPublishStore:
                 return {"success": False, "error": "Durable pin persistence is unavailable"}
 
         # In-memory fallback — ONLY for non-durable test environments.
-        existing = self._memory_store.get(operation_key)
+        # Keep compatibility with older tests that keyed the record only by
+        # ``operation_key`` while still enforcing true owner isolation for all
+        # lookups and writes.
+        memory_key = (owner_id, operation_key)
+        existing = self._memory_store.get(memory_key)
+        if existing is None:
+            legacy = self._memory_store.get(operation_key)
+            if legacy is not None and legacy.get("owner_id") == owner_id:
+                existing = legacy
         if existing is not None:
             return {"success": True, "created": False, "pin": self._normalize_row(existing)}
 
         record["id"] = str(uuid4())
-        self._memory_store[operation_key] = record
+        self._memory_store[memory_key] = record
+        self._memory_store.setdefault(operation_key, record)
         return {"success": True, "created": True, "pin": self._normalize_row(record)}
 
     def get_by_operation_key(
@@ -193,9 +202,14 @@ class PinPublishStore:
             if self._durable_required:
                 return None
 
-        record = self._memory_store.get(operation_key)
+        memory_key = (owner_id, operation_key)
+        record = self._memory_store.get(memory_key)
         if record is not None and record.get("owner_id") == owner_id:
             return self._normalize_row(record)
+
+        legacy = self._memory_store.get(operation_key)
+        if legacy is not None and legacy.get("owner_id") == owner_id:
+            return self._normalize_row(legacy)
         return None
 
     def exists(self, owner_id: str, operation_key: str) -> bool:

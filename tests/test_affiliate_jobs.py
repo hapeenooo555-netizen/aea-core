@@ -17,8 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app.routers.affiliate_jobs import _normalize_job
 from app.services.approval_gateway import ApprovalGateway
+from app.services.approval_resume_service import ApprovalResumeService
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.mission_execution_service import MissionExecutionService
+from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.p1_7_contracts import ObjectiveParser
 from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.registry import ConnectorRegistry
@@ -192,6 +194,146 @@ def test_affiliate_pinterest_owner_isolation():
 
     cross_approve = owner_b._approvals.approve_request(approval_id, approved_by="user-b")
     assert cross_approve["success"] is False
+
+
+def test_affiliate_job_end_to_end_lifecycle_uses_durable_publish_record(supabase_disabled):
+    owner = "user-a"
+    mission_service = MissionOrchestrationService(owner)
+    mission = mission_service.create_mission(
+        "Start affiliate marketing on pinterest | Country: USA | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        title="Affiliate: pinterest (AI tools)",
+        metadata=AFFILIATE_METADATA,
+    )["mission"]
+    assert mission["owner_id"] == owner
+
+    connection_store = PlatformConnectionStore(client=None)
+    connection_store.upsert(owner_id="worker-123", platform="pinterest", status="connected")
+    connector = PinterestConnector(
+        connection_store=connection_store,
+        pin_store=PinPublishStore(client=None),
+    )
+    registry = ConnectorRegistry()
+    registry.register(connector)
+
+    approval_gateway = ApprovalGateway()
+    approval_request_id = approval_gateway.create_request(
+        mission_id=mission["id"],
+        action_type="publish_content",
+        risk_level="sensitive",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "worker-123",
+            "content": {
+                "board_name": "My Board",
+                "pin_text": "AI tools",
+                "link_url": "https://example.com/product",
+                "opportunity_id": "opp-123",
+            },
+        },
+        owner_id=owner,
+    )["request"]["id"]
+    approval_gateway.approve_request(approval_request_id, approved_by=owner)
+
+    result = ApprovalResumeService(
+        approval_gateway=approval_gateway,
+        connector_registry=registry,
+    ).resume(approval_request_id, current_user_id=owner)
+
+    assert result["status"] == "resumed"
+    assert result["action_type"] == "publish_content"
+    operation_key = result["operation_key"]
+    durable_publish = connector._pin_store.get_by_operation_key(owner, operation_key)
+    assert durable_publish is not None
+    assert durable_publish["status"] == "published"
+    assert durable_publish["link_url"].startswith("https://example.com/product")
+
+    mission_row = dict(mission)
+    mission_row["status"] = "completed"
+    mission_row["result"] = {
+        "action_type": "publish_content",
+        "approval_request_id": approval_request_id,
+        "operation_key": operation_key,
+        "pin_id": durable_publish["pin_id"],
+        "link_url": "https://example.com/stale",
+        "status": "published",
+    }
+
+    job = _normalize_job(mission_row, owner_id=owner, client=None)
+    assert job["status"] == "published"
+    assert job["lifecycle_status"] == "published"
+    assert job["approval_request_id"] == approval_request_id
+    assert job["operation_key"] == operation_key
+    assert job["pin_id"] == durable_publish["pin_id"]
+    assert job["publish_link_url"] == durable_publish["link_url"]
+    assert job["duplicate_safe"] is False
+
+
+def test_affiliate_job_cross_user_isolation_for_lookup_and_durable_publish(supabase_disabled):
+    owner_a = "user-a"
+    owner_b = "user-b"
+    gateway = ApprovalGateway()
+    connection_store = PlatformConnectionStore(client=None)
+    connection_store.upsert(owner_id="worker-123", platform="pinterest", status="connected")
+    connector = PinterestConnector(
+        connection_store=connection_store,
+        pin_store=PinPublishStore(client=None),
+    )
+    registry = ConnectorRegistry()
+    registry.register(connector)
+
+    mission_service_a = MissionOrchestrationService(owner_a)
+    mission = mission_service_a.create_mission(
+        "Start affiliate marketing on pinterest | Country: USA | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        metadata=AFFILIATE_METADATA,
+    )["mission"]
+    approval_request_id = gateway.create_request(
+        mission_id=mission["id"],
+        action_type="publish_content",
+        risk_level="sensitive",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "worker-123",
+            "content": {
+                "board_name": "My Board",
+                "pin_text": "AI tools",
+                "link_url": "https://example.com/product",
+            },
+        },
+        owner_id=owner_a,
+    )["request"]["id"]
+    gateway.approve_request(approval_request_id, approved_by=owner_a)
+
+    publish_result = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+    ).resume(approval_request_id, current_user_id=owner_a)
+    durable_publish = connector._pin_store.get_by_operation_key(owner_a, publish_result["operation_key"])
+    assert durable_publish is not None
+
+    assert MissionOrchestrationService(owner_b).get_mission(mission["id"]) is None
+
+    owner_b_resume = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+    ).resume(approval_request_id, current_user_id=owner_b)
+    assert owner_b_resume["status"] in {"approval_unauthorized", "approval_not_found"}
+
+    mission_row = dict(mission)
+    mission_row["status"] = "completed"
+    mission_row["result"] = {
+        "action_type": "publish_content",
+        "approval_request_id": approval_request_id,
+        "operation_key": publish_result["operation_key"],
+        "pin_id": durable_publish["pin_id"],
+        "link_url": durable_publish["link_url"],
+        "status": "published",
+    }
+
+    b_job = _normalize_job(mission_row, owner_id=owner_b, client=None)
+    assert b_job["status"] == "completed"
+    assert b_job["lifecycle_status"] == "completed"
+    assert b_job["pin_id"] is None
+    assert b_job["publish_link_url"] is None
 
 
 def test_affiliate_job_status_maps_to_publish_lifecycle_and_publish_metadata():

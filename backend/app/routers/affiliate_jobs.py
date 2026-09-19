@@ -177,10 +177,15 @@ def _normalize_job(row: dict[str, Any], *, owner_id: str | None = None, client: 
         durable_publish = PinPublishStore(client=client).get_by_operation_key(owner_id, str(operation_key))
 
     lifecycle = _product_lifecycle_status(row.get("status"), result, owner_id=owner_id, client=client)
-    approval_request_id = durable_publish.get("approval_request_id") if durable_publish else _extract_publish_field(result, "approval_request_id")
-    pin_id = durable_publish.get("pin_id") if durable_publish else _extract_publish_field(result, "pin_id")
-    publish_link_url = durable_publish.get("link_url") if durable_publish else _extract_publish_field(result, "link_url")
-    published_at = durable_publish.get("created_at") if durable_publish else _extract_publish_field(result, "published_at")
+    approval_request_id = None
+    pin_id = None
+    publish_link_url = None
+    published_at = None
+    if durable_publish is not None:
+        approval_request_id = durable_publish.get("approval_request_id")
+        pin_id = durable_publish.get("pin_id")
+        publish_link_url = durable_publish.get("link_url")
+        published_at = durable_publish.get("created_at")
 
     if durable_publish and durable_publish.get("status") == "published":
         lifecycle["lifecycle_status"] = "published"

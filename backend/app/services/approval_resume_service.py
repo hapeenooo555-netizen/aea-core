@@ -138,10 +138,17 @@ class ApprovalResumeService:
             )
 
         request_owner = request.get("owner_id")
-        if current_user_id and request_owner and request_owner != current_user_id:
+        if current_user_id is not None:
+            if request_owner and request_owner != current_user_id:
+                return self._fail(
+                    "approval_unauthorized",
+                    "Authenticated user is not authorized to resume this approval",
+                    approval=approval_request_id,
+                )
+        elif request_owner:
             return self._fail(
                 "approval_unauthorized",
-                "Authenticated user is not authorized to resume this approval",
+                "Authenticated user is required to resume this approval",
                 approval=approval_request_id,
             )
 
@@ -606,6 +613,14 @@ class ApprovalResumeService:
                 action_type="publish_content",
                 platform=connector.platform,
             )
+        if not current_user_id:
+            return self._fail(
+                "resume_failed",
+                "Authenticated user is required to publish content",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+            )
 
         content = payload.get("content") or {}
         if not isinstance(content, dict):
@@ -778,12 +793,14 @@ class ApprovalResumeService:
         # derived from the approval id so it is deterministic and never
         # trust a caller-supplied value.
         if action_type == "publish_content" and request.get("id"):
+            if current_user_id is None:
+                return None
             operation_key = f"p1-11:{request.get('id')}"
             pin_store = getattr(connector, "_pin_store", None)
             if pin_store is not None:
                 try:
                     existing = pin_store.get_by_operation_key(
-                        owner_id=current_user_id or request.get("owner_id") or "",
+                        owner_id=current_user_id,
                         operation_key=operation_key,
                     )
                 except Exception:
