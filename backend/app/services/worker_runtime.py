@@ -65,7 +65,7 @@ class WorkerRuntime:
             A structured dictionary describing the outcome of the execution flow.
         """
 
-        mission = self._mission_engine.get_mission(mission_id)
+        mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
         if not mission:
             return {"success": False, "error": "Mission not found"}
 

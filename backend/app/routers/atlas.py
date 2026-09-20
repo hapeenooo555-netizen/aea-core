@@ -347,7 +347,7 @@ async def create_command(
     # Verify mission ownership if mission_id is provided
     if body.mission_id:
         mission_engine = MissionEngine(client=client)
-        mission = mission_engine.get_mission(body.mission_id, client=client)
+        mission = mission_engine.get_mission(body.mission_id, owner_id=current_user_id, client=client)
         if mission is None or mission.get("owner_id") != current_user_id:
             raise HTTPException(status_code=404, detail="Mission not found")
 

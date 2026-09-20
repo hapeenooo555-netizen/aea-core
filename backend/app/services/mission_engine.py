@@ -77,11 +77,23 @@ class MissionEngine:
         except Exception as exc:  # pragma: no cover - defensive runtime handling
             return {"success": False, "error": str(exc)}
 
-    def get_mission(self, mission_id: str, client: Any | None = None) -> dict[str, Any] | None:
+    def get_mission(
+        self,
+        mission_id: str,
+        owner_id: str | None = None,
+        client: Any | None = None,
+    ) -> dict[str, Any] | None:
         """Retrieve a single mission by identifier.
+
+        When ``owner_id`` is supplied the query is explicitly scoped to that
+        owner in addition to the RLS policy, providing defence-in-depth against
+        cross-user access.  When the authenticated user is not the owner the
+        row is not returned.
 
         Args:
             mission_id: The unique mission identifier.
+            owner_id: Canonical owner identifier (auth.users.id). When provided,
+                the query is filtered to ``owner_id = auth.uid()``.
             client: Optional Supabase client. When ``None``, uses the shared client.
 
         Returns:
@@ -93,7 +105,10 @@ class MissionEngine:
             return None
 
         try:
-            response = db_client.table("missions").select("*").eq("id", mission_id).limit(1).execute()
+            query = db_client.table("missions").select("*").eq("id", mission_id)
+            if owner_id:
+                query = query.eq("owner_id", owner_id)
+            response = query.limit(1).execute()
             rows = response.data or []
             if not rows:
                 return None

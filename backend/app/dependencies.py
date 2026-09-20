@@ -220,7 +220,7 @@ def verify_mission_ownership(
     from app.services.mission_engine import MissionEngine
 
     mission_engine = MissionEngine(client=client)
-    mission = mission_engine.get_mission(mission_id, client=client)
+    mission = mission_engine.get_mission(mission_id, owner_id=current_user_id, client=client)
     if mission is None or mission.get("owner_id") != current_user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

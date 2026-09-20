@@ -130,7 +130,7 @@ def test_get_llm_provider_uses_settings_configuration(monkeypatch) -> None:
 
 def test_worker_runtime_execution_flow(monkeypatch) -> None:
     runtime = WorkerRuntime()
-    runtime._mission_engine = type("MissionStub", (), {"get_mission": lambda self, mission_id: {"id": mission_id, "title": "Test", "worker_id": "w-1"}, "update_status": lambda *args, **kwargs: None, "complete_mission": lambda *args, **kwargs: None, "fail_mission": lambda *args, **kwargs: None})()
+    runtime._mission_engine = type("MissionStub", (), {"get_mission": lambda self, mission_id, owner_id=None, **kwargs: {"id": mission_id, "title": "Test", "worker_id": "w-1"}, "update_status": lambda *args, **kwargs: None, "complete_mission": lambda *args, **kwargs: None, "fail_mission": lambda *args, **kwargs: None})()
     runtime._memory_engine = type("MemoryStub", (), {"get_recent_memories": lambda self, worker_id, limit=5: [], "store_memory": lambda *args, **kwargs: None})()
     runtime._employee_engine = type("EmployeeEngineStub", (), {"run_mission": lambda self, mission_id: {"success": True, "mission_id": mission_id, "worker_id": "w-1"}})()
 

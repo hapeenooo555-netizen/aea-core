@@ -452,7 +452,7 @@ class EmployeeVerticalSlice:
     def _resolve_mission(self, mission_id: str | None, goal: str) -> dict[str, Any]:
         """Resolve an owned durable mission before creating execution state."""
         if mission_id:
-            mission = self._mission_engine.get_mission(mission_id, client=self._client)
+            mission = self._mission_engine.get_mission(mission_id, owner_id=self.owner_id, client=self._client)
             if mission is None:
                 if getattr(self._execution, "_durable_required", False):
                     return {"success": False, "error": "Mission not found"}

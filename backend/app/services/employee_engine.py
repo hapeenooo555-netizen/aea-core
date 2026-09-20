@@ -127,7 +127,7 @@ class EmployeeEngine:
             and any intermediate results.
         """
 
-        mission = self._mission_engine.get_mission(mission_id)
+        mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
         if not mission:
             return {"success": False, "error": "Mission not found"}
 
@@ -1007,7 +1007,7 @@ class EmployeeEngine:
 
         # Get the plan steps
         plan_steps = self._load_plan_steps(execution_id, worker_id)
-        mission = self._mission_engine.get_mission(mission_id)
+        mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
 
         # Continue executing from current step
         return self._execute_next_step(
