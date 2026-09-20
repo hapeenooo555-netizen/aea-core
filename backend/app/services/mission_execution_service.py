@@ -131,7 +131,7 @@ class MissionExecutionService:
         client = self._client()
         if client is not None:
             try:
-                query = client.table(EXECUTION_TABLE).select("*").eq("id", execution_id)
+                query = client.table(EXECUTION_TABLE).select("*").eq("execution_id", execution_id)
                 if owner_id:
                     query = query.eq("owner_id", owner_id)
                 response = query.limit(1).execute()
@@ -330,7 +330,7 @@ class MissionExecutionService:
                 response = (
                     client.table(EXECUTION_TABLE)
                     .update(updates)
-                    .eq("id", execution_id)
+                    .eq("execution_id", execution_id)
                     .eq("owner_id", owner_id)
                     .execute()
                 )
@@ -528,7 +528,6 @@ class MissionExecutionService:
                     .update(updates)
                     .eq("id", step_id)
                     .eq("execution_id", execution_id)
-                    .eq("owner_id", owner_id)
                 )
                 if claim_token:
                     query = query.eq("claim_token", claim_token)
@@ -599,21 +598,66 @@ class MissionExecutionService:
                 data = getattr(response, "data", None) or []
                 if data:
                     first = data[0] if isinstance(data[0], dict) else None
-                    if first:
+                    if first and first.get("step") is not None:
                         step_json = first.get("step")
                         claimed = bool(first.get("claimed"))
-                        if step_json:
-                            return {
-                                "success": True,
-                                "step": self._normalize_step(step_json),
-                                "claimed": claimed,
-                            }
-            except Exception as exc:  # pragma: no cover - defensive fallback
+                        return {
+                            "success": True,
+                            "step": self._normalize_step(step_json),
+                            "claimed": claimed,
+                        }
+            except Exception:
+                pass
+
+            try:
+                existing = client.table(STEP_TABLE).select("*").eq("execution_id", execution_id).eq("idempotency_key", idempotency_key).limit(1).execute()
+                if existing.data:
+                    return {"success": True, "step": self._normalize_step(existing.data[0]), "claimed": False}
+                related = client.table(STEP_TABLE).select("*").eq("execution_id", execution_id).eq("operation_key", operation_key).order("created_at", desc=True).limit(1).execute()
+                if related.data:
+                    latest = self._normalize_step(related.data[0])
+                    if latest and latest.get("status") == "completed":
+                        return {"success": True, "step": latest, "claimed": False}
+                    if latest and latest.get("status") == "in_progress":
+                        lease = latest.get("lease_expires_at")
+                        if lease and datetime.fromisoformat(lease.replace("Z", "+00:00")) > now:
+                            return {"success": True, "step": latest, "claimed": False}
+                        client.table(STEP_TABLE).update({
+                            "status": "failed",
+                            "retry_category": "EXECUTION",
+                            "claim_token": None,
+                            "result": {"recovered": "stale_claim"},
+                            "completed_at": now.isoformat(),
+                        }).eq("id", latest["id"]).execute()
+                exec_record = self.get_execution(execution_id, owner_id=owner_id)
+                mission_id = exec_record.get("mission_id") if exec_record else None
+                new_step = {
+                    "id": step_id,
+                    "execution_id": execution_id,
+                    "mission_id": mission_id,
+                    "step_name": step_name or "claimed_step",
+                    "worker_role": "employee",
+                    "status": "in_progress",
+                    "attempt_index": attempt_index,
+                    "idempotency_key": idempotency_key,
+                    "operation_key": operation_key,
+                    "claim_token": claim_token,
+                    "lease_expires_at": lease_expires_at,
+                    "started_at": now.isoformat(),
+                    "completed_at": None,
+                    "result": {},
+                    "retry_category": None,
+                    "created_at": now.isoformat(),
+                }
+                result = client.table(STEP_TABLE).insert(new_step).execute()
+                if result.data:
+                    return {"success": True, "step": self._normalize_step(result.data[0]), "claimed": True}
+            except Exception as exc:
                 if self._durable_required:
                     return {"success": False, "error": f"Durable step claim failed: {exc}"}
 
-        if self._durable_required:
-            return {"success": False, "error": "Durable step claiming is unavailable"}
+            if self._durable_required:
+                return {"success": False, "error": "Durable step claiming is unavailable"}
 
         # In-memory fallback
         with _MEMORY_LOCK:
@@ -683,7 +727,6 @@ class MissionExecutionService:
                     client.table(STEP_TABLE)
                     .select("*")
                     .eq("execution_id", execution_id)
-                    .eq("owner_id", owner_id)
                     .order("attempt_index")
                     .execute()
                 )
