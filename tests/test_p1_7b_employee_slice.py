@@ -9,17 +9,36 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app import database as database_module
 from app.services.approval_gateway import ApprovalGateway
+from app.services.connectors.pinterest_connector import PinterestConnector
+from app.services.connectors.registry import ConnectorRegistry
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.mission_execution_service import MissionExecutionService
 from app.services.p1_7_contracts import sanitize_payload
+from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
 from app.services.stores.platform_connection_store import PlatformConnectionStore
 
 
+@pytest.fixture(autouse=True)
+def _disable_supabase(monkeypatch):
+    monkeypatch.setattr(database_module, "supabase_client", None, raising=False)
+    monkeypatch.setattr(
+        database_module, "is_supabase_configured", lambda: False, raising=False
+    )
+
+
 def _slice(owner: str = "user-a") -> EmployeeVerticalSlice:
+    connection_store = PlatformConnectionStore(client=None)
+    connector_registry = ConnectorRegistry()
+    connector_registry.register(PinterestConnector(
+        workflow_store=OnboardingWorkflowStore(durable_required=False),
+        connection_store=connection_store,
+    ))
     return EmployeeVerticalSlice(
         owner,
-        connection_store=PlatformConnectionStore(client=None),
+        connector_registry=connector_registry,
+        connection_store=connection_store,
         execution_service=MissionExecutionService(client=None),
         approval_gateway=ApprovalGateway(client=None),
     )
@@ -29,13 +48,16 @@ def test_pinterest_status_is_real_read_and_reports_not_connected():
     employee = _slice()
     result = employee.run("Check my Pinterest account status", mission_id="mission-status")
 
-    assert result["success"] is True
-    assert result["status"] == "COMPLETE"
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_APPROVAL"
     report = result["report"]
-    assert report["selected_tools"] == ["pinterest.get_account_status"]
     assert report["results"][0]["status"] == "not_started"
     assert report["discovered_capabilities"]["tools"]
     assert report["execution_id"]
+    approval_id = report["resume_information"]["approval_request_id"]
+    assert approval_id
+    approval = employee._approvals.get_request(approval_id)
+    assert approval["action_type"] == "start_platform_onboarding"
 
 
 def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
@@ -91,3 +113,102 @@ def test_orchestrator_requires_an_authenticated_owner_for_objective_execution():
 
     result = AgentOrchestrator().run_objective("Check Pinterest")
     assert result == {"success": False, "status": "FAIL", "error": "Authenticated owner is required"}
+
+
+def test_pinterest_not_connected_dynamically_triggers_onboarding_approval():
+    employee = _slice()
+    result = employee.run(
+        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        mission_id="mission-aff-not-started",
+        metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_APPROVAL"
+    report = result["report"]
+    assert report["results"][0]["status"] == "not_started"
+    assert "start_platform_onboarding" in [s["tool_name"] for s in report["plan"]]
+    assert len([s for s in report["plan"] if s["tool_name"] == "start_platform_onboarding"]) == 1
+
+    approval_id = report["resume_information"]["approval_request_id"]
+    assert approval_id
+    approval = employee._approvals.get_request(approval_id)
+    assert approval is not None
+    assert approval["action_type"] == "start_platform_onboarding"
+
+
+def test_pinterest_needs_reconnect_dynamically_triggers_onboarding_approval():
+    employee = _slice()
+    employee._connections.upsert("user-a", "pinterest", status="needs_reconnect", scopes=[])
+    result = employee.run(
+        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        mission_id="mission-aff-reconnect",
+        metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_APPROVAL"
+    report = result["report"]
+    assert report["results"][0]["status"] == "needs_reconnect"
+    assert "start_platform_onboarding" in [s["tool_name"] for s in report["plan"]]
+
+    approval_id = report["resume_information"]["approval_request_id"]
+    assert approval_id
+    approval = employee._approvals.get_request(approval_id)
+    assert approval["action_type"] == "start_platform_onboarding"
+
+
+def test_pinterest_already_connected_does_not_trigger_onboarding():
+    employee = _slice()
+    employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
+    result = employee.run(
+        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        mission_id="mission-aff-connected",
+        metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "COMPLETE"
+    report = result["report"]
+    assert report["selected_tools"] == ["pinterest.get_account_status"]
+    assert report["results"][0]["status"] == "connected"
+    assert report["final_status"] == "COMPLETE"
+    assert not any(s["tool_name"] == "start_platform_onboarding" for s in report["plan"])
+    assert not any(a["action_type"] == "start_platform_onboarding" for a in employee._approvals.list_requests())
+
+
+def test_dynamic_onboarding_step_is_not_appended_repeatedly():
+    employee = _slice()
+    result = employee.run(
+        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        mission_id="mission-aff-idempotent",
+        metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
+    )
+
+    assert result["status"] == "WAIT_FOR_APPROVAL"
+    report = result["report"]
+    executed = [s["tool_name"] for s in report["executed_actions"]]
+    assert executed.count("start_platform_onboarding") == 1
+    assert len([s for s in report["plan"] if s["tool_name"] == "start_platform_onboarding"]) == 1
+
+
+def test_resume_after_approval_advances_to_human_checkpoint():
+    employee = _slice()
+    pending = employee.run(
+        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        mission_id="mission-aff-resume",
+        metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
+    )
+
+    assert pending["status"] == "WAIT_FOR_APPROVAL"
+    approval_id = pending["report"]["resume_information"]["approval_request_id"]
+
+    approved = employee._approvals.approve_request(approval_id, approved_by="user-a")
+    assert approved["success"] is True
+    resumed = employee.resume_approval(approval_id)
+    assert resumed["status"] == "awaiting_human_intervention"
+    assert resumed["result"]["platform"] == "pinterest"
+
+    execution_id = pending["report"]["resume_information"]["execution_id"]
+    execution = employee._execution.get_execution(execution_id, owner_id="user-a")
+    assert execution["status"] == "WAITING_INPUT"

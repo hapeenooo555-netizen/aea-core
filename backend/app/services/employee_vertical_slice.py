@@ -199,9 +199,12 @@ class EmployeeVerticalSlice:
                 completed_steps.add(step.get("step_name") or "")
 
         observation_index = 0
-        for index, step in enumerate(plan):
+        index = 0
+        while index < len(plan):
+            step = plan[index]
             step_name = step.get("step_name", f"p1_7b_step_{index + 1}")
             if step_name in completed_steps:
+                index += 1
                 continue
             attempt_index = self._next_attempt_index(execution_id, step_name)
             operation_key = self._operation_key(mission_id, execution_id, step_name)
@@ -220,6 +223,7 @@ class EmployeeVerticalSlice:
             claimed_step = claim["step"]
             if not claim.get("claimed") and claimed_step.get("status") == "completed":
                 completed_steps.add(step_name)
+                index += 1
                 continue
             if not claim.get("claimed"):
                 return {
@@ -256,6 +260,15 @@ class EmployeeVerticalSlice:
                 report["observation"] = observation.to_dict()
             report[f"observation_{observation_index}"] = observation.to_dict()
             observation_index += 1
+
+            if (
+                result.get("success")
+                and step.get("tool_name") == "pinterest.get_account_status"
+                and result.get("status") in {"not_started", "needs_reconnect"}
+                and "start_onboarding" not in completed_steps
+                and not any(s.get("step_name") == "start_onboarding" for s in plan)
+            ):
+                plan.append(self._build_dynamic_onboarding_step(step, metadata))
 
             decision = self._next_decision(result, step_name, plan, index)
             report["decision"] = decision
@@ -331,6 +344,7 @@ class EmployeeVerticalSlice:
                 report["final_status"] = "WAIT_FOR_HUMAN_INPUT"
                 return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
             if decision == "FOLLOW_UP":
+                index += 1
                 continue
             if decision == "RETRY":
                 retry_decision = classify_failure(result.get("error", "execution failure"))
@@ -531,6 +545,23 @@ class EmployeeVerticalSlice:
                 "metadata": required_payload if required_payload else None,
             })
         return steps
+
+    @staticmethod
+    def _build_dynamic_onboarding_step(
+        status_step: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build an ``start_onboarding`` step to inject after a status check."""
+        affiliate_meta = dict(status_step.get("metadata") or {})
+        return {
+            "step_name": "start_onboarding",
+            "tool_name": "start_platform_onboarding",
+            "input": {"platform": "pinterest"},
+            "action_type": "start_platform_onboarding",
+            "action_payload": {"platform": "pinterest", **affiliate_meta},
+            "requires_approval": True,
+            "metadata": affiliate_meta,
+        }
 
     def _execute_tool(
         self,
