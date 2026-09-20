@@ -66,24 +66,36 @@ def get_supabase_url() -> str:
     return url
 
 
+def get_supabase_anon_key() -> str:
+    """Return the configured Supabase anon/service_role key, or an empty string."""
+    _, key = _resolve_supabase_credential()
+    return key
+
+
 def get_supabase_client_for_user(user_access_token: str) -> Any:
     """Create a Supabase client scoped to a specific user's access token.
 
-    The returned client sends ``user_access_token`` as the API key on
-    every request. PostgreSQL RLS therefore evaluates ``auth.uid()``
+    The returned client is constructed with the Supabase anon key (required by
+    PostgREST for API key validation) and then the user's JWT is attached
+    via ``auth.set_session``. PostgreSQL RLS therefore evaluates ``auth.uid()``
     against the authenticated user identity embedded in that token.
 
     The caller's raw token is never logged, persisted, or returned in
     responses by this function. It is consumed only to construct the
     client.
     """
-    url, _ = _resolve_supabase_credential()
-    if not url:
+    url, anon_key = _resolve_supabase_credential()
+    if not (url and anon_key):
         return None
     try:
         from supabase import create_client
 
-        return create_client(url, user_access_token)
+        client = create_client(url, anon_key)
+        client.auth.set_session(
+            access_token=user_access_token,
+            refresh_token="",
+        )
+        return client
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
