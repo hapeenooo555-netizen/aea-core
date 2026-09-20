@@ -302,9 +302,10 @@ async def resume_onboarding(
     implementation. Uses the authenticated user-scoped Supabase client
     so all reads/writes are RLS-enforced.
 
-    The checkpoint stored in ``human_intervention_checkpoints`` is marked
-    completed with the provided ``human_input`` before the connector
-    advances the workflow.
+    When ``checkpoint_id`` is supplied the checkpoint owned by the current
+    user is verified for ownership first. The connector's
+    ``resume_onboarding()`` runs before the checkpoint is marked completed
+    so that a failed resume never records a false "completed" checkpoint.
     """
     if client:
         try:
@@ -360,6 +361,14 @@ async def resume_onboarding(
         raise HTTPException(
             status_code=status_code,
             detail=result.get("error", "Workflow resume failed"),
+        )
+
+    # Only mark the checkpoint as completed when the workflow actually advanced.
+    # If resume_onboarding failed above we never reach this point.
+    if request.checkpoint_id:
+        manager.complete_checkpoint(
+            request.checkpoint_id,
+            human_input=request.human_input,
         )
 
     if result.get("requires_human_intervention"):
