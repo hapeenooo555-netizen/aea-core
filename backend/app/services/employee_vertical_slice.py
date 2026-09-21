@@ -118,12 +118,58 @@ class EmployeeVerticalSlice:
             requires_approval=True,
             idempotency_behavior="approval_and_workflow_idempotent",
         ))
+        self._tools.register_contract(ToolContract(
+            tool_name="publish_content",
+            description="Publish a Pinterest pin on behalf of the authenticated user",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "platform": {"type": "string"},
+                    "board_name": {"type": "string"},
+                    "pin_text": {"type": "string"},
+                    "link_url": {"type": "string"},
+                    "opportunity_id": {"type": "string"},
+                    "image_url": {"type": "string"},
+                    "title": {"type": "string"},
+                },
+                "required": ["board_name", "pin_text", "link_url"],
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "pin_id": {"type": "string"},
+                    "status": {"type": "string"},
+                    "operation_key": {"type": "string"},
+                    "link_url": {"type": "string"},
+                },
+            },
+            capability="publish_content",
+            platform="pinterest",
+            operation="publish_content",
+            risk_level="WRITE_EXTERNAL",
+            requires_connection=True,
+            requires_approval=True,
+            supports_dry_run=False,
+            idempotency_behavior="approval_and_operation_idempotent",
+            timeout=30.0,
+            retry_policy="bounded",
+        ))
 
     def discover_capabilities(self) -> dict[str, Any]:
         """Return only tools available to this owner and their connections."""
         return self._discovery.discover(
             self.owner_id,
             lambda owner, platform: self._connections.get(owner, platform),
+        )
+
+    def _publish_intent(self, goal: str) -> bool:
+        """Return True only for explicit publishing intent."""
+        normalized = goal.replace("pinterest", "")
+        return (
+            "publish" in normalized
+            or ("create" in normalized and "pin" in normalized)
+            or "affiliate content" in normalized
         )
 
     def run(
@@ -505,6 +551,35 @@ class EmployeeVerticalSlice:
             return plan[index + 1].get("step_name")
         return None
 
+    def _publish_intent(self, goal: str) -> bool:
+        """Return True only for explicit publishing intent."""
+        normalized = goal.replace("pinterest", "")
+        return (
+            "publish" in normalized
+            or ("create" in normalized and "pin" in normalized)
+            or "affiliate content" in normalized
+        )
+
+    def _publish_inputs_complete(self, payload: dict[str, Any]) -> bool:
+        """Require complete content inputs before creating a publish approval."""
+        return all(payload.get(field) for field in ("board_name", "pin_text", "link_url"))
+
+    def _publish_step(self, required_payload: dict[str, Any], affiliate_meta: dict[str, Any]) -> dict[str, Any]:
+        """Build a validated publish_content plan step."""
+        content_input = {
+            k: required_payload.get(k)
+            for k in ("board_name", "pin_text", "link_url", "opportunity_id", "image_url", "title")
+            if k in required_payload
+        }
+        return {
+            "step_name": "publish_content",
+            "tool_name": "publish_content",
+            "input": {"platform": "pinterest", **content_input},
+            "action_type": "publish_content",
+            "requires_approval": True,
+            "metadata": affiliate_meta,
+        }
+
     def _build_plan(self, objective: Any, discovered: dict[str, Any]) -> list[dict[str, Any]]:
         goal = objective.goal.lower()
         required_payload = dict(getattr(objective, "content_inputs", {}) or {})
@@ -535,6 +610,10 @@ class EmployeeVerticalSlice:
                     "requires_approval": True,
                     "metadata": affiliate_meta,
                 })
+            if self._publish_intent(goal) and self._publish_inputs_complete(required_payload):
+                discovered_tools = {tool.get("tool_name") for tool in discovered.get("tools", [])}
+                if "publish_content" in discovered_tools:
+                    steps.append(self._publish_step(required_payload, affiliate_meta))
         if not steps:
             steps.append({
                 "step_name": "record_goal",
@@ -600,6 +679,30 @@ class EmployeeVerticalSlice:
             if not request.get("success"):
                 return request
             return {"success": False, "pending_approval": True, "status": "WAITING_APPROVAL", "approval_request_id": request["request"].get("id"), "message": "Approval required before Pinterest onboarding"}
+        if tool_name == "publish_content":
+            approval_payload = {
+                "platform": "pinterest",
+                "content": prepared["payload"],
+                "worker_id": self.owner_id,
+                "execution_id": execution_id,
+                "operation_key": operation_key or self._operation_key(mission_id, execution_id, "publish_content"),
+            }
+            request = self._approvals.create_request(
+                mission_id=mission_id,
+                action_type="publish_content",
+                risk_level="WRITE_EXTERNAL",
+                payload=approval_payload,
+                owner_id=self.owner_id,
+            )
+            if not request.get("success"):
+                return request
+            return {
+                "success": False,
+                "pending_approval": True,
+                "status": "WAITING_APPROVAL",
+                "approval_request_id": request["request"].get("id"),
+                "message": "Approval required before publishing content",
+            }
         return ActionEngine(owner_id=self.owner_id).execute_action(tool_name, prepared["payload"])
 
     def _next_decision(
@@ -615,6 +718,8 @@ class EmployeeVerticalSlice:
             return "WAIT_FOR_HUMAN_INPUT"
         if result.get("success"):
             if result.get("status") in {"not_started", "needs_reconnect", "failed", "onboarding"} and index + 1 < len(plan):
+                return "FOLLOW_UP"
+            if index + 1 < len(plan) and result.get("status") == "connected" and plan[index + 1].get("tool_name") != "start_platform_onboarding":
                 return "FOLLOW_UP"
             return "COMPLETE"
         decision = classify_failure(result.get("error", "execution failure"))

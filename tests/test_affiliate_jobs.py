@@ -706,3 +706,46 @@ def test_affiliate_employee_api_e2e_approval_and_publish_requires_durable_record
         approvals_router._get_resume_service = original_get_resume_service
         app.dependency_overrides.pop(get_current_user_id, None)
         app.dependency_overrides.pop(get_user_scoped_client, None)
+
+
+def test_affiliate_job_employee_initiated_publish_maps_to_lifecycle(supabase_disabled):
+    owner = "user-a"
+    employee = _slice(owner)
+    employee._connections.upsert(owner, "pinterest", status="connected", scopes=[])
+
+    pending = employee.run(
+        "Publish my pin",
+        mission_id="mission-employee-lifecycle",
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "My Board", "pin_text": "AI tools", "link_url": "https://example.com/product", "opportunity_id": "opp-123"}},
+    )
+    assert pending["status"] == "WAIT_FOR_APPROVAL"
+    approval_id = pending["report"]["resume_information"]["approval_request_id"]
+    employee._approvals.approve_request(approval_id, approved_by=owner)
+    resumed = employee.resume_approval(approval_id)
+    assert resumed["status"] == "resumed"
+    assert resumed["result"]["action_type"] == "publish_content"
+
+    connector = employee._connectors.get("pinterest")
+    durable_publish = connector._pin_store.get_by_operation_key(owner, resumed["result"]["operation_key"])
+    assert durable_publish is not None
+    assert durable_publish["status"] == "published"
+
+    mission_row = {
+        "id": "mission-employee-lifecycle",
+        "owner_id": owner,
+        "status": "completed",
+        "result": {
+            "action_type": "publish_content",
+            "approval_request_id": approval_id,
+            "operation_key": resumed["result"]["operation_key"],
+            "pin_id": resumed["result"]["pin_id"],
+            "link_url": resumed["result"]["result"]["link_url"],
+            "status": "published",
+        },
+    }
+    job = _normalize_job(mission_row, owner_id=owner, client=None)
+    assert job["status"] == "published"
+    assert job["lifecycle_status"] == "published"
+    assert job["operation_key"] == resumed["result"]["operation_key"]
+    assert job["pin_id"] == resumed["result"]["pin_id"]
+    assert job["publish_link_url"] == durable_publish["link_url"]
