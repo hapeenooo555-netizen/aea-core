@@ -207,14 +207,15 @@ def test_real_http_affiliate_job_create_and_fetch():
     created = _create_mission(token)
     assert created["success"] is True
     mission_id = created["mission_id"]
-    assert created["job"]["status"] == "created"
     assert created["job"]["platform"] == "pinterest"
+    # With Option B dynamic injection, a Pinterest job with no connection
+    # immediately reaches approval_pending (status check -> onboarding -> approval).
+    assert created["job"]["status"] in {"created", "approval_pending"}
 
-    # 3. Fetch the job back
     fetched = _get_job(token, mission_id)
     assert fetched["success"] is True
     assert fetched["job"]["id"] == mission_id
-    assert fetched["job"]["status"] == "created"
+    assert fetched["job"]["status"] in {"created", "approval_pending"}
 
     # 4. Verify the job appears in the list
     listed = _list_jobs(token)

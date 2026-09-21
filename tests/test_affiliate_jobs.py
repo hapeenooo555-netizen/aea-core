@@ -88,9 +88,11 @@ def test_affiliate_job_metadata():
 
     employee = _slice()
     result = employee.run("Start affiliate marketing", metadata=AFFILIATE_METADATA, mission_id="mission-aff-meta")
-    assert result["success"] is True
-    assert result["status"] == "COMPLETE"
-    assert "pinterest.get_account_status" in result["report"]["selected_tools"]
+    # With Option B dynamic injection, Pinterest not_started -> onboarding -> approval
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_APPROVAL"
+    assert result["report"]["results"][0]["status"] == "not_started"
+    assert "start_platform_onboarding" in [s["tool_name"] for s in result["report"]["plan"]]
 
 
 def test_affiliate_pinterest_plan_selection():
