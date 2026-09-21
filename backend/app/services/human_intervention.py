@@ -225,6 +225,59 @@ class HumanInterventionManager:
 
         return None
 
+    def find_checkpoint_by_oauth_state(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Find a pending checkpoint by its OAuth state stored in metadata.
+
+        Queries ``human_intervention_checkpoints`` for rows where
+        ``status = 'awaiting_human'`` and ``metadata.oauth_state`` matches.
+        When ``owner_id`` is supplied, also joins through ``missions`` to
+        verify ownership at the query level.
+
+        Falls back to an in-memory scan when the database is unavailable.
+
+        Args:
+            oauth_state: The CSRF state token to look up.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Normalized checkpoint dict or None.
+        """
+        if not oauth_state:
+            return None
+
+        if self._client:
+            try:
+                query = (
+                    self._client.table("human_intervention_checkpoints")
+                    .select("*")
+                    .eq("status", "awaiting_human")
+                    .eq("metadata->oauth_state", oauth_state)
+                )
+                if owner_id:
+                    query = query.or_(
+                        f"and(mission_id,in:(select id from missions where owner_id.eq.{owner_id}))"
+                    )
+                response = query.limit(1).execute()
+                rows = response.data or []
+                if rows:
+                    return self._normalize_checkpoint(rows[0])
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+
+        # In-memory fallback
+        for checkpoint in self._memory_store.values():
+            if checkpoint.status != "awaiting_human":
+                continue
+            md = checkpoint.metadata or {}
+            if md.get("oauth_state") == oauth_state:
+                return checkpoint.to_dict()
+
+        return None
+
     def list_pending_checkpoints(
         self,
         mission_id: str | None = None,

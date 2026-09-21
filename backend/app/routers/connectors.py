@@ -15,6 +15,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.human_intervention import HumanInterventionManager
+from app.services.pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
 from app.services.stores.platform_connection_store import PlatformConnectionStore
 from app.services.worker_runtime import WorkerRuntime
@@ -526,4 +527,119 @@ async def complete_checkpoint(
     return {
         "success": True,
         "checkpoint": result.get("checkpoint"),
+    }
+
+
+@router.get("/oauth/callback")
+async def pinterest_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+    current_user_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Pinterest OAuth 2.0 callback endpoint (GET).
+
+    Receives the authorization ``code`` and CSRF ``state`` as query
+    parameters from Pinterest's redirect.  Validates the state against
+    the stored checkpoint **before** any further processing.
+
+    **Phase 1 (this implementation)**:
+      - Validates CSRF state (randomness, owner binding, expiry, single-use).
+      - Marks the checkpoint as completed with a boolean flag only.
+      - Does **NOT** exchange the code for tokens.
+      - Does **NOT** store the authorization code, state, or any credential.
+      - Returns a structured result indicating the checkpoint was completed
+        and what the next step is.
+
+    **Phase 2 (future)**:
+      - Exchange ``code`` for access/refresh tokens via Pinterest's token
+        endpoint (``POST https://api.pinterest.com/v5/oauth/token``) using
+        HTTP Basic Authentication with ``PINTEREST_CLIENT_ID`` and
+        ``PINTEREST_CLIENT_SECRET``.
+      - Persist the token reference in ``platform_connections.token_reference``
+        and resume the onboarding workflow via the connector.
+
+    Args:
+        code: Authorization code from Pinterest (never stored or logged).
+        state: CSRF state token to validate.
+        error: OAuth error code from Pinterest (if denied).
+        error_description: OAuth error description (if denied).
+        current_user_id: Authenticated user identity (from JWT via FastAPI Depends).
+        client: User-scoped Supabase client (RLS-enforced).
+
+    Returns:
+        Dictionary with checkpoint status and next-step guidance.
+    """
+    if error:
+        return {
+            "success": False,
+            "status": "denied",
+            "error": error,
+            "error_description": error_description,
+        }
+
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'code' or 'state' parameter",
+        )
+
+    helper = PinterestOAuthHelper(PinterestOAuthConfig())
+    manager = get_human_intervention_manager(client=client)
+
+    # Look up the pending checkpoint by its OAuth state.
+    checkpoint = manager.find_checkpoint_by_oauth_state(state, owner_id=current_user_id)
+    if checkpoint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No pending checkpoint found for this OAuth state",
+        )
+
+    checkpoint_id = checkpoint.get("id")
+    checkpoint_metadata = checkpoint.get("metadata", {}) or {}
+    inner_md = checkpoint_metadata.get("metadata", checkpoint_metadata) if isinstance(checkpoint_metadata, dict) else {}
+
+    is_valid, reason = helper.validate_state(
+        received_state=state,
+        checkpoint=checkpoint,
+        owner_id=current_user_id,
+    )
+    if not is_valid:
+        # Mark checkpoint as failed for security auditing
+        try:
+            manager.fail_checkpoint(checkpoint_id, error_reason=reason)
+        except Exception:  # pragma: no cover - defensive
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth state validation failed: {reason}",
+        )
+
+    # State is valid — consume it (mark single-use) by updating checkpoint
+    # metadata.  Only a boolean flag is stored — the authorization code
+    # itself is never persisted or logged.  Phase 2 will perform the
+    # token exchange using the code from the callback query parameter.
+    consume_meta = helper.consume_state_metadata()
+    complete_result = manager.complete_checkpoint(
+        checkpoint_id,
+        human_input={**consume_meta, "authorization_code_received": True},
+    )
+    if not complete_result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete checkpoint",
+        )
+
+    # Return checkpoint and workflow context for the frontend to display
+    # next-step instructions.  No credentials are included in the response.
+    workflow_id = inner_md.get("workflow_id")
+    return {
+        "success": True,
+        "status": "checkpoint_completed",
+        "checkpoint_id": checkpoint_id,
+        "workflow_id": workflow_id,
+        "message": "Pinterest authorization code received. Token exchange will complete the connection.",
+        "next_step": "token_exchange",
     }

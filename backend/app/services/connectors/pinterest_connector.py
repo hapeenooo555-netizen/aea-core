@@ -22,6 +22,7 @@ from ..stores.onboarding_workflow_store import OnboardingWorkflowStore
 from ..stores.platform_connection_store import PlatformConnectionStore
 from ..stores.pin_publish_store import PinPublishStore
 from ..p1_7_contracts import SENSITIVE_FIELDS
+from ..pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
 from .base import BaseConnector, ConnectorCapabilities
 
 
@@ -234,25 +235,28 @@ class PinterestConnector(BaseConnector):
         """
         current_time = datetime.now(timezone.utc).isoformat()
 
+        oauth = PinterestOAuthHelper(PinterestOAuthConfig())
+
         # If an approval_id is supplied, atomically claim or return the
         # existing durable workflow. The database is the source of truth;
         # this call is safe across process restarts and concurrent resumes.
         if approval_id:
             candidate_workflow_id = str(uuid4())
+            auth_url, oauth_state = oauth.generate_authorization_url(
+                owner_id=worker_id,
+                workflow_id=candidate_workflow_id,
+            )
             checkpoint_data = {
                 "checkpoint_type": "oauth_authorization_required",
                 "instructions": (
                     "Please authorize AEA to access your Pinterest account. "
                     "Visit the Pinterest authorization page and complete the OAuth flow. "
-                    "Once authorized, provide the authorization code back to AEA."
+                    "Once authorized, Pinterest will redirect you back to AEA with a verification code."
                 ),
                 "metadata": {
-                    "authorization_url": "https://api.pinterest.com/oauth/",
-                    "scopes": [
-                        "user_accounts:read",
-                        "boards:read",
-                        "pins:create",
-                    ],
+                    "authorization_url": auth_url,
+                    "scopes": oauth.scopes,
+                    **(oauth.state_metadata(oauth_state, worker_id, candidate_workflow_id)),
                 },
             }
             step_history = [
@@ -306,20 +310,23 @@ class PinterestConnector(BaseConnector):
         workflow_id = str(uuid4())
 
         # Create the initial workflow state
+        auth_url, oauth_state = oauth.generate_authorization_url(
+            owner_id=worker_id,
+            workflow_id=workflow_id,
+        )
         checkpoint_data = {
             "checkpoint_type": "oauth_authorization_required",
             "instructions": (
                 "Please authorize AEA to access your Pinterest account. "
                 "Visit the Pinterest authorization page and complete the OAuth flow. "
-                "Once authorized, provide the authorization code back to AEA."
+                "Once authorized, Pinterest will redirect you back to AEA with a verification code."
             ),
             "metadata": {
-                "authorization_url": "https://api.pinterest.com/oauth/",
-                "scopes": [
-                    "user_accounts:read",
-                    "boards:read",
-                    "pins:create",
-                ],
+                "authorization_url": auth_url,
+                "scopes": oauth.scopes,
+                **(
+                    oauth.state_metadata(oauth_state, worker_id, workflow_id)
+                ),
             },
         }
         step_history = [
