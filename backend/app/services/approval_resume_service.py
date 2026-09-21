@@ -44,6 +44,7 @@ from typing import Any
 
 from .approval_gateway import ApprovalGateway
 from .human_intervention import HumanInterventionManager
+from .p1_7_contracts import SENSITIVE_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +138,17 @@ class ApprovalResumeService:
             )
 
         request_owner = request.get("owner_id")
-        if current_user_id and request_owner and request_owner != current_user_id:
+        if current_user_id is not None:
+            if request_owner and request_owner != current_user_id:
+                return self._fail(
+                    "approval_unauthorized",
+                    "Authenticated user is not authorized to resume this approval",
+                    approval=approval_request_id,
+                )
+        elif request_owner:
             return self._fail(
                 "approval_unauthorized",
-                "Authenticated user is not authorized to resume this approval",
+                "Authenticated user is required to resume this approval",
                 approval=approval_request_id,
             )
 
@@ -182,7 +190,7 @@ class ApprovalResumeService:
 
         # Idempotency: state-level guard first (works across restarts),
         # then the in-process cache (fast-path optimization).
-        guard = self._state_guard(request)
+        guard = self._state_guard(request, current_user_id=current_user_id)
         if guard is not None:
             return guard
 
@@ -205,6 +213,7 @@ class ApprovalResumeService:
                 mission_id=request.get("mission_id"),
                 action_type=action_type,
                 payload=payload,
+                current_user_id=current_user_id,
             )
         else:
             # Non-connector actions: defer to worker_runtime. The
@@ -251,6 +260,7 @@ class ApprovalResumeService:
         mission_id: str | None,
         action_type: str,
         payload: dict[str, Any],
+        current_user_id: str | None = None,
     ) -> dict[str, Any]:
         """Dispatch a connector action after approval."""
         platform = payload.get("platform")
@@ -324,6 +334,15 @@ class ApprovalResumeService:
                     "platform": platform,
                     "result": connector.health_check(),
                 }
+            if action_type == "publish_content":
+                return self._handle_publish_content(
+                    approval_request_id=approval_request_id,
+                    mission_id=mission_id,
+                    worker_id=payload.get("worker_id"),
+                    payload=payload,
+                    connector=connector,
+                    current_user_id=current_user_id,
+                )
 
             return self._fail(
                 "resume_failed",
@@ -557,6 +576,126 @@ class ApprovalResumeService:
             "result": result,
         }
 
+    def _handle_publish_content(
+        self,
+        approval_request_id: str,
+        mission_id: str | None,
+        worker_id: str | None,
+        payload: dict[str, Any],
+        connector: Any,
+        current_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Handle resume of ``publish_content`` (P1-11 connector action).
+
+        Strips sensitive keys from the payload content using the canonical
+        SENSITIVE_FIELDS set, derives the server-side operation_key from the
+        approval request id, and dispatches to the connector's
+        ``publish_content`` method with the authenticated user as owner_id.
+
+        Args:
+            approval_request_id: The originating approval request.
+            mission_id: Optional mission context.
+            worker_id: Worker performing the publish.
+            payload: Raw approval payload. Expected to contain ``content``.
+            connector: The resolved platform connector.
+            current_user_id: Canonical owner UUID (``auth.users.id``).
+                Used as ``published_pins.owner_id`` — never trusted from the
+                payload.
+
+        Returns:
+            Structured resume result dict.
+        """
+        if not worker_id:
+            return self._fail(
+                "resume_failed",
+                "Approval payload missing 'worker_id' field",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+            )
+        if not current_user_id:
+            return self._fail(
+                "resume_failed",
+                "Authenticated user is required to publish content",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+            )
+
+        content = payload.get("content") or {}
+        if not isinstance(content, dict):
+            content = {}
+
+        # Defense-in-depth: strip sensitive keys before the connector using
+        # the canonical SENSITIVE_FIELDS set (reused across the codebase).
+        sanitized_content = {
+            k: v for k, v in content.items()
+            if isinstance(k, str) and k.lower() not in SENSITIVE_FIELDS
+        }
+
+        # Server-derived operation_key — the client's operation_key is
+        # intentionally ignored to prevent idempotency bypass.
+        operation_key = f"p1-11:{approval_request_id}"
+
+        try:
+            result = connector.publish_content(
+                worker_id,
+                sanitized_content,
+                idempotency_key=operation_key,
+                owner_id=current_user_id,
+            )
+        except NotImplementedError as exc:
+            return self._fail(
+                "resume_failed",
+                f"Action not supported: {exc}",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+            )
+        except Exception as exc:
+            logger.exception("publish_content failed for approval %s", approval_request_id)
+            return self._fail(
+                "resume_failed",
+                f"Connector error: {exc}",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+            )
+
+        if not result.get("success"):
+            return self._fail(
+                "resume_failed",
+                result.get("error") or "Connector publish_content failed",
+                approval=approval_request_id,
+                action_type="publish_content",
+                platform=connector.platform,
+                worker_id=worker_id,
+            )
+
+        if result.get("status") == "duplicate":
+            return {
+                "status": "completed",
+                "approval_request_id": approval_request_id,
+                "action_type": "publish_content",
+                "platform": connector.platform,
+                "worker_id": worker_id,
+                "pin_id": result.get("pin_id"),
+                "operation_key": operation_key,
+                "note": "pin_already_published",
+                "result": result,
+            }
+
+        return {
+            "status": "resumed",
+            "approval_request_id": approval_request_id,
+            "action_type": "publish_content",
+            "platform": connector.platform,
+            "worker_id": worker_id,
+            "pin_id": result.get("pin_id"),
+            "operation_key": operation_key,
+            "result": result,
+        }
+
     def _create_checkpoint(
         self,
         mission_id: str | None,
@@ -588,7 +727,9 @@ class ApprovalResumeService:
             logger.exception("Failed to create checkpoint for workflow %s", workflow_id)
         return None
 
-    def _state_guard(self, request: dict[str, Any]) -> dict[str, Any] | None:
+    def _state_guard(
+        self, request: dict[str, Any], current_user_id: str | None = None
+    ) -> dict[str, Any] | None:
         """Return a result if the persisted state shows the action is already done."""
         action_type = request.get("action_type") or ""
         payload = request.get("payload") or {}
@@ -626,7 +767,7 @@ class ApprovalResumeService:
                     "result": status,
                 }
 
-        # Guard for ``resume_platform_onboarding``: if the workflow is
+    # Guard for ``resume_platform_onboarding``: if the workflow is
         # already completed in the persistent store, do not advance again.
         if action_type == "resume_platform_onboarding" and workflow_id:
             store = getattr(connector, "_workflow_store", None)
@@ -644,6 +785,37 @@ class ApprovalResumeService:
                         "workflow_id": workflow_id,
                         "note": "workflow_already_completed",
                         "result": persisted,
+                    }
+
+        # Guard for ``publish_content``: if the server-derived operation_key
+        # for this approval has already produced a published pin in the
+        # durable store, do not publish a duplicate. The operation_key is
+        # derived from the approval id so it is deterministic and never
+        # trust a caller-supplied value.
+        if action_type == "publish_content" and request.get("id"):
+            if current_user_id is None:
+                return None
+            operation_key = f"p1-11:{request.get('id')}"
+            pin_store = getattr(connector, "_pin_store", None)
+            if pin_store is not None:
+                try:
+                    existing = pin_store.get_by_operation_key(
+                        owner_id=current_user_id,
+                        operation_key=operation_key,
+                    )
+                except Exception:
+                    existing = None
+                if existing is not None:
+                    return {
+                        "status": "completed",
+                        "approval_request_id": request.get("id"),
+                        "action_type": action_type,
+                        "platform": platform,
+                        "worker_id": worker_id,
+                        "pin_id": existing.get("pin_id"),
+                        "operation_key": operation_key,
+                        "note": "pin_already_published",
+                        "result": existing,
                     }
 
         return None

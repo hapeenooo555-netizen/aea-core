@@ -25,6 +25,7 @@ class AgentOrchestrator:
     def __init__(self, owner_id: str | None = None, client: Any | None = None) -> None:
         """Initialize the orchestrator and its supporting services."""
 
+        self._owner_id = owner_id
         self._mission_engine = MissionEngine(client=client)
         self._worker_runtime = WorkerRuntime(owner_id=owner_id, client=client)
         self._decision_engine = AtlasDecisionEngine(owner_id=owner_id)
@@ -63,7 +64,7 @@ class AgentOrchestrator:
             return {"success": False, "error": "Mission id is required"}
 
         try:
-            mission = self._mission_engine.get_mission(mission_id)
+            mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
             if not mission:
                 return {"success": False, "error": "Mission not found"}
 

@@ -109,8 +109,18 @@ class HumanInterventionManager:
         "manual_platform_step_required": "Manual step on platform required",
     }
 
-    def __init__(self) -> None:
-        """Initialize the human intervention manager."""
+    def __init__(self, client: Any | None = None) -> None:
+        """Initialize the human intervention manager.
+
+        Args:
+            client: Optional pre-resolved Supabase client. When ``None`` the
+                manager resolves ``app.database.supabase_client`` lazily.
+                Passing a user-scoped client (see
+                :func:`app.database.get_supabase_client_for_user`) ensures
+                RLS policies enforce row-level ownership on every checkpoint
+                operation.
+        """
+        self._explicit_client = client
         self._client = self._get_client()
         # In-memory store for checkpoints (for testing and fallback)
         self._memory_store: dict[str, HumanInterventionCheckpoint] = {}
@@ -212,6 +222,59 @@ class HumanInterventionManager:
         checkpoint = self._memory_store.get(checkpoint_id)
         if checkpoint:
             return checkpoint.to_dict()
+
+        return None
+
+    def find_checkpoint_by_oauth_state(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Find a pending checkpoint by its OAuth state stored in metadata.
+
+        Queries ``human_intervention_checkpoints`` for rows where
+        ``status = 'awaiting_human'`` and ``metadata.oauth_state`` matches.
+        When ``owner_id`` is supplied, also joins through ``missions`` to
+        verify ownership at the query level.
+
+        Falls back to an in-memory scan when the database is unavailable.
+
+        Args:
+            oauth_state: The CSRF state token to look up.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Normalized checkpoint dict or None.
+        """
+        if not oauth_state:
+            return None
+
+        if self._client:
+            try:
+                query = (
+                    self._client.table("human_intervention_checkpoints")
+                    .select("*")
+                    .eq("status", "awaiting_human")
+                    .eq("metadata->oauth_state", oauth_state)
+                )
+                if owner_id:
+                    query = query.or_(
+                        f"and(mission_id,in:(select id from missions where owner_id.eq.{owner_id}))"
+                    )
+                response = query.limit(1).execute()
+                rows = response.data or []
+                if rows:
+                    return self._normalize_checkpoint(rows[0])
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+
+        # In-memory fallback
+        for checkpoint in self._memory_store.values():
+            if checkpoint.status != "awaiting_human":
+                continue
+            md = checkpoint.metadata or {}
+            if md.get("oauth_state") == oauth_state:
+                return checkpoint.to_dict()
 
         return None
 
@@ -413,8 +476,13 @@ class HumanInterventionManager:
         """Get the Supabase client.
 
         Returns:
-            Supabase client or None.
+            Supabase client or None. If an explicit (typically user-scoped)
+            client was injected at construction time it is used so that RLS
+            evaluates against the owning user identity. Otherwise the global
+            ``supabase_client`` is returned as a fallback.
         """
+        if self._explicit_client is not None:
+            return self._explicit_client
         if database_module:
             return getattr(database_module, "supabase_client", None)
         return None

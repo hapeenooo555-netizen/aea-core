@@ -150,9 +150,11 @@ def get_user_scoped_client(
 ) -> Any:
     """Return a Supabase client whose queries carry the caller's JWT.
 
-    The returned client is constructed with the user's access token as
-    the API key. PostgreSQL RLS will therefore see ``auth.uid()`` equal
-    to ``current_user["id"]`` for every query made with this client.
+    The returned client is constructed with the Supabase anon key (required by
+    PostgREST for API-key validation) and then the caller's access token is
+    attached via ``auth.set_session``. PostgreSQL RLS therefore sees
+    ``auth.uid()`` equal to ``current_user["id"]`` for every query made with
+    this client.
 
     The caller's raw token is never logged, returned in responses, or
     persisted. It is used only to construct the client and is then
@@ -160,12 +162,18 @@ def get_user_scoped_client(
     """
     token = _extract_bearer_token(request)
     url = database_module.get_supabase_url()
-    if not url:
+    anon_key = database_module.get_supabase_anon_key()
+    if not (url and anon_key):
         return None
     try:
         from supabase import create_client
 
-        return create_client(url, token)
+        client = create_client(url, anon_key)
+        client.auth.set_session(
+            access_token=token,
+            refresh_token="",
+        )
+        return client
     except Exception:  # pragma: no cover - defensive
         return None
 
@@ -212,7 +220,7 @@ def verify_mission_ownership(
     from app.services.mission_engine import MissionEngine
 
     mission_engine = MissionEngine(client=client)
-    mission = mission_engine.get_mission(mission_id, client=client)
+    mission = mission_engine.get_mission(mission_id, owner_id=current_user_id, client=client)
     if mission is None or mission.get("owner_id") != current_user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

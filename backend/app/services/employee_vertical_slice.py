@@ -199,9 +199,12 @@ class EmployeeVerticalSlice:
                 completed_steps.add(step.get("step_name") or "")
 
         observation_index = 0
-        for index, step in enumerate(plan):
+        index = 0
+        while index < len(plan):
+            step = plan[index]
             step_name = step.get("step_name", f"p1_7b_step_{index + 1}")
             if step_name in completed_steps:
+                index += 1
                 continue
             attempt_index = self._next_attempt_index(execution_id, step_name)
             operation_key = self._operation_key(mission_id, execution_id, step_name)
@@ -220,6 +223,7 @@ class EmployeeVerticalSlice:
             claimed_step = claim["step"]
             if not claim.get("claimed") and claimed_step.get("status") == "completed":
                 completed_steps.add(step_name)
+                index += 1
                 continue
             if not claim.get("claimed"):
                 return {
@@ -256,6 +260,15 @@ class EmployeeVerticalSlice:
                 report["observation"] = observation.to_dict()
             report[f"observation_{observation_index}"] = observation.to_dict()
             observation_index += 1
+
+            if (
+                result.get("success")
+                and step.get("tool_name") == "pinterest.get_account_status"
+                and result.get("status") in {"not_started", "needs_reconnect"}
+                and "start_onboarding" not in completed_steps
+                and not any(s.get("step_name") == "start_onboarding" for s in plan)
+            ):
+                plan.append(self._build_dynamic_onboarding_step(step, metadata))
 
             decision = self._next_decision(result, step_name, plan, index)
             report["decision"] = decision
@@ -331,6 +344,7 @@ class EmployeeVerticalSlice:
                 report["final_status"] = "WAIT_FOR_HUMAN_INPUT"
                 return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
             if decision == "FOLLOW_UP":
+                index += 1
                 continue
             if decision == "RETRY":
                 retry_decision = classify_failure(result.get("error", "execution failure"))
@@ -392,7 +406,7 @@ class EmployeeVerticalSlice:
             approval_gateway=self._approvals,
             connector_registry=self._connectors,
         )
-        result = resume_service.resume(approval_request_id)
+        result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
         safe_result = sanitize_payload(result)
         payload = request.get("payload") or {}
         execution_id = payload.get("execution_id")
@@ -452,7 +466,7 @@ class EmployeeVerticalSlice:
     def _resolve_mission(self, mission_id: str | None, goal: str) -> dict[str, Any]:
         """Resolve an owned durable mission before creating execution state."""
         if mission_id:
-            mission = self._mission_engine.get_mission(mission_id, client=self._client)
+            mission = self._mission_engine.get_mission(mission_id, owner_id=self.owner_id, client=self._client)
             if mission is None:
                 if getattr(self._execution, "_durable_required", False):
                     return {"success": False, "error": "Mission not found"}
@@ -494,34 +508,60 @@ class EmployeeVerticalSlice:
     def _build_plan(self, objective: Any, discovered: dict[str, Any]) -> list[dict[str, Any]]:
         goal = objective.goal.lower()
         required_payload = dict(getattr(objective, "content_inputs", {}) or {})
+        platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
-        if "pinterest" in goal or "board" in goal or "account" in goal:
+        is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
+        if is_pinterest or "board" in goal or "account" in goal:
+            affiliate_meta = {
+                k: v for k, v in required_payload.items()
+                if k not in {"platform"}
+            }
             status_payload = {"platform": "pinterest", **required_payload}
             steps.append({
                 "step_name": "check_connection_status",
                 "tool_name": "pinterest.get_account_status",
-                "input": status_payload,
+                "input": {"platform": "pinterest"},
                 "action_type": "pinterest.get_account_status",
                 "action_payload": status_payload,
+                "metadata": affiliate_meta,
             })
             if any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")):
                 steps.append({
                     "step_name": "start_onboarding",
                     "tool_name": "start_platform_onboarding",
-                    "input": {"platform": "pinterest", **required_payload},
+                    "input": {"platform": "pinterest"},
                     "action_type": "start_platform_onboarding",
                     "action_payload": {"platform": "pinterest", **required_payload},
                     "requires_approval": True,
+                    "metadata": affiliate_meta,
                 })
         if not steps:
             steps.append({
                 "step_name": "record_goal",
                 "tool_name": "log",
-                "input": {"message": objective.goal, **required_payload},
+                "input": {"message": objective.goal},
                 "action_type": "log",
                 "action_payload": {"message": objective.goal, **required_payload},
+                "metadata": required_payload if required_payload else None,
             })
         return steps
+
+    @staticmethod
+    def _build_dynamic_onboarding_step(
+        status_step: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build an ``start_onboarding`` step to inject after a status check."""
+        affiliate_meta = dict(status_step.get("metadata") or {})
+        return {
+            "step_name": "start_onboarding",
+            "tool_name": "start_platform_onboarding",
+            "input": {"platform": "pinterest"},
+            "action_type": "start_platform_onboarding",
+            "action_payload": {"platform": "pinterest", **affiliate_meta},
+            "requires_approval": True,
+            "metadata": affiliate_meta,
+        }
 
     def _execute_tool(
         self,

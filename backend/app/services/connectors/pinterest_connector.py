@@ -20,6 +20,9 @@ from uuid import uuid4
 
 from ..stores.onboarding_workflow_store import OnboardingWorkflowStore
 from ..stores.platform_connection_store import PlatformConnectionStore
+from ..stores.pin_publish_store import PinPublishStore
+from ..p1_7_contracts import SENSITIVE_FIELDS
+from ..pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
 from .base import BaseConnector, ConnectorCapabilities
 
 
@@ -55,6 +58,7 @@ class PinterestConnector(BaseConnector):
         self,
         workflow_store: OnboardingWorkflowStore | None = None,
         connection_store: PlatformConnectionStore | None = None,
+        pin_store: PinPublishStore | None = None,
     ) -> None:
         """Initialize the Pinterest connector.
 
@@ -65,15 +69,39 @@ class PinterestConnector(BaseConnector):
                 storage when Supabase is unavailable).
             connection_store: Optional pre-constructed
                 :class:`PlatformConnectionStore`.
+            pin_store: Optional pre-constructed :class:`PinPublishStore`.
+                When ``None``, a default non-durable store is created (suitable
+                for unit tests). Production callers should inject a store
+                configured with the user-scoped Supabase client and
+                ``durable_required=True``.
         """
         super().__init__()
         self._workflow_store = workflow_store or OnboardingWorkflowStore()
         self._connection_store = connection_store or PlatformConnectionStore()
+        self._pin_store = pin_store or PinPublishStore()
         # These dicts are used only when the stores fall back to their
         # in-memory modes. They remain present so that restart recovery is
         # possible even without Supabase.
         self._account_status_cache: dict[str, dict[str, Any]] = {}
         self._onboarding_workflows: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _is_explicit_worker_id(worker_id: str | None) -> bool:
+        """Return True only for a real user-scoped worker identifier."""
+        if worker_id is None:
+            return False
+        normalized = str(worker_id).strip()
+        if not normalized:
+            return False
+        return normalized.lower() not in {
+            "default",
+            "anonymous",
+            "none",
+            "null",
+            "unknown",
+            "placeholder",
+            "system",
+        }
 
     @property
     def platform(self) -> str:
@@ -98,7 +126,7 @@ class PinterestConnector(BaseConnector):
             onboarding=True,
             connect_account=True,
             disconnect_account=False,  # Not yet implemented
-            publish_content=False,  # Not yet implemented
+            publish_content=True,
             get_analytics=False,  # Not yet implemented
             human_intervention_capable=True,
             supported_checkpoint_types=[
@@ -139,6 +167,17 @@ class PinterestConnector(BaseConnector):
         Returns:
             Dictionary with account state.
         """
+        if worker_id and not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": True,
+                "status": "not_started",
+                "details": {
+                    "connected": False,
+                    "requires_action": False,
+                    "explicit_user_required": True,
+                },
+            }
+
         if worker_id:
             persisted = self._connection_store.get(worker_id, "pinterest")
             if persisted:
@@ -196,25 +235,28 @@ class PinterestConnector(BaseConnector):
         """
         current_time = datetime.now(timezone.utc).isoformat()
 
+        oauth = PinterestOAuthHelper(PinterestOAuthConfig())
+
         # If an approval_id is supplied, atomically claim or return the
         # existing durable workflow. The database is the source of truth;
         # this call is safe across process restarts and concurrent resumes.
         if approval_id:
             candidate_workflow_id = str(uuid4())
+            auth_url, oauth_state = oauth.generate_authorization_url(
+                owner_id=worker_id,
+                workflow_id=candidate_workflow_id,
+            )
             checkpoint_data = {
                 "checkpoint_type": "oauth_authorization_required",
                 "instructions": (
                     "Please authorize AEA to access your Pinterest account. "
                     "Visit the Pinterest authorization page and complete the OAuth flow. "
-                    "Once authorized, provide the authorization code back to AEA."
+                    "Once authorized, Pinterest will redirect you back to AEA with a verification code."
                 ),
                 "metadata": {
-                    "authorization_url": "https://api.pinterest.com/oauth/",
-                    "scopes": [
-                        "user_accounts:read",
-                        "boards:read",
-                        "pins:create",
-                    ],
+                    "authorization_url": auth_url,
+                    "scopes": oauth.scopes,
+                    **(oauth.state_metadata(oauth_state, worker_id, candidate_workflow_id)),
                 },
             }
             step_history = [
@@ -268,20 +310,23 @@ class PinterestConnector(BaseConnector):
         workflow_id = str(uuid4())
 
         # Create the initial workflow state
+        auth_url, oauth_state = oauth.generate_authorization_url(
+            owner_id=worker_id,
+            workflow_id=workflow_id,
+        )
         checkpoint_data = {
             "checkpoint_type": "oauth_authorization_required",
             "instructions": (
                 "Please authorize AEA to access your Pinterest account. "
                 "Visit the Pinterest authorization page and complete the OAuth flow. "
-                "Once authorized, provide the authorization code back to AEA."
+                "Once authorized, Pinterest will redirect you back to AEA with a verification code."
             ),
             "metadata": {
-                "authorization_url": "https://api.pinterest.com/oauth/",
-                "scopes": [
-                    "user_accounts:read",
-                    "boards:read",
-                    "pins:create",
-                ],
+                "authorization_url": auth_url,
+                "scopes": oauth.scopes,
+                **(
+                    oauth.state_metadata(oauth_state, worker_id, workflow_id)
+                ),
             },
         }
         step_history = [
@@ -535,6 +580,11 @@ class PinterestConnector(BaseConnector):
         Returns:
             Dictionary with connection result.
         """
+        if not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": False,
+                "error": "Explicit authenticated worker_id is required to connect a Pinterest account",
+            }
         if not auth_data or "oauth_code" not in auth_data:
             return {
                 "success": False,
@@ -561,6 +611,189 @@ class PinterestConnector(BaseConnector):
             "worker_id": worker_id,
             "platform": "pinterest",
             "message": "Successfully connected to Pinterest account",
+        }
+
+    def publish_content(
+        self,
+        worker_id: str,
+        content: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Publish a pin to Pinterest on behalf of *worker_id*.
+
+        The connector sanitizes sensitive fields from *content* using the
+        canonical ``SENSITIVE_FIELDS`` set and persists the publish record
+        through ``PinPublishStore``. Idempotency is enforced by the database
+        unique constraint on ``operation_key`` — the in-process dict is
+        no longer the source of truth.
+
+        Args:
+            worker_id: Identifier of the worker publishing the content.
+            content: Content dictionary. Expected keys:
+                - ``board_name`` (str): Target board name. Required.
+                - ``pin_text`` (str): Text overlay on the pin. Required.
+                - ``link_url`` (str): URL the pin links to. Required.
+                - ``opportunity_id`` (str | None): Optional AEA opportunity
+                  identifier. When supplied, an affiliate tracking parameter
+                  ``utm_source=aea&utm_campaign=opportunity_<id>`` is appended
+                  to the link (preserving any existing query string).
+                - ``image_url`` (str | None): Optional image URL for the pin.
+                - ``title`` (str | None): Optional pin title.
+            idempotency_key: Server-derived operation_key used for durable
+                idempotency. Must be supplied by the caller (the
+                ``ApprovalResumeService`` always synthesizes it as
+                ``f"p1-11:{approval_request_id}"``).
+            owner_id: Canonical owner UUID (``auth.users.id``). Required for
+                durable persistence so RLS on ``published_pins`` is satisfied.
+
+        Returns:
+            Dictionary with ``success`` flag, ``pin_id``, ``status``, and
+            platform metadata. When the platform connection is not yet
+            established, returns ``success: False`` with an explicit error.
+        """
+        if not content or not isinstance(content, dict):
+            return {
+                "success": False,
+                "error": "content must be a non-empty dictionary",
+            }
+        if not self._is_explicit_worker_id(worker_id):
+            return {
+                "success": False,
+                "error": "Explicit authenticated worker_id is required to publish to Pinterest",
+                "requires": ["connect_platform"],
+            }
+
+        board_name = content.get("board_name")
+        pin_text = content.get("pin_text")
+        link_url = content.get("link_url")
+
+        if not board_name:
+            return {
+                "success": False,
+                "error": "content missing required field 'board_name'",
+            }
+        if not pin_text:
+            return {
+                "success": False,
+                "error": "content missing required field 'pin_text'",
+            }
+        if not link_url:
+            return {
+                "success": False,
+                "error": "content missing required field 'link_url'",
+            }
+
+        if self._connection_store is not None:
+            conn = self._connection_store.get(worker_id, "pinterest")
+            if conn is None or conn.get("status") != "connected":
+                return {
+                    "success": False,
+                    "error": "Platform connection is not established; connect first",
+                    "requires": ["connect_platform"],
+                }
+
+        # URL validation.
+        url_valid, url_error = self._validate_url(link_url)
+        if not url_valid:
+            return {
+                "success": False,
+                "error": url_error,
+            }
+
+        # Sanitize content: strip sensitive keys using the canonical set.
+        sanitized_content = self._sanitize_content(content)
+
+        pin_id = str(uuid4())
+        approval_request_id = None
+        if idempotency_key and str(idempotency_key).startswith("p1-11:"):
+            approval_request_id = str(idempotency_key).removeprefix("p1-11:")
+        final_url = link_url
+        opportunity_id = sanitized_content.get("opportunity_id")
+        if opportunity_id:
+            sep = "&" if "?" in final_url else "?"
+            final_url = (
+                f"{final_url}{sep}utm_source=aea"
+                f"&utm_campaign=opportunity_{opportunity_id}"
+            )
+
+        result = {
+            "success": True,
+            "status": "published",
+            "pin_id": pin_id,
+            "approval_request_id": approval_request_id,
+            "platform": "pinterest",
+            "board_name": board_name,
+            "pin_text": pin_text,
+            "link_url": final_url,
+            "image_url": sanitized_content.get("image_url"),
+            "title": sanitized_content.get("title"),
+            "opportunity_id": opportunity_id,
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "operation_key": idempotency_key,
+        }
+
+        # Persist via the store. The database UNIQUE(operation_key) is the
+        # authoritative idempotency boundary. When a conflict occurs the store
+        # returns created=False with the existing record.
+        if self._pin_store is not None and owner_id and idempotency_key:
+            store_result = self._pin_store.create(
+                owner_id=owner_id,
+                worker_id=worker_id,
+                platform="pinterest",
+                operation_key=idempotency_key,
+                board_name=board_name,
+                pin_text=pin_text,
+                link_url=final_url,
+                pin_id=pin_id,
+                approval_request_id=approval_request_id,
+                content=sanitized_content,
+            )
+            if not store_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Pin persistence failed: {store_result.get('error', 'unknown')}",
+                }
+            if not store_result.get("created"):
+                existing = store_result.get("pin", {})
+                return {
+                    "success": True,
+                    "status": "duplicate",
+                    "pin_id": existing.get("pin_id") or pin_id,
+                    "message": "Pin already published for this operation key",
+                    "platform": "pinterest",
+                    "operation_key": idempotency_key,
+                }
+
+        return result
+
+    @staticmethod
+    def _validate_url(url: str) -> tuple[bool, str]:
+        """Validate that *url* is a safe http(s) URL.
+
+        Returns ``(True, "")`` when valid, otherwise
+        ``(False, "<reason>")``.
+        """
+        from urllib.parse import urlparse
+
+        if not isinstance(url, str) or not url.strip():
+            return False, "link_url must be a non-empty string"
+        if len(url) > 2048:
+            return False, "link_url exceeds maximum length of 2048 characters"
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False, f"link_url scheme must be http or https, got '{parsed.scheme}'"
+        if not parsed.netloc:
+            return False, "link_url must include a network location (host)"
+        return True, ""
+
+    @staticmethod
+    def _sanitize_content(content: dict[str, Any]) -> dict[str, Any]:
+        """Return a copy of *content* with sensitive keys removed."""
+        return {
+            k: v for k, v in content.items()
+            if isinstance(k, str) and k.lower() not in SENSITIVE_FIELDS
         }
 
     # ------------------------------------------------------------------

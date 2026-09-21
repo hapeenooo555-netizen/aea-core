@@ -67,6 +67,7 @@ class EmployeeEngine:
         """
 
         self._owner_id = owner_id
+        self._explicit_client = client
         self._mission_engine = MissionEngine(client=client)
         self._memory_engine = AtlasMemoryEngine()
         self._decision_engine = AtlasDecisionEngine(owner_id=owner_id)
@@ -75,7 +76,7 @@ class EmployeeEngine:
         self._planning_engine = PlanningEngine()
         self._tool_registry = ToolRegistry()
         self._connector_registry = connector_registry
-        self._human_intervention_manager = HumanInterventionManager()
+        self._human_intervention_manager = HumanInterventionManager(client=client)
         self._execution_service = MissionExecutionService(client=client)
         self._retry_policy = BoundedRetryPolicy()
         self._tool_validator = ToolValidator(self._tool_registry, self._action_engine)
@@ -86,7 +87,7 @@ class EmployeeEngine:
 
     def _worker_runtime_stub(self) -> Any:
         """Create a stub for SafeActionExecutor that handles connector actions."""
-        return _WorkerRuntimeStub(self._connector_registry, self._human_intervention_manager)
+        return _WorkerRuntimeStub(self._connector_registry, self._human_intervention_manager, client=self._explicit_client)
 
     def _initialize_test_tools(self) -> None:
         """Register test tools for P1-5 minimal vertical slice."""
@@ -126,7 +127,7 @@ class EmployeeEngine:
             and any intermediate results.
         """
 
-        mission = self._mission_engine.get_mission(mission_id)
+        mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
         if not mission:
             return {"success": False, "error": "Mission not found"}
 
@@ -1006,7 +1007,7 @@ class EmployeeEngine:
 
         # Get the plan steps
         plan_steps = self._load_plan_steps(execution_id, worker_id)
-        mission = self._mission_engine.get_mission(mission_id)
+        mission = self._mission_engine.get_mission(mission_id, owner_id=self._owner_id)
 
         # Continue executing from current step
         return self._execute_next_step(
@@ -1256,9 +1257,10 @@ class _WorkerRuntimeStub:
         self,
         connector_registry: ConnectorRegistry | None = None,
         human_intervention: HumanInterventionManager | None = None,
+        client: Any | None = None,
     ) -> None:
         self._connector_registry = connector_registry
-        self._human_intervention = human_intervention or HumanInterventionManager()
+        self._human_intervention = human_intervention or HumanInterventionManager(client=client)
 
     def execute_connector_action(
         self,

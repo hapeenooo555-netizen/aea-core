@@ -32,7 +32,7 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "paused": {"pending", "scheduled", "active", "cancelled"},
     "retrying": {"active", "paused", "failed", "cancelled", "waiting_dependency"},
     "waiting_dependency": {"pending", "scheduled", "paused", "cancelled"},
-    "waiting_approval": {"active", "failed", "paused", "cancelled"},
+    "waiting_approval": {"active", "waiting_human", "completed", "failed", "paused", "cancelled"},
     "waiting_human": {"active", "failed", "paused", "cancelled"},
     "completed": set(),
     "failed": {"retrying", "cancelled"},
@@ -145,7 +145,6 @@ class MissionOrchestrationService:
             "dependencies": dependencies,
             "metadata": sanitize_payload(metadata or {}),
             "result": {},
-            "error": None,
             "attempt_count": 0,
             "max_attempts": self.max_mission_attempts,
             "next_retry_at": None,
@@ -209,9 +208,13 @@ class MissionOrchestrationService:
             return {"success": False, "error": f"Invalid transition: {current} -> {target}"}
         updates = {"status": target, "updated_at": _iso(_now())}
         if result is not None:
-            updates["result"] = sanitize_payload(result)
-        if error is not None:
-            updates["error"] = error
+            result_payload = sanitize_payload(result)
+            if error is not None:
+                result_payload = dict(result_payload)
+                result_payload["error"] = error
+            updates["result"] = result_payload
+        elif error is not None:
+            updates["result"] = {"error": error}
         updated = self._update_mission(mission_id, updates)
         if updated.get("success") and target != current:
             event_name = {

@@ -13,7 +13,10 @@ from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.human_intervention import HumanInterventionManager
 from app.services.mission_execution_service import MissionExecutionService
+from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
+from app.services.stores.pin_publish_store import PinPublishStore
+from app.services.stores.platform_connection_store import PlatformConnectionStore
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -74,13 +77,49 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
                 client=client,
                 durable_required=True,
             ),
+            connection_store=PlatformConnectionStore(client=client),
+            pin_store=PinPublishStore(client=client, durable_required=True),
         ),
     )
     return ApprovalResumeService(
         approval_gateway=ApprovalGateway(client=client),
         connector_registry=registry,
-        human_intervention_manager=HumanInterventionManager(),
+        human_intervention_manager=HumanInterventionManager(client=client),
     )
+
+
+def _update_p1_8_mission_state(
+    approval: dict[str, Any] | None,
+    outcome: dict[str, Any],
+    owner_id: str,
+    client: Any | None,
+) -> None:
+    """Reflect an approval outcome on its owned P1-8 mission, when applicable."""
+
+    mission_id = (approval or {}).get("mission_id")
+    if not mission_id:
+        return
+
+    orchestration = MissionOrchestrationService(owner_id, client=client)
+    mission = orchestration.get_mission(mission_id)
+    # Strongest existing P1-8 marker: ``orchestration_idempotency_key``
+    # is an orchestration-specific column set exclusively by
+    # MissionOrchestrationService.create_mission(). Its key *presence*
+    # in the returned row distinguishes in-memory P1-8 records from
+    # legacy records that lack the key entirely. When using a DB
+    # client (SELECT *), every row has the column, so we additionally
+    # require a non-null ``objective`` — also always populated by
+    # P1-8 — to reject legacy rows.
+    if not mission or "orchestration_idempotency_key" not in mission or not mission.get("objective"):
+        return
+
+    target = {
+        "completed": "completed",
+        "awaiting_human_intervention": "waiting_human",
+        "approval_rejected": "failed",
+    }.get(str(outcome.get("status") or "").lower())
+    if target:
+        orchestration.transition(mission_id, target, result=outcome)
 
 
 @router.get("/{approval_id}")
@@ -150,6 +189,7 @@ async def approve_approval(
         approval_id,
         current_user_id=current_user_id,
     )
+    _update_p1_8_mission_state(approval, resume_result, current_user_id, client)
     return {
         "success": True,
         "approval": approval,
@@ -200,5 +240,7 @@ async def reject_approval(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=terminal.get("error", "Failed to persist rejected execution"),
             )
+
+    _update_p1_8_mission_state(rejected_request, {"status": "approval_rejected"}, current_user_id, client)
 
     return {"success": True, "approval": result.get("request")}
