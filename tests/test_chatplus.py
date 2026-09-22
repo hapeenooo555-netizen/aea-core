@@ -146,6 +146,15 @@ class TestChatPlusRoutes:
         assert "supabaseAnonKey" in data
         assert "authEnabled" in data
 
+    def test_config_route_public_no_auth_required(self, unauth_client: TestClient):
+        """Chat+ config endpoint must be accessible without authentication."""
+        response = unauth_client.get("/chatplus/config")
+        assert response.status_code == 200
+        data = response.json()
+        assert "supabaseUrl" in data
+        assert "supabaseAnonKey" in data
+        assert "authEnabled" in data
+
     def test_index_route(self):
         response = _client_with_app.get("/chatplus")
         assert response.status_code == 200
