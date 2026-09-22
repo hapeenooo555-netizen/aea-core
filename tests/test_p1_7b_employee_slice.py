@@ -163,17 +163,20 @@ def test_pinterest_already_connected_does_not_trigger_onboarding():
     employee = _slice()
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
     result = employee.run(
-        "Start affiliate marketing on pinterest | Country: US | Language: en | Niche: AI tools | Daily limit: 30 pins",
+        "Nataka kuanza affiliate marketing kwenye Pinterest",
         mission_id="mission-aff-connected",
         metadata={"platform": "pinterest", "vertical": "affiliate", "content_inputs": {"platform": "pinterest", "vertical": "affiliate"}},
     )
 
-    assert result["success"] is True
-    assert result["status"] == "COMPLETE"
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
     report = result["report"]
     assert report["selected_tools"] == ["pinterest.get_account_status"]
     assert report["results"][0]["status"] == "connected"
-    assert report["final_status"] == "COMPLETE"
+    assert report["final_status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert report["required_user_action"]
+    assert "affiliate niche" in report["required_user_action"]
+    assert report["execution_id"]
     assert not any(s["tool_name"] == "start_platform_onboarding" for s in report["plan"])
     assert not any(a["action_type"] == "start_platform_onboarding" for a in employee._approvals.list_requests())
 

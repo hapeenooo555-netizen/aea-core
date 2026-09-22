@@ -316,7 +316,13 @@ class EmployeeVerticalSlice:
             ):
                 plan.append(self._build_dynamic_onboarding_step(step, metadata))
 
-            decision = self._next_decision(result, step_name, plan, index)
+            decision = self._next_decision(
+                result,
+                step_name,
+                plan,
+                index,
+                goal=report.get("user_goal", ""),
+            )
             report["decision"] = decision
             next_step = self._next_step_name(decision, plan, index)
             report["learning"] = [
@@ -386,7 +392,13 @@ class EmployeeVerticalSlice:
                 )
                 if not input_update.get("success"):
                     return self._failed_report(report, input_update.get("error", "Input state persistence failed"))
-                report["required_user_action"] = result.get("message", "Complete the requested human step")
+                report["required_user_action"] = result.get("message") or (
+                    "Provide your affiliate niche, target product or offer, and content goals before we create a Pinterest plan."
+                    if step_name == "check_connection_status"
+                    and result.get("status") == "connected"
+                    and "affiliate marketing" in report.get("user_goal", "").lower()
+                    else "Complete the requested human step"
+                )
                 report["final_status"] = "WAIT_FOR_HUMAN_INPUT"
                 return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
             if decision == "FOLLOW_UP":
@@ -711,6 +723,8 @@ class EmployeeVerticalSlice:
         step_name: str,
         plan: list[dict[str, Any]],
         index: int,
+        *,
+        goal: str = "",
     ) -> str:
         if result.get("pending_approval"):
             return "WAIT_FOR_APPROVAL"
@@ -721,6 +735,13 @@ class EmployeeVerticalSlice:
                 return "FOLLOW_UP"
             if index + 1 < len(plan) and result.get("status") == "connected" and plan[index + 1].get("tool_name") != "start_platform_onboarding":
                 return "FOLLOW_UP"
+            if (
+                step_name == "check_connection_status"
+                and result.get("status") == "connected"
+                and index + 1 >= len(plan)
+                and "affiliate marketing" in goal.lower()
+            ):
+                return "WAIT_FOR_HUMAN_INPUT"
             return "COMPLETE"
         decision = classify_failure(result.get("error", "execution failure"))
         if decision.category in {"MISSING_INPUT"}:
