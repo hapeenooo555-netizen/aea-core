@@ -31,6 +31,7 @@ _STATE_LABELS = {
     "thinking": "Thinking",
     "working": "Working",
     "waiting_for_approval": "Waiting for approval",
+    "waiting_for_human": "Waiting for your action",
     "completed": "Completed",
     "failed": "Failed",
 }
@@ -340,9 +341,12 @@ class ChatPlusService:
     def state_for_mission(mission: dict[str, Any] | None, execution: dict[str, Any] | None = None) -> dict[str, str]:
         mission_status = str((mission or {}).get("status") or "").lower()
         execution_status = str((execution or {}).get("status") or "").upper()
-        if mission_status in {"waiting_approval", "waiting_human"}:
+        if mission_status in {"waiting_approval"}:
             state = "waiting_for_approval"
             detail = "Waiting for approval"
+        elif mission_status in {"waiting_human"}:
+            state = "waiting_for_human"
+            detail = "Waiting for your action"
         elif mission_status in {"active"}:
             state = "working"
             detail = "Working"
@@ -370,7 +374,9 @@ class ChatPlusService:
     ) -> str:
         execution = execution or {}
         if state["state"] == "waiting_for_approval":
-            text = "I’m waiting for your approval before continuing. Review the approval below."
+            text = "I'm waiting for your approval before continuing. Review the approval below."
+        elif state["state"] == "waiting_for_human":
+            text = "A Pinterest authorization/action is required before the Employee can continue. Please complete the requested step."
         elif state["state"] == "failed":
             error = execution.get("error") or (mission or {}).get("result", {}).get("error") or "The goal could not be completed"
             text = f"I could not complete that goal: {error}"

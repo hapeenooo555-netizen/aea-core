@@ -155,6 +155,39 @@ class TestChatPlusRoutes:
         assert "supabaseAnonKey" in data
         assert "authEnabled" in data
 
+    def test_waiting_human_mapping_from_mission_to_frontend(self):
+        """Regression test: mission status 'waiting_human' should map to frontend state 'waiting_for_human' and show human-action message, not approval message."""
+        from app.services.chatplus import ChatPlusService
+
+        # Mock a mission with waiting_human status (simulate after Pinterest OAuth approval)
+        mission = {
+            "id": "test-mission-1",
+            "status": "waiting_human",
+            "metadata": {"source": "chatplus", "conversation_id": "test-convo"},
+        }
+        # Mock an execution result simulating awaiting_human_intervention
+        execution = {
+            "status": "AWAITING_HUMAN_INTERVENTION",
+            "result": {"requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required"},
+        }
+        state = ChatPlusService.state_for_mission(mission, execution)
+        # Verify mapping
+        assert state["state"] == "waiting_for_human"
+        assert state["label"] == "Waiting for your action"
+        assert state["detail"] == "Waiting for your action"
+
+        # Verify assistant text shows human-action message, not approval message
+        text = ChatPlusService._assistant_text(
+            goal="Start affiliate marketing on pinterest",
+            mission=mission,
+            execution=execution,
+            state=state,
+            approvals=[],
+        )
+        # Should contain human-action message, not approval message
+        assert "I'm waiting for your approval" not in text
+        assert "A Pinterest authorization/action is required" in text or "Please complete the required step" in text
+
     def test_index_route(self):
         response = _client_with_app.get("/chatplus")
         assert response.status_code == 200
@@ -199,7 +232,7 @@ class TestChatPlusRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["state"]["state"] in {"ready", "completed", "waiting_for_approval"}
+        assert data["state"]["state"] in {"ready", "completed", "waiting_for_approval", "waiting_for_human"}
 
     def test_approve_endpoint_requires_body_and_ownership(self, auth_client: TestClient):
         response = auth_client.post("/chatplus/approvals/nonexistent/approve")
@@ -219,7 +252,7 @@ class TestChatPlusRoutes:
         assert approved.json()["success"] is True
         state = auth_client.get("/chatplus/state?conversation_id=conv-approval-route")
         assert state.status_code == 200
-        assert state.json()["state"]["state"] in {"waiting_for_approval", "failed", "completed"}
+        assert state.json()["state"]["state"] in {"waiting_for_human", "waiting_for_approval", "failed", "completed"}
 
     def test_reject_endpoint_works_with_correct_ownership(self, auth_client: TestClient):
         sent = auth_client.post(
@@ -236,7 +269,40 @@ class TestChatPlusRoutes:
         assert rejected.json()["success"] is True
         state = auth_client.get("/chatplus/state?conversation_id=conv-reject-route")
         assert state.status_code == 200
-        assert state.json()["state"]["state"] in {"failed", "waiting_for_approval"}
+        assert state.json()["state"]["state"] in {"failed", "waiting_for_human", "waiting_for_approval"}
+
+    def test_waiting_human_mapping_from_mission_to_frontend(self):
+        """Regression test: mission status 'waiting_human' should map to frontend state 'waiting_for_human' and show human-action message, not approval message."""
+        from app.services.chatplus import ChatPlusService
+
+        # Mock a mission with waiting_human status (simulate after Pinterest OAuth approval)
+        mission = {
+            "id": "test-mission-1",
+            "status": "waiting_human",
+            "metadata": {"source": "chatplus", "conversation_id": "test-convo"},
+        }
+        # Mock an execution result simulating awaiting_human_intervention
+        execution = {
+            "status": "AWAITING_HUMAN_INTERVENTION",
+            "result": {"requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required"},
+        }
+        state = ChatPlusService.state_for_mission(mission, execution)
+        # Verify mapping
+        assert state["state"] == "waiting_for_human"
+        assert state["label"] == "Waiting for your action"
+        assert state["detail"] == "Waiting for your action"
+
+        # Verify assistant text shows human-action message, not approval message
+        text = ChatPlusService._assistant_text(
+            goal="Start affiliate marketing on pinterest",
+            mission=mission,
+            execution=execution,
+            state=state,
+            approvals=[],
+        )
+        # Should contain human-action message, not approval message
+        assert "I'm waiting for your approval" not in text
+        assert "A Pinterest authorization/action is required" in text or "Please complete the required step" in text
 
 
 class TestChatPlusSecurity:
