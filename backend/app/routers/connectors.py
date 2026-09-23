@@ -6,6 +6,7 @@ and human intervention checkpoints.
 
 from __future__ import annotations
 
+import httpx
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -543,23 +544,8 @@ async def pinterest_oauth_callback(
 
     Receives the authorization ``code`` and CSRF ``state`` as query
     parameters from Pinterest's redirect.  Validates the state against
-    the stored checkpoint **before** any further processing.
-
-    **Phase 1 (this implementation)**:
-      - Validates CSRF state (randomness, owner binding, expiry, single-use).
-      - Marks the checkpoint as completed with a boolean flag only.
-      - Does **NOT** exchange the code for tokens.
-      - Does **NOT** store the authorization code, state, or any credential.
-      - Returns a structured result indicating the checkpoint was completed
-        and what the next step is.
-
-    **Phase 2 (future)**:
-      - Exchange ``code`` for access/refresh tokens via Pinterest's token
-        endpoint (``POST https://api.pinterest.com/v5/oauth/token``) using
-        HTTP Basic Authentication with ``PINTEREST_CLIENT_ID`` and
-        ``PINTEREST_CLIENT_SECRET``.
-      - Persist the token reference in ``platform_connections.token_reference``
-        and resume the onboarding workflow via the connector.
+    the stored checkpoint, exchanges the code for access/refresh tokens,
+    persists the connection, and resumes the onboarding workflow.
 
     Args:
         code: Authorization code from Pinterest (never stored or logged).
@@ -570,7 +556,7 @@ async def pinterest_oauth_callback(
         client: User-scoped Supabase client (RLS-enforced).
 
     Returns:
-        Dictionary with checkpoint status and next-step guidance.
+        Dictionary with connection status and next-step guidance.
     """
     if error:
         return {
@@ -617,10 +603,7 @@ async def pinterest_oauth_callback(
             detail=f"OAuth state validation failed: {reason}",
         )
 
-    # State is valid — consume it (mark single-use) by updating checkpoint
-    # metadata.  Only a boolean flag is stored — the authorization code
-    # itself is never persisted or logged.  Phase 2 will perform the
-    # token exchange using the code from the callback query parameter.
+    # State is valid — consume it (mark single-use).
     consume_meta = helper.consume_state_metadata()
     complete_result = manager.complete_checkpoint(
         checkpoint_id,
@@ -632,14 +615,113 @@ async def pinterest_oauth_callback(
             detail="Failed to complete checkpoint",
         )
 
-    # Return checkpoint and workflow context for the frontend to display
-    # next-step instructions.  No credentials are included in the response.
+    # Phase 2: Exchange authorization code for access/refresh tokens.
+    # When OAuth is not configured (e.g. test environments), return the
+    # checkpoint-completed state without attempting a network call.
+    config = PinterestOAuthConfig()
     workflow_id = inner_md.get("workflow_id")
+    if not config.is_configured:
+        return {
+            "success": True,
+            "status": "checkpoint_completed",
+            "checkpoint_id": checkpoint_id,
+            "workflow_id": workflow_id,
+            "message": "Pinterest authorization code received. Token exchange will complete the connection.",
+            "next_step": "token_exchange",
+        }
+
+    token_url = "https://api.pinterest.com/v5/oauth/token"
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": config.redirect_uri,
+    }
+    try:
+        async with httpx.AsyncClient() as http_client:
+            token_response = await http_client.post(
+                token_url,
+                data=payload,
+                auth=(config.client_id, config.client_secret),
+                headers={"Accept": "application/json"},
+                timeout=30,
+            )
+        if token_response.status_code != 200:
+            return {
+                "success": False,
+                "status": "token_exchange_failed",
+                "error": "pinterest_token_error",
+                "error_description": f"Pinterest returned {token_response.status_code}",
+            }
+        token_data = token_response.json()
+    except Exception:  # pragma: no cover - network errors
+        return {
+            "success": False,
+            "status": "token_exchange_failed",
+            "error": "pinterest_token_error",
+            "error_description": "Failed to reach Pinterest token endpoint",
+        }
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    token_type = token_data.get("token_type", "bearer")
+    expires_in = token_data.get("expires_in")
+
+    if not access_token:
+        return {
+            "success": False,
+            "status": "token_exchange_failed",
+            "error": "missing_access_token",
+            "error_description": "Pinterest did not return an access token",
+        }
+
+    # Normalize scopes from Pinterest token response (space-separated string).
+    token_scopes = token_data.get("scope") or token_data.get("scopes")
+    if isinstance(token_scopes, str):
+        token_scopes = [s.strip() for s in token_scopes.split() if s.strip()]
+    elif token_scopes is None:
+        token_scopes = []
+
+    # Persist the platform connection for the current user.
+    connector = _get_user_scoped_pinterest_connector(client=client)
+    connect_result = connector.connect_account(
+        current_user_id,
+        {
+            "oauth_code": code,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": token_type,
+            "expires_in": expires_in,
+            "external_account_id": token_data.get("account_id"),
+            "display_name": token_data.get("username"),
+            "scopes": token_scopes,
+        },
+    )
+    if not connect_result.get("success"):
+        return {
+            "success": False,
+            "status": "connection_failed",
+            "error": "failed_to_connect",
+            "error_description": connect_result.get("error", "Unknown error"),
+        }
+
+    # Resume the onboarding workflow if a workflow_id is available.
+    if workflow_id:
+        resume_result = connector.resume_onboarding(workflow_id, {"authorization_code": code, "access_token": access_token})
+        if not resume_result.get("success"):
+            return {
+                "success": False,
+                "status": "resume_failed",
+                "error": resume_result.get("error", "Unknown error"),
+                "workflow_id": workflow_id,
+            }
+
     return {
         "success": True,
-        "status": "checkpoint_completed",
+        "status": "connected",
         "checkpoint_id": checkpoint_id,
         "workflow_id": workflow_id,
-        "message": "Pinterest authorization code received. Token exchange will complete the connection.",
-        "next_step": "token_exchange",
+        "platform": "pinterest",
+        "connected": True,
+        "message": "Pinterest connection established successfully",
+        "next_step": resume_result.get("next_step", "complete") if workflow_id else "complete",
     }

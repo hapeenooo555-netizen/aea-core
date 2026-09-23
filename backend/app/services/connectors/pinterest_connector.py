@@ -249,9 +249,12 @@ class PinterestConnector(BaseConnector):
             checkpoint_data = {
                 "checkpoint_type": "oauth_authorization_required",
                 "instructions": (
-                    "Please authorize AEA to access your Pinterest account. "
-                    "Visit the Pinterest authorization page and complete the OAuth flow. "
-                    "Once authorized, Pinterest will redirect you back to AEA with a verification code."
+                    "Pinterest account setup required\n\n"
+                    "AEA needs access to your Pinterest account before it can continue.\n\n"
+                    "If you don't have a Pinterest account yet, complete your Pinterest setup first. "
+                    "Then return here and connect your account.\n\n"
+                    "[ Connect Pinterest ]\n\n"
+                    "AEA will continue after successful connection."
                 ),
                 "metadata": {
                     "authorization_url": auth_url,
@@ -317,9 +320,12 @@ class PinterestConnector(BaseConnector):
         checkpoint_data = {
             "checkpoint_type": "oauth_authorization_required",
             "instructions": (
-                "Please authorize AEA to access your Pinterest account. "
-                "Visit the Pinterest authorization page and complete the OAuth flow. "
-                "Once authorized, Pinterest will redirect you back to AEA with a verification code."
+                "Pinterest account setup required\n\n"
+                "AEA needs access to your Pinterest account before it can continue.\n\n"
+                "If you don't have a Pinterest account yet, complete your Pinterest setup first. "
+                "Then return here and connect your account.\n\n"
+                "[ Connect Pinterest ]\n\n"
+                "AEA will continue after successful connection."
             ),
             "metadata": {
                 "authorization_url": auth_url,
