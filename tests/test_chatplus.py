@@ -138,6 +138,34 @@ class TestChatPlusMessageFlow:
 
 
 class TestChatPlusRoutes:
+    def test_frontend_workspace_visibility_is_session_aware(self):
+        html = (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+
+        assert "userMissionStartedInSession: false" in html
+
+        render_start = html.index("function renderState(")
+        render_end = html.index("if (statusPill)", render_start)
+        render_state = html[render_start:render_end]
+        terminal_historical_state = 'const terminalHistoricalState = ["completed", "failed", "cancelled"].includes(currentState) && !state.userMissionStartedInSession;'
+        assert terminal_historical_state in render_state
+        for state_name in ("completed", "failed", "cancelled"):
+            assert f'"{state_name}"' in terminal_historical_state
+        for state_name in ("thinking", "completed", "failed"):
+            assert f'"{state_name}"' in render_state
+        assert 'chatView.classList.toggle("workspace-empty", !(meaningfulStates.has(currentState) && !terminalHistoricalState));' in render_state
+
+        submit_start = html.index("async function sendMessage(")
+        submit_end = html.index("async function", submit_start + 1)
+        submit = html[submit_start:submit_end]
+        assert submit.index("state.userMissionStartedInSession = true;") < submit.index('renderState({ state: "thinking"')
+
+        signout_start = html.index("function signOut(")
+        signout_end = html.index("function ", signout_start + 1)
+        signout = html[signout_start:signout_end]
+        assert "state.userMissionStartedInSession = false;" in signout
+
     def test_config_route(self):
         response = _client_with_app.get("/chatplus/config")
         assert response.status_code == 200

@@ -1020,6 +1020,7 @@ sw: {
         language: "en",
         pollTimer: null,
         sending: false,
+        userMissionStartedInSession: false,
       };
 
       const authView = document.getElementById("authView");
@@ -1206,8 +1207,9 @@ function renderState(nextState) {
          const currentState = state.currentState.state || "ready";
          const ui = activeCopy();
 
-         // Only explicit meaningful ChatPlus states should reveal the full workspace.
-         // A stored mission/history record must not independently force the UI open.
+         // Only states started by the user in the current ChatPlus session should reveal
+         // the full workspace after terminal outcomes. Historical terminal records must stay
+         // in the empty composer until the user explicitly starts a new goal.
          const chatView = document.getElementById("chatView");
          if (chatView) {
            const meaningfulStates = new Set([
@@ -1221,7 +1223,8 @@ function renderState(nextState) {
              "retrying",
              "cancelled",
            ]);
-           chatView.classList.toggle("workspace-empty", !meaningfulStates.has(currentState));
+           const terminalHistoricalState = ["completed", "failed", "cancelled"].includes(currentState) && !state.userMissionStartedInSession;
+           chatView.classList.toggle("workspace-empty", !(meaningfulStates.has(currentState) && !terminalHistoricalState));
          }
 
          if (statusPill) statusPill.dataset.state = currentState;
@@ -1417,6 +1420,7 @@ function renderState(nextState) {
         if (!text || state.sending) return;
         const clientMessageId = crypto.randomUUID();
         setLanguageFromGoal(text);
+        state.userMissionStartedInSession = true;
         messageInput.value = "";
         setSending(true);
         renderState({ state: "thinking", label: localizedStateLabel("thinking"), detail: activeCopy().analyzing });
@@ -1497,6 +1501,7 @@ function renderState(nextState) {
         state.currentExecution = null;
         state.latestGoal = "";
         state.language = "en";
+        state.userMissionStartedInSession = false;
         messageInput.placeholder = copy.en.placeholder;
         renderHistory();
         renderApprovals();
