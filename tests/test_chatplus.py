@@ -148,13 +148,21 @@ class TestChatPlusRoutes:
         render_start = html.index("function renderState(")
         render_end = html.index("if (statusPill)", render_start)
         render_state = html[render_start:render_end]
-        terminal_historical_state = 'const terminalHistoricalState = ["completed", "failed", "cancelled"].includes(currentState) && !state.userMissionStartedInSession;'
-        assert terminal_historical_state in render_state
-        for state_name in ("completed", "failed", "cancelled"):
-            assert f'"{state_name}"' in terminal_historical_state
-        for state_name in ("thinking", "completed", "failed"):
+        meaningful_states = (
+            "completed",
+            "failed",
+            "cancelled",
+            "waiting_for_human",
+            "waiting_for_approval",
+            "working",
+            "thinking",
+            "paused",
+            "retrying",
+        )
+        for state_name in meaningful_states:
             assert f'"{state_name}"' in render_state
-        assert 'chatView.classList.toggle("workspace-empty", !(meaningfulStates.has(currentState) && !terminalHistoricalState));' in render_state
+        normalized_render_state = " ".join(render_state.split())
+        assert '"workspace-empty", !(meaningfulStates.has(currentState) && state.userMissionStartedInSession)' in normalized_render_state
 
         submit_start = html.index("async function sendMessage(")
         submit_end = html.index("async function", submit_start + 1)

@@ -1223,8 +1223,10 @@ function renderState(nextState) {
              "retrying",
              "cancelled",
            ]);
-           const terminalHistoricalState = ["completed", "failed", "cancelled"].includes(currentState) && !state.userMissionStartedInSession;
-           chatView.classList.toggle("workspace-empty", !(meaningfulStates.has(currentState) && !terminalHistoricalState));
+             chatView.classList.toggle(
+               "workspace-empty",
+               !(meaningfulStates.has(currentState) && state.userMissionStartedInSession)
+             );
          }
 
          if (statusPill) statusPill.dataset.state = currentState;
