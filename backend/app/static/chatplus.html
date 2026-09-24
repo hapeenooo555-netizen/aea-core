@@ -1206,12 +1206,22 @@ function renderState(nextState) {
          const currentState = state.currentState.state || "ready";
          const ui = activeCopy();
 
-         // Remove workspace-empty class when state is meaningful (not just ready with no mission)
+         // Only explicit meaningful ChatPlus states should reveal the full workspace.
+         // A stored mission/history record must not independently force the UI open.
          const chatView = document.getElementById("chatView");
          if (chatView) {
-           if (currentState !== "ready" || state.currentMission) {
-             chatView.classList.remove("workspace-empty");
-           }
+           const meaningfulStates = new Set([
+             "thinking",
+             "working",
+             "waiting_for_human",
+             "waiting_for_approval",
+             "completed",
+             "failed",
+             "paused",
+             "retrying",
+             "cancelled",
+           ]);
+           chatView.classList.toggle("workspace-empty", !meaningfulStates.has(currentState));
          }
 
          if (statusPill) statusPill.dataset.state = currentState;
