@@ -773,6 +773,18 @@
 
     [hidden] { display: none !important; }
 
+    /* Initial workspace: hide all non-composer elements until a goal is submitted */
+    #chatView.workspace-empty .status-row,
+    #chatView.workspace-empty .hero-card,
+    #chatView.workspace-empty .panel,
+    #chatView.workspace-empty .card-actions,
+    #chatView.workspace-empty .task-card,
+    #chatView.workspace-empty #approvals,
+    #chatView.workspace-empty #completionCard,
+    #chatView.workspace-empty #errorCard {
+      display: none !important;
+    }
+
     @media (min-width: 720px) {
       .shell {
         width: min(100%, 980px);
@@ -811,7 +823,7 @@
     </form>
   </section>
 
-  <main id="chatView" class="shell" hidden>
+  <main id="chatView" class="shell workspace-empty" hidden>
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">+</div>
@@ -851,23 +863,19 @@
         </article>
 
         <div class="card-actions">
-          <button id="viewOrchestrationButton" class="secondary-button" type="button">View orchestration</button>
+          <button id="viewOrchestrationButton" class="secondary-button" type="button">View progress</button>
           <button id="viewHistoryButton" class="secondary-button muted" type="button">View history</button>
         </div>
 
         <article id="taskCard" class="task-card">
           <div id="currentActionLabel" class="task-title">Current action</div>
           <div id="taskDetail" class="task-body positive">AEA is working on your next step.</div>
-          {{#if state.currentState && state.currentState.state === "waiting_for_human"}}
-          {{#if state.currentMission && state.currentMission.metadata && state.currentMission.metadata.authorization_url}}
-          <div id="pinterestConnect" class="pinterest-connect" style="margin-top: 12px; padding: 8px; background: var(--brand-soft); border-radius: var(--radius); color: var(--brand-dark); font-size: 12px; font-weight: 700; text-align: center;">
+          <div id="pinterestConnect" class="pinterest-connect" hidden style="margin-top: 12px; padding: 8px; background: var(--brand-soft); border-radius: var(--radius); color: var(--brand-dark); font-size: 12px; font-weight: 700; text-align: center;">
             <button id="connectPinterestBtn" class="secondary-button muted" style="width: 100%; padding: 8px; border: 1px solid var(--line); background: transparent; color: var(--brand-dark); font-size: 12px; font-weight: 700; border-radius: var(--radius); cursor: pointer; text-align: left;">
               <span style="display: inline-block; width: 16px; height: 16px; margin-right: 8px; vertical-align: middle; background: linear-gradient(135deg, var(--brand), #1d8273); border-radius: 4px;"></span>
 Connect Pinterest
             </button>
           </div>
-          {{/if}}
-          {{/if}}
           <div id="assistantResponse" class="assistant-response" hidden></div>
         </article>
 
@@ -880,7 +888,7 @@ Connect Pinterest
           <div class="task-title">Completed</div>
           <div class="task-body">✓ COMPLETED<br>AEA finished the current job.</div>
           <div class="card-actions">
-            <button id="completionOrchestrationButton" class="secondary-button" type="button">View orchestration</button>
+            <button id="completionOrchestrationButton" class="secondary-button" type="button">View progress</button>
             <button id="completionHistoryButton" class="secondary-button muted" type="button">View history</button>
           </div>
         </article>
@@ -911,7 +919,7 @@ Connect Pinterest
 
   <aside id="orchestrationDrawer" class="drawer" aria-hidden="true">
     <div class="drawer-header">
-      <h3>Orchestration</h3>
+      <h3>Progress</h3>
       <button id="closeOrchestrationButton" class="ghost-button" type="button">Close</button>
     </div>
     <div class="drawer-content">
@@ -933,9 +941,10 @@ Connect Pinterest
         en: {
           placeholder: "Describe your goal...",
           status: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting for your action", waiting_for_approval: "Waiting for approval", completed: "Completed", failed: "Action needs attention" },
+          chip: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting", waiting_for_approval: "Waiting", completed: "Completed", failed: "Action needed" },
           goalUnderstood: "Goal understood",
           working: "AEA is working on your next step.",
-          waitingHuman: "Pinterest account setup required\n\nAEA needs access to your Pinterest account before it can continue.\n\nIf you don't have a Pinterest account yet, complete your Pinterest setup first. Then return here and connect your account.\n\n[ Connect Pinterest ]\n\nAEA will continue after successful connection.",
+          waitingHuman: "Pinterest account setup required\n\nAEA needs access to your Pinterest account before it can continue.\n\nIf you don't have a Pinterest account yet, complete your Pinterest setup first. Then return here and connect your account.\n\nAEA will continue after successful connection.",
           waitingApproval: "AEA needs your approval before continuing.",
           completed: "AEA finished the current job.",
           failed: "Action needs attention.",
@@ -964,12 +973,13 @@ Connect Pinterest
             approval: "Human approval", publishing: "Publishing", analytics: "Analytics",
           },
         },
-        sw: {
+sw: {
           placeholder: "Type your goal...",
           status: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting for your action", waiting_for_approval: "Waiting for approval", completed: "Completed", failed: "Action needs attention" },
+          chip: { ready: "Tayari", thinking: "Inafikiria", working: "Inafanya", waiting_for_human: "Inasubiri", waiting_for_approval: "Inasubiri", completed: "Imekamilika", failed: "Inahitaji hatua" },
           goalUnderstood: "Goal understood",
           working: "AEA is working on your next step.",
-          waitingHuman: "Pinterest account setup required\n\nAEA needs access to your Pinterest account before it can continue.\n\nIf you don't have a Pinterest account yet, complete your Pinterest setup first. Then return here and connect your account.\n\n[ Connect Pinterest ]\n\nAEA will continue after successful connection.",
+          waitingHuman: "Pinterest account setup required\n\nAEA needs access to your Pinterest account before it can continue.\n\nIf you don't have a Pinterest account yet, complete your Pinterest setup first. Then return here and connect your account.\n\nAEA will continue after successful connection.",
           waitingApproval: "AEA needs your approval before continuing.",
           completed: "AEA finished the current job.",
           failed: "Action needs attention.",
@@ -1149,19 +1159,23 @@ Connect Pinterest
       }
 
 function getCurrentActionText(stateKey, mission) {
-          const ui = activeCopy();
-          const goal = (mission?.objective || mission?.description || mission?.title || "").toLowerCase();
-          if (stateKey === "ready") return ui.readyAction;
-          if (stateKey === "waiting_for_human") {
-            return /pinterest/i.test(goal) ? `${ui.status.waiting_for_human}: ${ui.authorize}.` : `${ui.status.waiting_for_human}: ${ui.requiredStep}.`;
-          }
-          if (stateKey === "waiting_for_approval") return ui.waitingApproval;
-          if (stateKey === "thinking") return ui.analyzing;
-          if (stateKey === "working") return /pinterest/i.test(goal) ? `${ui.checkingPinterest}...` : ui.working;
-          if (stateKey === "completed") return ui.completed;
-          if (stateKey === "failed") return ui.failed;
-          return ui.nextAction;
-        }
+           const ui = activeCopy();
+           const goal = (mission?.objective || mission?.description || mission?.title || "").toLowerCase();
+           if (stateKey === "ready") return ui.readyAction;
+           if (stateKey === "waiting_for_human") {
+             return /pinterest/i.test(goal) ? ui.authorize : ui.requiredStep;
+           }
+           if (stateKey === "waiting_for_approval") return ui.waitingApproval;
+           if (stateKey === "thinking") return ui.analyzing;
+           if (stateKey === "working") return /pinterest/i.test(goal) ? ui.checkingPinterest : ui.working;
+           if (stateKey === "completed") return ui.completed;
+           if (stateKey === "failed") return ui.failed;
+           return ui.nextAction;
+         }
+
+       function localizedChipLabel(stateKey) {
+         return activeCopy().chip[stateKey] || activeCopy().chip.ready;
+       }
 
       function renderHistory() {
         if (!historyList) return;
@@ -1175,7 +1189,7 @@ function getCurrentActionText(stateKey, mission) {
         userGoals.forEach((message, index) => {
           const button = makeElement("button", "history-item", "");
           button.type = "button";
-          const title = makeElement("div", "history-item-title", `Goal ${userGoals.length - index}`);
+          const title = makeElement("div", "history-item-title", (message.content || "").slice(0, 40));
           const body = makeElement("div", "history-item-body", (message.content || "").slice(0, 90));
           button.append(title, body);
           button.addEventListener("click", () => {
@@ -1187,63 +1201,85 @@ function getCurrentActionText(stateKey, mission) {
         });
       }
 
-      function renderState(nextState) {
-        state.currentState = nextState || state.currentState || { state: "ready", label: "Tayari", detail: "Tayari kwa lengo lako lijalo" };
-        const currentState = state.currentState.state || "ready";
-        const ui = activeCopy();
-        if (statusPill) statusPill.dataset.state = currentState;
-        setTextContent(statusLabel, localizedStateLabel(currentState));
-        setTextContent(statusDetail, state.currentState.detail || "");
+function renderState(nextState) {
+         state.currentState = nextState || state.currentState || { state: "ready", label: "Tayari", detail: "Tayari kwa lengo lako lijalo" };
+         const currentState = state.currentState.state || "ready";
+         const ui = activeCopy();
 
-        const mission = state.currentMission || {};
-        const goal = mission?.objective || mission?.description || mission?.title || "";
-        setTextContent(document.getElementById("jobTitle"), deriveMissionTitle(mission));
+         // Remove workspace-empty class when state is meaningful (not just ready with no mission)
+         const chatView = document.getElementById("chatView");
+         if (chatView) {
+           if (currentState !== "ready" || state.currentMission) {
+             chatView.classList.remove("workspace-empty");
+           }
+         }
 
-        const chip = document.getElementById("jobStateChip");
-        if (chip) chip.textContent = localizedStateLabel(currentState);
+         if (statusPill) statusPill.dataset.state = currentState;
+         setTextContent(statusLabel, localizedStateLabel(currentState));
+         setTextContent(statusDetail, state.currentState.detail || "");
 
-        setTextContent(document.getElementById("currentActionText"), getCurrentActionText(currentState, mission));
+         const mission = state.currentMission || {};
+         const goal = mission?.objective || mission?.description || mission?.title || "";
+         setTextContent(document.getElementById("jobTitle"), deriveMissionTitle(mission));
 
-        const statusText = document.getElementById("jobMetaText");
-        if (statusText) {
-          if (currentState === "failed") statusText.textContent = ui.failed;
-          else if (currentState === "thinking") statusText.textContent = ui.goalUnderstood;
-          else statusText.textContent = goal ? ui.goalUnderstood : ui.nextGoal;
-        }
+         const chip = document.getElementById("jobStateChip");
+         if (chip) chip.textContent = localizedChipLabel(currentState);
 
-        const completionCard = document.getElementById("completionCard");
-        const errorCard = document.getElementById("errorCard");
-        if (completionCard) completionCard.hidden = currentState !== "completed";
-        if (errorCard) errorCard.hidden = currentState !== "failed";
+         setTextContent(document.getElementById("currentActionText"), getCurrentActionText(currentState, mission));
 
-        if (currentState === "failed") {
-          const executionError = (state.currentMission?.result && state.currentMission.result.error) || "The workflow needs attention.";
-          setTextContent(document.getElementById("errorText"), executionError);
-        }
+         const statusText = document.getElementById("jobMetaText");
+         if (statusText) {
+           if (currentState === "failed") statusText.textContent = ui.failed;
+           else if (currentState === "thinking") statusText.textContent = ui.goalUnderstood;
+           else statusText.textContent = goal ? ui.goalUnderstood : ui.nextGoal;
+         }
 
-        const taskDetail = document.getElementById("taskDetail");
-        if (taskDetail) {
-          if (currentState === "waiting_for_human") {
-            taskDetail.textContent = ui.waitingHuman;
-            taskDetail.className = "task-body warning";
-          } else if (currentState === "waiting_for_approval") {
-            taskDetail.textContent = ui.waitingApproval;
-            taskDetail.className = "task-body warning";
-          } else if (currentState === "completed") {
-            taskDetail.textContent = ui.completed;
-            taskDetail.className = "task-body positive";
-          } else if (currentState === "failed") {
-            taskDetail.textContent = ui.failed;
-            taskDetail.className = "task-body warning";
-          } else if (currentState === "ready") {
-            taskDetail.textContent = ui.readyTask;
-            taskDetail.className = "task-body positive";
-          } else {
-            taskDetail.textContent = ui.working;
-            taskDetail.className = "task-body positive";
-          }
-        }
-      }
+         const completionCard = document.getElementById("completionCard");
+         const errorCard = document.getElementById("errorCard");
+         if (completionCard) completionCard.hidden = currentState !== "completed";
+         if (errorCard) errorCard.hidden = currentState !== "failed";
+
+         if (currentState === "failed") {
+           const executionError = (state.currentMission?.result && state.currentMission.result.error) || "The workflow needs attention.";
+           setTextContent(document.getElementById("errorText"), executionError);
+         }
+
+         const taskDetail = document.getElementById("taskDetail");
+         if (taskDetail) {
+           if (currentState === "waiting_for_human") {
+             taskDetail.textContent = ui.waitingHuman;
+             taskDetail.className = "task-body warning";
+           } else if (currentState === "waiting_for_approval") {
+             taskDetail.textContent = ui.waitingApproval;
+             taskDetail.className = "task-body warning";
+           } else if (currentState === "completed") {
+             taskDetail.textContent = ui.completed;
+             taskDetail.className = "task-body positive";
+           } else if (currentState === "failed") {
+             taskDetail.textContent = ui.failed;
+             taskDetail.className = "task-body warning";
+           } else if (currentState === "ready") {
+             taskDetail.textContent = ui.readyTask;
+             taskDetail.className = "task-body positive";
+           } else {
+             taskDetail.textContent = ui.working;
+             taskDetail.className = "task-body positive";
+           }
+         }
+
+         // Show/hide Pinterest connect button
+         const pinterestConnectDiv = document.getElementById("pinterestConnect");
+         if (pinterestConnectDiv) {
+           if (currentState === "waiting_for_human" &&
+               state.currentMission &&
+               state.currentMission.metadata &&
+               state.currentMission.metadata.authorization_url) {
+             pinterestConnectDiv.hidden = false;
+           } else {
+             pinterestConnectDiv.hidden = true;
+           }
+         }
+       }
 
       function setSending(sending) {
         state.sending = sending;
