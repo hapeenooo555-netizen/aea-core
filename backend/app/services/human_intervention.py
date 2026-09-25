@@ -46,7 +46,7 @@ class HumanInterventionCheckpoint:
             mission_id: Associated mission identifier.
             platform: Platform name (e.g., 'pinterest').
             checkpoint_type: Type of checkpoint (otp_required, oauth_authorization_required, etc.).
-            status: Current status (awaiting_human, completed, failed, expired).
+            status: Current status (awaiting_human, processing, completed, failed, expired).
             instructions: Human-readable instructions for completion.
             metadata: Additional context for the checkpoint.
             created_at: When the checkpoint was created.
@@ -229,19 +229,20 @@ class HumanInterventionManager:
         self,
         oauth_state: str,
         owner_id: str | None = None,
+        status_filter: str | None = None,
     ) -> dict[str, Any] | None:
-        """Find a pending checkpoint by its OAuth state stored in metadata.
+        """Find a checkpoint by its OAuth state stored in metadata.
 
-        Queries ``human_intervention_checkpoints`` for rows where
-        ``status = 'awaiting_human'`` and ``metadata.oauth_state`` matches.
-        When ``owner_id`` is supplied, also joins through ``missions`` to
-        verify ownership at the query level.
+        Supports both flat metadata.metadata.oauth_state and
+        legacy nested metadata.metadata.oauth_state.
 
-        Falls back to an in-memory scan when the database is unavailable.
+        When status_filter is supplied, only checkpoints with that
+        status are returned. When None, any status is matched.
 
         Args:
             oauth_state: The CSRF state token to look up.
             owner_id: Optional owner identity for ownership scoping.
+            status_filter: Optional status filter (e.g. 'awaiting_human').
 
         Returns:
             Normalized checkpoint dict or None.
@@ -254,9 +255,14 @@ class HumanInterventionManager:
                 query = (
                     self._client.table("human_intervention_checkpoints")
                     .select("*")
-                    .eq("status", "awaiting_human")
                     .eq("metadata->oauth_state", oauth_state)
                 )
+                # Also check legacy nested path
+                query = query.or_(
+                    "and(metadata->'metadata'->>'oauth_state',eq," + oauth_state + ")"
+                )
+                if status_filter:
+                    query = query.eq("status", status_filter)
                 if owner_id:
                     query = query.or_(
                         f"and(mission_id,in:(select id from missions where owner_id.eq.{owner_id}))"
@@ -270,11 +276,294 @@ class HumanInterventionManager:
 
         # In-memory fallback
         for checkpoint in self._memory_store.values():
-            if checkpoint.status != "awaiting_human":
-                continue
             md = checkpoint.metadata or {}
+            # Check flat metadata.oauth_state
             if md.get("oauth_state") == oauth_state:
+                if status_filter and checkpoint.status != status_filter:
+                    continue
                 return checkpoint.to_dict()
+            # Check legacy nested metadata.metadata.oauth_state
+            nested = md.get("metadata", {})
+            if isinstance(nested, dict) and nested.get("oauth_state") == oauth_state:
+                if status_filter and checkpoint.status != status_filter:
+                    continue
+                return checkpoint.to_dict()
+
+        return None
+
+    def find_checkpoint_by_oauth_state_any(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Find a checkpoint by OAuth state regardless of status.
+
+        Used by the state-aware callback to distinguish between
+        awaiting_human, processing, completed, and failed states.
+
+        Supports both flat and legacy nested metadata.
+
+        Args:
+            oauth_state: The CSRF state token.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Normalized checkpoint dict or None.
+        """
+        return self.find_checkpoint_by_oauth_state(
+            oauth_state, owner_id=owner_id, status_filter=None
+        )
+
+    def claim_oauth_callback(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically claim a checkpoint by OAuth state.
+
+        Finds a checkpoint matching the OAuth state and transitions it
+        from awaiting_human to processing. The OAuth state is NOT consumed
+        during claim; oauth_state_consumed remains false until successful
+        completion.
+
+        This is the trusted boundary: only the callback that successfully
+        changes awaiting_human -> processing may perform the token exchange.
+
+        Args:
+            oauth_state: The CSRF state token from the OAuth callback.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Dict with 'status' key indicating the checkpoint state:
+            - 'claimed': checkpoint was awaiting_human, now processing
+            - 'processing': checkpoint was already processing
+            - 'completed': checkpoint was already completed
+            - 'failed': checkpoint was already failed
+            - 'unknown': checkpoint not found
+            None if the checkpoint cannot be found at all.
+        """
+        if not oauth_state:
+            return {"status": "unknown"}
+
+        checkpoint = self.find_checkpoint_by_oauth_state_any(oauth_state, owner_id=owner_id)
+        if checkpoint is None:
+            return {"status": "unknown"}
+
+        checkpoint_id = checkpoint.get("id")
+        if not checkpoint_id:
+            return {"status": "unknown"}
+
+        current_status = checkpoint.get("status")
+
+        # Already in a terminal or in-progress state — return the state
+        # without performing any token exchange.
+        if current_status == "processing":
+            return {"status": "processing", "checkpoint": checkpoint}
+        if current_status == "completed":
+            return {"status": "completed", "checkpoint": checkpoint}
+        if current_status == "failed":
+            return {"status": "failed", "checkpoint": checkpoint}
+
+        # Only awaiting_human checkpoints can be claimed.
+        if current_status != "awaiting_human":
+            return {"status": "unknown", "checkpoint": checkpoint}
+
+        # Atomically transition awaiting_human -> processing.
+        # Do NOT consume the OAuth state here.
+        # oauth_state_consumed remains false until successful completion.
+        if self._client:
+            try:
+                response = (
+                    self._client.table("human_intervention_checkpoints")
+                    .update({
+                        "status": "processing",
+                        "metadata": {
+                            **checkpoint.get("metadata", {}),
+                            "oauth_state_processing": True,
+                            "oauth_state_processing_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    })
+                    .eq("id", checkpoint_id)
+                    .eq("status", "awaiting_human")
+                    .execute()
+                )
+                if response.data:
+                    return {"status": "claimed", "checkpoint": checkpoint}
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+
+        # In-memory fallback
+        if checkpoint_id in self._memory_store:
+            cp = self._memory_store[checkpoint_id]
+            if cp.status == "awaiting_human":
+                cp.status = "processing"
+                cp.metadata["oauth_state_processing"] = True
+                cp.metadata["oauth_state_processing_at"] = datetime.now(timezone.utc).isoformat()
+                return {"status": "claimed", "checkpoint": cp.to_dict()}
+
+        return {"status": "unknown"}
+
+    def complete_oauth_callback(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Complete the OAuth callback by consuming the state and marking
+        the checkpoint as completed.
+
+        This should only be called after successful token exchange and
+        durable completion. It transitions processing -> completed and
+        sets oauth_state_consumed = true.
+
+        Args:
+            oauth_state: The CSRF state token.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Dict with success status, or None if checkpoint not found.
+        """
+        if not oauth_state:
+            return None
+
+        checkpoint = self.find_checkpoint_by_oauth_state_any(oauth_state, owner_id=owner_id)
+        if checkpoint is None:
+            return None
+
+        checkpoint_id = checkpoint.get("id")
+        if not checkpoint_id:
+            return None
+
+        current_status = checkpoint.get("status")
+        if current_status != "processing":
+            return None
+
+        now = datetime.now(timezone.utc)
+        if self._client:
+            try:
+                response = (
+                    self._client.table("human_intervention_checkpoints")
+                    .update({
+                        "status": "completed",
+                        "completed_at": now.isoformat(),
+                        "metadata": {
+                            **checkpoint.get("metadata", {}),
+                            "oauth_state_consumed": True,
+                            "oauth_state_consumed_at": now.isoformat(),
+                        },
+                    })
+                    .eq("id", checkpoint_id)
+                    .eq("status", "processing")
+                    .execute()
+                )
+                if response.data:
+                    return {"success": True, "checkpoint": self._normalize_checkpoint(response.data[0])}
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+
+        if checkpoint_id in self._memory_store:
+            cp = self._memory_store[checkpoint_id]
+            if cp.status == "processing":
+                cp.status = "completed"
+                cp.completed_at = now
+                cp.metadata["oauth_state_consumed"] = True
+                cp.metadata["oauth_state_consumed_at"] = now.isoformat()
+                return {"success": True, "checkpoint": cp.to_dict()}
+
+        return None
+
+    def fail_oauth_callback(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+        reason: str = "OAuth exchange failed",
+    ) -> dict[str, Any] | None:
+        """Mark an OAuth checkpoint as failed after a definitive rejection.
+
+        Transitions processing -> failed.
+
+        Args:
+            oauth_state: The CSRF state token.
+            owner_id: Optional owner identity for ownership scoping.
+            reason: Failure reason.
+
+        Returns:
+            Dict with success status, or None if checkpoint not found or
+            not in processing state.
+        """
+        if not oauth_state:
+            return None
+
+        checkpoint = self.find_checkpoint_by_oauth_state_any(oauth_state, owner_id=owner_id)
+        if checkpoint is None:
+            return None
+
+        checkpoint_id = checkpoint.get("id")
+        if not checkpoint_id:
+            return None
+
+        current_status = checkpoint.get("status")
+        if current_status != "processing":
+            return None
+
+        now = datetime.now(timezone.utc)
+        if self._client:
+            try:
+                response = (
+                    self._client.table("human_intervention_checkpoints")
+                    .update({
+                        "status": "failed",
+                        "completed_at": now.isoformat(),
+                        "metadata": {
+                            **checkpoint.get("metadata", {}),
+                            "failure_reason": reason,
+                        },
+                    })
+                    .eq("id", checkpoint_id)
+                    .eq("status", "processing")
+                    .execute()
+                )
+                if response.data:
+                    return {"success": True, "checkpoint": self._normalize_checkpoint(response.data[0])}
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+
+        if checkpoint_id in self._memory_store:
+            cp = self._memory_store[checkpoint_id]
+            if cp.status == "processing":
+                cp.status = "failed"
+                cp.completed_at = now
+                cp.metadata["failure_reason"] = reason
+                return {"success": True, "checkpoint": cp.to_dict()}
+
+        return None
+
+    def reconcile_oauth_callback(
+        self,
+        oauth_state: str,
+        owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Reconcile a checkpoint that is still in processing state
+        after a token exchange succeeded but durable completion failed.
+
+        Returns the checkpoint if it's in processing state, allowing
+        the caller to retry completion without re-exchanging tokens.
+
+        Args:
+            oauth_state: The CSRF state token.
+            owner_id: Optional owner identity for ownership scoping.
+
+        Returns:
+            Dict with 'status': 'processing' and checkpoint data, or None.
+        """
+        if not oauth_state:
+            return None
+
+        checkpoint = self.find_checkpoint_by_oauth_state_any(oauth_state, owner_id=owner_id)
+        if checkpoint is None:
+            return None
+
+        if checkpoint.get("status") == "processing":
+            return {"status": "processing", "checkpoint": checkpoint}
 
         return None
 

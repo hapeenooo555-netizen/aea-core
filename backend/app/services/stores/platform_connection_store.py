@@ -69,6 +69,7 @@ class PlatformConnectionStore:
         external_account_id: str | None = None,
         display_name: str | None = None,
         scopes: list[str] | None = None,
+        token_reference: str | None = None,
     ) -> dict[str, Any]:
         """Insert or update a platform connection for ``(owner_id, platform)``.
 
@@ -93,12 +94,14 @@ class PlatformConnectionStore:
                     "external_account_id": external_account_id,
                     "display_name": display_name,
                     "scopes": sanitized_scopes,
+                    "token_reference": token_reference,
                     "updated_at": now,
                 }
-                # The platform_connections table has an id PK but no unique
-                # constraint on (owner_id, platform). To get upsert semantics
-                # we first try to update an existing row, then fall back to
-                # insert when no row was updated.
+# The platform_connections table has a unique constraint on
+# (owner_id, platform). To get upsert semantics we first try to
+# update an existing row, then fall back to insert when no row
+# was updated. If the insert fails due to the unique constraint
+# (concurrent insert), we fall back to updating again.
                 try:
                     update_response = (
                         client.table(TABLE_NAME)
@@ -124,6 +127,22 @@ class PlatformConnectionStore:
                     .execute()
                 )
                 rows = insert_response.data or []
+                if rows:
+                    return {
+                        "success": True,
+                        "connection": self._normalize_row(rows[0], None),
+                    }
+                # If insert failed (e.g., unique constraint on
+                # (owner_id, platform)), fall back to updating the
+                # existing row.
+                update_response = (
+                    client.table(TABLE_NAME)
+                    .update(db_payload)
+                    .eq("owner_id", owner_id)
+                    .eq("platform", platform)
+                    .execute()
+                )
+                rows = update_response.data or []
                 if rows:
                     return {
                         "success": True,

@@ -705,6 +705,17 @@ class ApprovalResumeService:
     ) -> dict[str, Any] | None:
         """Create a human intervention checkpoint for a connector result."""
         try:
+            # Flatten metadata so oauth_state is queryable at metadata->oauth_state
+            inner_metadata = result.get("metadata", {}) or {}
+            checkpoint_metadata = {
+                "workflow_id": workflow_id,
+                "step": result.get("current_step"),
+                "total_steps": result.get("total_steps"),
+            }
+            for k, v in inner_metadata.items():
+                if k not in ("authorization_url",):
+                    checkpoint_metadata[k] = v
+            checkpoint_metadata["authorization_url"] = inner_metadata.get("authorization_url", "")
             checkpoint_result = self._human_intervention_manager.create_checkpoint(
                 mission_id=mission_id,
                 platform=connector.platform,
@@ -714,12 +725,7 @@ class ApprovalResumeService:
                 instructions=result.get(
                     "instructions", "Complete the required step on the platform"
                 ),
-                metadata={
-                    "workflow_id": workflow_id,
-                    "step": result.get("current_step"),
-                    "total_steps": result.get("total_steps"),
-                    "metadata": result.get("metadata", {}),
-                },
+                metadata=checkpoint_metadata,
             )
             if checkpoint_result.get("success"):
                 return checkpoint_result.get("checkpoint")

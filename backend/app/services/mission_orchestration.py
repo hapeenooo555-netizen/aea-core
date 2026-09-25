@@ -33,7 +33,7 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "retrying": {"active", "paused", "failed", "cancelled", "waiting_dependency"},
     "waiting_dependency": {"pending", "scheduled", "paused", "cancelled"},
     "waiting_approval": {"active", "waiting_human", "completed", "failed", "paused", "cancelled"},
-    "waiting_human": {"active", "failed", "paused", "cancelled"},
+    "waiting_human": {"active", "failed", "paused", "cancelled", "pending"},
     "completed": set(),
     "failed": {"retrying", "cancelled"},
     "cancelled": set(),

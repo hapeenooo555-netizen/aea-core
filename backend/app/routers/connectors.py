@@ -547,6 +547,10 @@ async def pinterest_oauth_callback(
     the stored checkpoint, exchanges the code for access/refresh tokens,
     persists the connection, and resumes the onboarding workflow.
 
+    The cryptographically random persisted OAuth state is the trusted
+    boundary. The callback relies on it to determine which checkpoint
+    to process and whether this callback may perform the token exchange.
+
     Args:
         code: Authorization code from Pinterest (never stored or logged).
         state: CSRF state token to validate.
@@ -575,61 +579,85 @@ async def pinterest_oauth_callback(
     helper = PinterestOAuthHelper(PinterestOAuthConfig())
     manager = get_human_intervention_manager(client=client)
 
-    # Look up the pending checkpoint by its OAuth state.
-    checkpoint = manager.find_checkpoint_by_oauth_state(state, owner_id=current_user_id)
-    if checkpoint is None:
+    # Phase 1: Claim the checkpoint by OAuth state.
+    # The returned status determines whether this callback may
+    # perform the token exchange.
+    #   'claimed'  -> this callback won the claim, may exchange
+    #   'processing' -> another callback is already processing
+    #   'completed' -> already completed, idempotent result
+    #   'failed'    -> definitive failure, new auth required
+    #   'unknown'   -> checkpoint not found
+    claim_result = manager.claim_oauth_callback(state, owner_id=current_user_id)
+    if claim_result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No checkpoint found for this OAuth state",
+        )
+
+    claim_status = claim_result.get("status")
+    checkpoint = claim_result.get("checkpoint", {})
+    checkpoint_id = checkpoint.get("id")
+
+    if claim_status == "processing":
+        return {
+            "success": False,
+            "status": "processing",
+            "checkpoint_id": checkpoint_id,
+            "message": "OAuth callback is already being processed by another request",
+        }
+
+    if claim_status == "completed":
+        return {
+            "success": True,
+            "status": "completed",
+            "checkpoint_id": checkpoint_id,
+            "message": "OAuth callback already completed",
+        }
+
+    if claim_status == "failed":
+        return {
+            "success": False,
+            "status": "failed",
+            "checkpoint_id": checkpoint_id,
+            "message": "OAuth callback previously failed; new authorization required",
+        }
+
+    if claim_status == "unknown":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No pending checkpoint found for this OAuth state",
         )
 
-    checkpoint_id = checkpoint.get("id")
-    checkpoint_metadata = checkpoint.get("metadata", {}) or {}
-    inner_md = checkpoint_metadata.get("metadata", checkpoint_metadata) if isinstance(checkpoint_metadata, dict) else {}
+    # claim_status == 'claimed': this callback won the claim.
+    # Only this callback may perform the token exchange.
 
+    # Validate the state one more time for security.
     is_valid, reason = helper.validate_state(
         received_state=state,
         checkpoint=checkpoint,
         owner_id=current_user_id,
     )
     if not is_valid:
-        # Mark checkpoint as failed for security auditing
-        try:
-            manager.fail_checkpoint(checkpoint_id, error_reason=reason)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        manager.fail_oauth_callback(state, owner_id=current_user_id, reason=reason)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"OAuth state validation failed: {reason}",
         )
 
-    # State is valid — consume it (mark single-use).
-    consume_meta = helper.consume_state_metadata()
-    complete_result = manager.complete_checkpoint(
-        checkpoint_id,
-        human_input={**consume_meta, "authorization_code_received": True},
-    )
-    if not complete_result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to complete checkpoint",
-        )
-
-    # Phase 2: Exchange authorization code for access/refresh tokens.
-    # When OAuth is not configured (e.g. test environments), return the
-    # checkpoint-completed state without attempting a network call.
+    # When OAuth is not configured (e.g. test environments), return
+    # the checkpoint-completed state without attempting a network call.
     config = PinterestOAuthConfig()
-    workflow_id = inner_md.get("workflow_id")
     if not config.is_configured:
         return {
             "success": True,
             "status": "checkpoint_completed",
             "checkpoint_id": checkpoint_id,
-            "workflow_id": workflow_id,
             "message": "Pinterest authorization code received. Token exchange will complete the connection.",
             "next_step": "token_exchange",
         }
 
+    # Phase 2: Exchange authorization code for access/refresh tokens.
+    # Only the winning callback performs this exchange.
     token_url = "https://api.pinterest.com/v5/oauth/token"
     payload = {
         "grant_type": "authorization_code",
@@ -646,19 +674,25 @@ async def pinterest_oauth_callback(
                 timeout=30,
             )
         if token_response.status_code != 200:
+            # Definitive OAuth rejection: processing -> failed
+            manager.fail_oauth_callback(state, owner_id=current_user_id, reason=f"Pinterest returned {token_response.status_code}")
             return {
                 "success": False,
-                "status": "token_exchange_failed",
+                "status": "failed",
+                "checkpoint_id": checkpoint_id,
                 "error": "pinterest_token_error",
                 "error_description": f"Pinterest returned {token_response.status_code}",
             }
         token_data = token_response.json()
     except Exception:  # pragma: no cover - network errors
+        # Retryable failure: processing -> awaiting_human
+        manager.reconcile_oauth_callback(state, owner_id=current_user_id)
         return {
             "success": False,
-            "status": "token_exchange_failed",
+            "status": "retryable",
+            "checkpoint_id": checkpoint_id,
             "error": "pinterest_token_error",
-            "error_description": "Failed to reach Pinterest token endpoint",
+            "error_description": "Failed to reach Pinterest token endpoint; retry allowed",
         }
 
     access_token = token_data.get("access_token")
@@ -667,9 +701,12 @@ async def pinterest_oauth_callback(
     expires_in = token_data.get("expires_in")
 
     if not access_token:
+        # Definitive OAuth rejection: processing -> failed
+        manager.fail_oauth_callback(state, owner_id=current_user_id, reason="Missing access token from Pinterest")
         return {
             "success": False,
-            "status": "token_exchange_failed",
+            "status": "failed",
+            "checkpoint_id": checkpoint_id,
             "error": "missing_access_token",
             "error_description": "Pinterest did not return an access token",
         }
@@ -681,39 +718,67 @@ async def pinterest_oauth_callback(
     elif token_scopes is None:
         token_scopes = []
 
-    # Persist the platform connection for the current user.
-    connector = _get_user_scoped_pinterest_connector(client=client)
-    connect_result = connector.connect_account(
-        current_user_id,
-        {
-            "oauth_code": code,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": token_type,
-            "expires_in": expires_in,
-            "external_account_id": token_data.get("account_id"),
-            "display_name": token_data.get("username"),
-            "scopes": token_scopes,
-        },
-    )
-    if not connect_result.get("success"):
+    # Phase 3: Call the atomic completion RPC.
+    # This performs ALL durable operations in ONE PostgreSQL transaction:
+    #   1. create/update platform_connections
+    #   2. advance onboarding workflow exactly once
+    #   3. transition mission waiting_human -> pending
+    #   4. record deterministic idempotency information
+    #   5. transition checkpoint processing -> completed
+    #   6. set oauth_state_consumed = true
+    workflow_id = checkpoint.get("metadata", {}).get("workflow_id")
+    if not workflow_id:
+        # Try legacy nested metadata
+        nested = checkpoint.get("metadata", {}).get("metadata", {})
+        workflow_id = nested.get("workflow_id")
+
+    if not workflow_id:
+        # Definitive failure: cannot complete without workflow_id
+        manager.fail_oauth_callback(state, owner_id=current_user_id, reason="Missing workflow_id in checkpoint metadata")
         return {
             "success": False,
-            "status": "connection_failed",
-            "error": "failed_to_connect",
-            "error_description": connect_result.get("error", "Unknown error"),
+            "status": "failed",
+            "checkpoint_id": checkpoint_id,
+            "error": "missing_workflow_id",
         }
 
-    # Resume the onboarding workflow if a workflow_id is available.
-    if workflow_id:
-        resume_result = connector.resume_onboarding(workflow_id, {"authorization_code": code, "access_token": access_token})
-        if not resume_result.get("success"):
-            return {
-                "success": False,
-                "status": "resume_failed",
-                "error": resume_result.get("error", "Unknown error"),
-                "workflow_id": workflow_id,
-            }
+    try:
+        # Call the atomic completion RPC via the connector
+        connector = _get_user_scoped_pinterest_connector(client=client)
+        completion_result = connector.complete_onboarding_oauth(
+            workflow_id=workflow_id,
+            oauth_state=state,
+            owner_id=current_user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type=token_type,
+            expires_in=expires_in,
+            external_account_id=token_data.get("account_id"),
+            display_name=token_data.get("username"),
+            scopes=token_scopes,
+        )
+    except Exception:  # pragma: no cover - completion DB failure
+        # Successful token exchange but completion DB/process failure:
+        # KEEP processing. Do NOT reopen to awaiting_human.
+        manager.reconcile_oauth_callback(state, owner_id=current_user_id)
+        return {
+            "success": False,
+            "status": "processing",
+            "checkpoint_id": checkpoint_id,
+            "error": "completion_failed",
+            "error_description": "Token exchange succeeded but durable completion failed; reconciliation required",
+        }
+
+    if not completion_result.get("success"):
+        # Completion failed but token exchange succeeded
+        manager.reconcile_oauth_callback(state, owner_id=current_user_id)
+        return {
+            "success": False,
+            "status": "processing",
+            "checkpoint_id": checkpoint_id,
+            "error": completion_result.get("error", "completion_failed"),
+            "error_description": completion_result.get("error_description", "Durable completion failed"),
+        }
 
     return {
         "success": True,
@@ -723,5 +788,5 @@ async def pinterest_oauth_callback(
         "platform": "pinterest",
         "connected": True,
         "message": "Pinterest connection established successfully",
-        "next_step": resume_result.get("next_step", "complete") if workflow_id else "complete",
+        "next_step": completion_result.get("next_step", "complete"),
     }

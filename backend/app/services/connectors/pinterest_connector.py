@@ -597,6 +597,14 @@ class PinterestConnector(BaseConnector):
                 "error": "OAuth authorization code required in auth_data",
             }
 
+        # Build a secure token reference BEFORE sanitizing,
+        # so we don't expose raw tokens.
+        import hashlib
+        raw_access_token = auth_data.get("access_token", "")
+        token_reference = None
+        if raw_access_token:
+            token_reference = f"ref:{hashlib.sha256(raw_access_token.encode()).hexdigest()[:32]}"
+
         safe_metadata = self._sanitize_human_input(auth_data)
         external_account_id = safe_metadata.get("external_account_id")
         display_name = safe_metadata.get("display_name")
@@ -609,6 +617,7 @@ class PinterestConnector(BaseConnector):
             external_account_id=external_account_id,
             display_name=display_name,
             scopes=scopes,
+            token_reference=token_reference,
         )
 
         return {
@@ -617,6 +626,96 @@ class PinterestConnector(BaseConnector):
             "worker_id": worker_id,
             "platform": "pinterest",
             "message": "Successfully connected to Pinterest account",
+        }
+
+    def complete_onboarding_oauth(
+        self,
+        workflow_id: str,
+        oauth_state: str,
+        owner_id: str,
+        access_token: str,
+        refresh_token: str,
+        token_type: str,
+        expires_in: int,
+        external_account_id: str | None = None,
+        display_name: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically complete the OAuth callback via the
+        complete_oauth_callback RPC.
+
+        This performs ALL durable operations in ONE PostgreSQL
+        transaction:
+          1. create/update platform_connections
+          2. advance onboarding workflow exactly once
+          3. transition mission waiting_human -> pending
+          4. record deterministic idempotency information
+          5. transition checkpoint processing -> completed
+          6. set oauth_state_consumed = true
+
+        The access_token and refresh_token are used for the
+        connection but are NOT persisted in the connection store.
+        Only a secure token_reference is stored.
+
+        Args:
+            workflow_id: The onboarding workflow identifier.
+            oauth_state: The CSRF state token.
+            owner_id: The authenticated user identity.
+            access_token: The Pinterest access token.
+            refresh_token: The Pinterest refresh token.
+            token_type: The token type.
+            expires_in: Token expiration in seconds.
+            external_account_id: The Pinterest account ID.
+            display_name: The Pinterest display name.
+            scopes: The authorized scopes.
+
+        Returns:
+            Dict with success status and next_step.
+        """
+        # Build a secure token reference that does NOT expose
+        # the raw access token or refresh token.
+        import hashlib
+        token_reference = f"ref:{hashlib.sha256((access_token + refresh_token + str(expires_in)).encode()).hexdigest()[:32]}"
+
+        # Call the atomic completion RPC.
+        # The RPC verifies ownership using the persisted OAuth
+        # state and checkpoint data.
+        try:
+            response = self._connection_store._client.rpc(
+                "complete_oauth_callback",
+                {
+                    "p_oauth_state": oauth_state,
+                    "p_owner_id": owner_id,
+                    "p_workflow_id": workflow_id,
+                    "p_token_type": token_type,
+                    "p_expires_in": expires_in,
+                    "p_external_account_id": external_account_id,
+                    "p_display_name": display_name,
+                    "p_scopes": scopes,
+                    "p_token_reference": token_reference,
+                },
+            ).execute()
+            data = getattr(response, "data", None) or []
+            if data:
+                first = data[0] if isinstance(data[0], dict) else None
+                if first:
+                    return {
+                        "success": first.get("success", False),
+                        "status": first.get("status"),
+                        "workflow_id": first.get("workflow_id"),
+                        "next_step": first.get("next_step"),
+                        "message": first.get("message", ""),
+                    }
+        except Exception as exc:  # pragma: no cover - defensive
+            return {
+                "success": False,
+                "error": "rpc_completion_failed",
+                "error_description": str(exc),
+            }
+
+        return {
+            "success": False,
+            "error": "no_completion_result",
         }
 
     def publish_content(

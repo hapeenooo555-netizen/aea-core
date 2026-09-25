@@ -305,17 +305,24 @@ class WorkerRuntime:
                 # Check if human intervention is needed
                 if result.get("requires_human_intervention"):
                     # Create a human intervention checkpoint
+                    # Flatten metadata so oauth_state is queryable at metadata->oauth_state
+                    inner_metadata = result.get("metadata", {}) or {}
+                    checkpoint_metadata = {
+                        "workflow_id": result.get("workflow_id"),
+                        "step": result.get("current_step"),
+                        "total_steps": result.get("total_steps"),
+                    }
+                    # Merge inner metadata fields at top level for JSONB querying
+                    for k, v in inner_metadata.items():
+                        if k not in ("authorization_url",):
+                            checkpoint_metadata[k] = v
+                    checkpoint_metadata["authorization_url"] = inner_metadata.get("authorization_url", "")
                     checkpoint_result = self._human_intervention_manager.create_checkpoint(
                         mission_id=mission_id,
                         platform=connector.platform,
                         checkpoint_type=result.get("checkpoint_type", "manual_platform_step_required"),
                         instructions=result.get("instructions", "Complete the required step on the platform"),
-                        metadata={
-                            "workflow_id": result.get("workflow_id"),
-                            "step": result.get("current_step"),
-                            "total_steps": result.get("total_steps"),
-                            "metadata": result.get("metadata", {}),
-                        },
+                        metadata=checkpoint_metadata,
                     )
 
                     if checkpoint_result.get("success"):
