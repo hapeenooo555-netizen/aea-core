@@ -681,7 +681,7 @@ class PinterestConnector(BaseConnector):
         # The RPC verifies ownership using the persisted OAuth
         # state and checkpoint data.
         try:
-            response = self._connection_store._client.rpc(
+            response = self._connection_store._client().rpc(
                 "complete_oauth_callback",
                 {
                     "p_oauth_state": oauth_state,

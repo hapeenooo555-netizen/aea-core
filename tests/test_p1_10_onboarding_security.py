@@ -299,6 +299,66 @@ class TestUserScopedPinterestConnector:
         assert ws._client() is client
         assert cs._client() is client
 
+    def test_user_scoped_connection_writes_owner_uuid(self):
+        client = _FakeSupabaseClient()
+        owner_id_uuid = str(uuid4())
+        connector = _get_user_scoped_pinterest_connector(
+            client=client,
+            owner_id_uuid=owner_id_uuid,
+        )
+
+        result = connector.connect_account("worker-1", {"oauth_code": "code"})
+
+        assert result["success"] is True
+        connection = client.data["platform_connections"][0]
+        assert connection["owner_id"] == "worker-1"
+        assert connection["owner_id_uuid"] == owner_id_uuid
+
+    def test_worker_owner_is_not_cast_without_explicit_user_uuid(self):
+        client = _FakeSupabaseClient()
+        connector = _get_user_scoped_pinterest_connector(client=client)
+
+        result = connector.connect_account("worker-1", {"oauth_code": "code"})
+
+        assert result["success"] is True
+        connection = client.data["platform_connections"][0]
+        assert connection["owner_id"] == "worker-1"
+        assert "owner_id_uuid" not in connection
+
+    def test_oauth_completion_uses_resolved_client_for_rpc(self):
+        client = _FakeSupabaseClient()
+        rpc_result = _FakeExec([{
+            "success": True,
+            "status": "connected",
+            "workflow_id": "workflow-1",
+            "next_step": "complete",
+            "message": "connected",
+        }])
+        original_rpc = client.rpc
+
+        def tracked_rpc(name, params):
+            assert name == "complete_oauth_callback"
+            assert params["p_owner_id"] == "owner-1"
+            return type("RpcCall", (), {"execute": lambda self: rpc_result})()
+
+        client.rpc = tracked_rpc
+        connector = PinterestConnector(
+            connection_store=PlatformConnectionStore(client=client),
+        )
+
+        result = connector.complete_onboarding_oauth(
+            workflow_id="workflow-1",
+            oauth_state="state-1",
+            owner_id="owner-1",
+            access_token="access",
+            refresh_token="refresh",
+            token_type="bearer",
+            expires_in=3600,
+        )
+
+        assert result["success"] is True
+        client.rpc = original_rpc
+
     def test_connector_works_without_client(self):
         """Without a client, the connector should still work (in-memory fallback)."""
         connector = _get_user_scoped_pinterest_connector(client=None)

@@ -65,6 +65,7 @@ def get_human_intervention_manager(
 
 def _get_user_scoped_pinterest_connector(
     client: Any | None = None,
+    owner_id_uuid: str | None = None,
 ) -> PinterestConnector:
     """Create a PinterestConnector bound to the caller's Supabase client.
 
@@ -74,7 +75,10 @@ def _get_user_scoped_pinterest_connector(
     authenticated user identity for every persistence operation.
     """
     workflow_store = OnboardingWorkflowStore(client=client, durable_required=True)
-    connection_store = PlatformConnectionStore(client=client)
+    connection_store = PlatformConnectionStore(
+        client=client,
+        owner_id_uuid=owner_id_uuid,
+    )
     return PinterestConnector(
         workflow_store=workflow_store,
         connection_store=connection_store,
@@ -192,7 +196,10 @@ async def start_onboarding(
             pass
 
     if platform == "pinterest":
-        connector = _get_user_scoped_pinterest_connector(client=client)
+        connector = _get_user_scoped_pinterest_connector(
+            client=client,
+            owner_id_uuid=current_user_id,
+        )
         result = connector.start_onboarding(worker_id)
     else:
         registry = get_connector_registry()
@@ -355,7 +362,10 @@ async def resume_onboarding(
                 except HTTPException:
                     raise
 
-    connector = _get_user_scoped_pinterest_connector(client=client)
+    connector = _get_user_scoped_pinterest_connector(
+        client=client,
+        owner_id_uuid=current_user_id,
+    )
     result = connector.resume_onboarding(workflow_id, request.human_input)
 
     if not result.get("success"):
@@ -744,7 +754,10 @@ async def pinterest_oauth_callback(
 
     try:
         # Call the atomic completion RPC via the connector
-        connector = _get_user_scoped_pinterest_connector(client=client)
+        connector = _get_user_scoped_pinterest_connector(
+            client=client,
+            owner_id_uuid=current_user_id,
+        )
         completion_result = connector.complete_onboarding_oauth(
             workflow_id=workflow_id,
             oauth_state=state,

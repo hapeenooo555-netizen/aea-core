@@ -46,14 +46,21 @@ class PlatformConnectionStore:
         "session",
     }
 
-    def __init__(self, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        client: Any | None = None,
+        owner_id_uuid: str | None = None,
+    ) -> None:
         """Initialize the store.
 
         Args:
             client: Optional pre-resolved Supabase client. When ``None`` the
                 store resolves ``app.database.supabase_client`` lazily.
+            owner_id_uuid: Optional authenticated owner UUID for user-scoped
+                platform connection writes.
         """
         self._explicit_client = client
+        self._owner_id_uuid = owner_id_uuid
         # In-memory fallback keyed by (owner_id, platform).
         self._memory_store: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -97,6 +104,8 @@ class PlatformConnectionStore:
                     "token_reference": token_reference,
                     "updated_at": now,
                 }
+                if self._owner_id_uuid is not None:
+                    db_payload["owner_id_uuid"] = self._owner_id_uuid
 # The platform_connections table has a unique constraint on
 # (owner_id, platform). To get upsert semantics we first try to
 # update an existing row, then fall back to insert when no row
@@ -165,6 +174,8 @@ class PlatformConnectionStore:
             "created_at": existing.get("created_at") or now,
             "updated_at": now,
         }
+        if self._owner_id_uuid is not None:
+            record["owner_id_uuid"] = self._owner_id_uuid
         self._memory_store[key] = record
         return {"success": True, "connection": self._normalize_row(None, record)}
 

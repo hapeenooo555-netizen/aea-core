@@ -902,7 +902,7 @@ Connect Pinterest
 
     <form id="composer" class="composer">
       <div style="grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; margin-left: 2px;">What should we work on?</div>
-      <textarea id="messageInput" rows="1" maxlength="4000" placeholder="Describe your goal..." required></textarea>
+      <textarea id="messageInput" rows="1" maxlength="4000" placeholder="What would you like AEA Employee to do?" required></textarea>
       <button id="sendButton" class="send-button" type="submit" aria-label="Submit goal">Send</button>
     </form>
   </main>
@@ -939,7 +939,7 @@ Connect Pinterest
       const REFRESH_KEY = "aea.chatplus.refresh_token";
       const copy = {
         en: {
-          placeholder: "Describe your goal...",
+          placeholder: "What would you like AEA Employee to do?",
           status: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting for your action", waiting_for_approval: "Waiting for approval", completed: "Completed", failed: "Action needs attention" },
           chip: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting", waiting_for_approval: "Waiting", completed: "Completed", failed: "Action needed" },
           goalUnderstood: "Goal understood",
@@ -974,7 +974,7 @@ Connect Pinterest
           },
         },
 sw: {
-          placeholder: "Type your goal...",
+          placeholder: "Tafadhali ongeza lengo lako",
           status: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting for your action", waiting_for_approval: "Waiting for approval", completed: "Completed", failed: "Action needs attention" },
           chip: { ready: "Tayari", thinking: "Inafikiria", working: "Inafanya", waiting_for_human: "Inasubiri", waiting_for_approval: "Inasubiri", completed: "Imekamilika", failed: "Inahitaji hatua" },
           goalUnderstood: "Goal understood",
