@@ -962,18 +962,18 @@ Connect Pinterest
           reviewApproval: "Review and approve the pending request",
           approvePending: "Approve the pending action",
           analyzing: "Analyzing your goal...",
-          evaluate: "Evaluating the next step",
+evaluate: "Evaluating the next step",
           checkingPinterest: "Checking Pinterest connection",
           preparingOnboarding: "Preparing onboarding",
           retry: "Review the issue and retry the workflow",
           orchestration: {
-            completed: "Completed", current: "Current", waiting: "Waiting", pending: "Pending",
+            completed: "Completed", current: "Current", waiting: "Waiting", pending: "Pending", failed: "Failed",
             mission: "Mission created", objective: "Objective understood", pinterest: "Pinterest status checked",
             authorization: "Human authorization", opportunity: "Opportunity discovery", content: "Content generation",
             approval: "Human approval", publishing: "Publishing", analytics: "Analytics",
           },
         },
-sw: {
+        sw: {
           placeholder: "Tafadhali ongeza lengo lako",
           status: { ready: "Ready", thinking: "Thinking", working: "Working", waiting_for_human: "Waiting for your action", waiting_for_approval: "Waiting for approval", completed: "Completed", failed: "Action needs attention" },
           chip: { ready: "Tayari", thinking: "Inafikiria", working: "Inafanya", waiting_for_human: "Inasubiri", waiting_for_approval: "Inasubiri", completed: "Imekamilika", failed: "Inahitaji hatua" },
@@ -1002,7 +1002,7 @@ sw: {
           preparingOnboarding: "Preparing onboarding",
           retry: "Review the issue and retry the workflow",
           orchestration: {
-            completed: "Completed", current: "Current", waiting: "Waiting", pending: "Pending",
+            completed: "Completed", current: "Current", waiting: "Waiting", pending: "Pending", failed: "Failed",
             mission: "Mission created", objective: "Objective understood", pinterest: "Pinterest status checked",
             authorization: "Human authorization", opportunity: "Opportunity discovery", content: "Content generation",
             approval: "Human approval", publishing: "Publishing", analytics: "Analytics",
@@ -1282,18 +1282,18 @@ function renderState(nextState) {
            }
          }
 
-         // Show/hide Pinterest connect button
-         const pinterestConnectDiv = document.getElementById("pinterestConnect");
-         if (pinterestConnectDiv) {
-           if (currentState === "waiting_for_human" &&
-               state.currentMission &&
-               state.currentMission.metadata &&
-               state.currentMission.metadata.authorization_url) {
-             pinterestConnectDiv.hidden = false;
-           } else {
-             pinterestConnectDiv.hidden = true;
-           }
-         }
+// Show/hide Pinterest connect button
+          const pinterestConnectDiv = document.getElementById("pinterestConnect");
+          if (pinterestConnectDiv) {
+            const mission = state.currentMission;
+            const checkpointMetadata = mission?.result?.checkpoint?.metadata || {};
+            const authUrl = checkpointMetadata.authorization_url;
+            if (currentState === "waiting_for_human" && authUrl) {
+              pinterestConnectDiv.hidden = false;
+            } else {
+              pinterestConnectDiv.hidden = true;
+            }
+          }
        }
 
       function setSending(sending) {
@@ -1332,37 +1332,22 @@ function renderState(nextState) {
         const list = document.getElementById("orchestrationList");
         if (!list) return;
         const ui = activeCopy();
-        const mission = state.currentMission || {};
+        const moves = state.ai_moves || [];
         const currentState = state.currentState?.state || "ready";
-        const executionText = JSON.stringify(state.currentExecution || mission.result || {}).toLowerCase();
-        const hasEvidence = (pattern) => pattern.test(executionText);
-        const pinterestChecked = hasEvidence(/pinterest[^\n]{0,100}(status|connect)|(?:status|connect)[^\n]{0,100}pinterest/);
-        const authorizationEvidence = currentState === "waiting_for_human" || hasEvidence(/awaiting_human|waiting_input|authorization_required|human_intervention/);
-        const approvalEvidence = currentState === "waiting_for_approval" || (Array.isArray(state.approvals) && state.approvals.length > 0);
-        const labels = ui.orchestration;
-        const steps = [
-          { label: labels.mission, status: mission.id ? "completed" : "pending" },
-          { label: labels.objective, status: mission.objective || mission.description || mission.title ? "completed" : "pending" },
-          { label: labels.pinterest, status: pinterestChecked ? "completed" : currentState === "working" ? "current" : "pending" },
-          { label: labels.authorization, status: authorizationEvidence ? (currentState === "waiting_for_human" ? "waiting" : "completed") : "pending" },
-          { label: labels.opportunity, status: "pending" },
-          { label: labels.content, status: "pending" },
-          { label: labels.approval, status: approvalEvidence ? "waiting" : "pending" },
-          { label: labels.publishing, status: "pending" },
-          { label: labels.analytics, status: "pending" },
-        ];
-        list.replaceChildren(...steps.map((step) => {
+
+        list.replaceChildren(...moves.map((move) => {
           const item = document.createElement("li");
           item.className = "orchestration-item";
-          item.dataset.status = step.status;
+          item.dataset.status = move.status;
           const badge = document.createElement("span");
-          badge.className = `orch-dot ${step.status === "completed" ? "done" : step.status === "current" || step.status === "waiting" ? "active" : "pending"}`;
+          badge.className = `orch-dot ${move.status === "done" ? "done" : move.status === "current" || move.status === "waiting" ? "active" : "pending"}`;
           const text = document.createElement("span");
-          text.textContent = step.label;
-          const status = makeElement("span", "orch-status", labels[step.status]);
+          text.textContent = move.label;
+          const status = makeElement("span", "orch-status", ui[move.status] || move.status);
           item.append(badge, text, status);
           return item;
         }));
+
         const actionText = document.getElementById("orchestrationActionText");
         if (actionText) {
           if (currentState === "waiting_for_human") actionText.textContent = `${ui.authorize}.`;
@@ -1557,9 +1542,9 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   // Add Pinterest connect button handler
   document.addEventListener('click', function(e) {
     if (e.target && e.target.id === 'connectPinterestBtn') {
-      // Find the authorization URL from the current mission metadata
+      // Find the authorization URL from the current mission checkpoint metadata
       const currentMission = state.currentMission || {};
-      const authUrl = currentMission.metadata?.authorization_url;
+      const authUrl = currentMission.result?.checkpoint?.metadata?.authorization_url;
       if (authUrl) {
         // Disable button during redirect
         e.target.disabled = true;

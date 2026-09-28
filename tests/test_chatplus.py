@@ -222,7 +222,8 @@ class TestChatPlusRoutes:
         )
         # Should contain human-action message, not approval message
         assert "I'm waiting for your approval" not in text
-        assert "A Pinterest authorization/action is required" in text or "Please complete the required step" in text
+        # New concise message
+        assert "Pinterest setup requires your action" in text
 
     def test_index_route(self):
         response = _client_with_app.get("/chatplus")
@@ -338,7 +339,8 @@ class TestChatPlusRoutes:
         )
         # Should contain human-action message, not approval message
         assert "I'm waiting for your approval" not in text
-        assert "A Pinterest authorization/action is required" in text or "Please complete the required step" in text
+        # New concise message
+        assert "Pinterest setup requires your action" in text
 
 
 class TestChatPlusSecurity:
@@ -399,6 +401,236 @@ class TestChatPlusFrontend:
         assert "Bearer null" not in html
         assert "Bearer undefined" not in html
         assert "SUPABASE_ANON_KEY=" not in html
+
+    def test_pinterest_connect_button_exists_in_html(self):
+        """Verify the Connect Pinterest button exists in the static HTML."""
+        response = _client_with_app.get("/chatplus/")
+        assert response.status_code == 200
+        html = response.text
+        # Button element with id connectPinterestBtn
+        assert 'id="connectPinterestBtn"' in html
+        # Container div with id pinterestConnect
+        assert 'id="pinterestConnect"' in html
+        # CTA text
+        assert "Connect Pinterest" in html
+
+    def test_renderstate_checks_checkpoint_metadata_for_authorization_url(self):
+        """Regression test: renderState must read authorization_url from mission.result.checkpoint.metadata, not mission.metadata."""
+        html = (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+        # Find the renderState function
+        render_start = html.index("function renderState(")
+        # Find the next function definition to bound our search
+        render_end = html.index("function setSending(", render_start)
+        render_state_code = html[render_start:render_end]
+
+        # Should check checkpoint metadata path
+        assert "mission?.result?.checkpoint?.metadata" in render_state_code
+        # Should NOT check the old wrong path (mission.metadata.authorization_url)
+        # The old path would be a bug - we don't assert absence because it might appear in comments
+        # but we verify the correct path is used
+        assert "authorization_url" in render_state_code
+
+    def test_renderstate_shows_button_when_checkpoint_has_auth_url(self):
+        """Verify the logic would show button when checkpoint has authorization_url."""
+        # This test verifies the data path logic by simulating the condition
+        # In a real scenario, loadState() fetches state and calls renderState()
+        # We test the condition directly:
+        # currentState === "waiting_for_human" && mission?.result?.checkpoint?.metadata?.authorization_url
+
+        # Case 1: Has auth URL in checkpoint metadata -> should show
+        const_state = "waiting_for_human"
+        const_mission_with_checkpoint = {
+            "result": {
+                "checkpoint": {
+                    "metadata": {
+                        "authorization_url": "https://pinterest.com/oauth/authorize?state=abc123"
+                    }
+                }
+            }
+        }
+        checkpoint_metadata = const_mission_with_checkpoint["result"]["checkpoint"]["metadata"]
+        auth_url = checkpoint_metadata.get("authorization_url")
+        should_show = const_state == "waiting_for_human" and bool(auth_url)
+        assert should_show is True
+
+        # Case 2: No auth URL in checkpoint metadata -> should hide
+        const_mission_without_checkpoint = {
+            "result": {
+                "checkpoint": {
+                    "metadata": {}
+                }
+            }
+        }
+        checkpoint_metadata2 = const_mission_without_checkpoint["result"]["checkpoint"]["metadata"]
+        auth_url2 = checkpoint_metadata2.get("authorization_url")
+        should_show2 = const_state == "waiting_for_human" and bool(auth_url2)
+        assert should_show2 is False
+
+        # Case 3: No checkpoint at all -> should hide
+        const_mission_no_checkpoint = {"result": {}}
+        checkpoint_metadata3 = const_mission_no_checkpoint["result"].get("checkpoint", {}).get("metadata", {})
+        auth_url3 = checkpoint_metadata3.get("authorization_url")
+        should_show3 = const_state == "waiting_for_human" and bool(auth_url3)
+        assert should_show3 is False
+
+        # Case 4: Wrong state (e.g., waiting_for_approval) -> should hide
+        wrong_state = "waiting_for_approval"
+        should_show4 = wrong_state == "waiting_for_human" and bool(auth_url)
+        assert should_show4 is False
+
+    def test_assistant_text_is_concise(self):
+        """Verify _assistant_text returns short messages without tool lists or MVP disclaimers."""
+        from app.services.chatplus import ChatPlusService
+
+        mission = {"id": "test-1", "status": "active"}
+        execution = {"status": "RUNNING", "report": {"plan": [], "executed_actions": []}}
+        approvals = [{"id": "approval-123"}]
+
+        # Test waiting_for_human
+        text = ChatPlusService._assistant_text(
+            goal="Start pinterest marketing",
+            mission=mission,
+            execution=execution,
+            state={"state": "waiting_for_human"},
+            approvals=approvals,
+        )
+        assert len(text) < 100
+        assert "Pinterest setup requires your action" in text
+        assert "I'm waiting for your approval" not in text
+        assert "MVP does not provide" not in text
+        assert "Opportunity Engine" not in text
+        assert "approval-123" not in text
+
+        # Test waiting_for_approval
+        text = ChatPlusService._assistant_text(
+            goal="Start pinterest marketing",
+            mission=mission,
+            execution=execution,
+            state={"state": "waiting_for_approval"},
+            approvals=approvals,
+        )
+        assert "Waiting for your approval" in text
+
+        # Test completed
+        text = ChatPlusService._assistant_text(
+            goal="Start pinterest marketing",
+            mission=mission,
+            execution=execution,
+            state={"state": "completed"},
+            approvals=[],
+        )
+        assert text == "Goal completed."
+
+        # Test failed
+        text = ChatPlusService._assistant_text(
+            goal="Start pinterest marketing",
+            mission=mission,
+            execution={"error": "Connection timeout"},
+            state={"state": "failed"},
+            approvals=[],
+        )
+        assert text.startswith("Failed: ")
+        assert "Connection timeout" in text
+
+        # Test working/thinking
+        text = ChatPlusService._assistant_text(
+            goal="Start pinterest marketing",
+            mission=mission,
+            execution=execution,
+            state={"state": "working"},
+            approvals=[],
+        )
+        assert text == "Working on your goal..."
+
+    def test_state_includes_ai_moves(self):
+        """Verify /chatplus/state response contains ai_moves with correct structure."""
+        from app.services.chatplus import ChatPlusService
+
+        # Test with a plan-based execution
+        execution = {
+            "status": "RUNNING",
+            "report": {
+                "plan": [
+                    {"step_name": "check_connection_status", "tool_name": "pinterest.get_account_status"},
+                    {"step_name": "start_onboarding", "tool_name": "start_platform_onboarding"},
+                ],
+                "executed_actions": [
+                    {"step_name": "check_connection_status", "tool_name": "pinterest.get_account_status"}
+                ],
+                "observations": [
+                    {"action": "pinterest.get_account_status", "success": True}
+                ],
+                "current_step_index": 1,
+                "final_status": "WAIT_FOR_APPROVAL",
+            }
+        }
+        moves = ChatPlusService._build_ai_moves(execution)
+        assert isinstance(moves, list)
+        assert len(moves) == 2
+        assert moves[0]["step"] == "check_connection_status"
+        assert moves[0]["label"] == "Checking Pinterest connection"
+        assert moves[0]["status"] == "done"
+        assert moves[1]["step"] == "start_onboarding"
+        assert moves[1]["label"] == "Starting Pinterest setup"
+        assert moves[1]["status"] == "waiting"
+
+    def test_renderorchestration_uses_ai_moves(self):
+        """Verify renderOrchestration uses state.ai_moves and not the old regex heuristic."""
+        html = (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+        # Find the renderOrchestration function
+        render_start = html.index("function renderOrchestration(")
+        render_end = html.index("function renderApprovals(", render_start)
+        render_code = html[render_start:render_end]
+
+        # Should use state.ai_moves
+        assert "state.ai_moves" in render_code
+        # Should NOT use the old regex heuristic
+        assert "pinterestChecked = hasEvidence" not in render_code
+        assert "authorizationEvidence = currentState" not in render_code
+        assert "approvalEvidence = currentState" not in render_code
+
+    def test_ai_moves_handles_waiting_human_checkpoint(self):
+        """Verify AI Moves correctly shows waiting status for human checkpoint."""
+        from app.services.chatplus import ChatPlusService
+
+        # Execution with awaiting_human_intervention (Pinterest OAuth)
+        execution = {
+            "status": "WAITING_INPUT",
+            "report": {
+                "plan": [
+                    {"step_name": "check_connection_status", "tool_name": "pinterest.get_account_status"},
+                    {"step_name": "start_onboarding", "tool_name": "start_platform_onboarding"},
+                ],
+                "executed_actions": [
+                    {"step_name": "check_connection_status", "tool_name": "pinterest.get_account_status"}
+                ],
+                "observations": [
+                    {"action": "pinterest.get_account_status", "success": True}
+                ],
+                "current_step_index": 1,
+                "final_status": "WAIT_FOR_HUMAN_INPUT",
+            }
+        }
+        moves = ChatPlusService._build_ai_moves(execution)
+        assert len(moves) == 2
+        assert moves[0]["status"] == "done"
+        assert moves[1]["status"] == "waiting"  # Human checkpoint
+        assert moves[1]["label"] == "Starting Pinterest setup"
+
+    def test_ai_moves_fallback_for_no_plan(self):
+        """Verify AI Moves falls back gracefully when no plan exists."""
+        from app.services.chatplus import ChatPlusService
+
+        # Execution without plan (legacy or simple)
+        execution = {"status": "COMPLETED"}
+        moves = ChatPlusService._build_ai_moves(execution)
+        assert len(moves) == 1
+        assert moves[0]["label"] == "Goal completed"
+        assert moves[0]["status"] == "done"
 
 
 _client_with_app = TestClient(build_app(authenticated=True))

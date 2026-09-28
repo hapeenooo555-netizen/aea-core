@@ -228,6 +228,7 @@ class ChatPlusService:
                 "state": {"state": "ready", "label": _STATE_LABELS["ready"], "detail": "Ready for your next goal"},
                 "mission": None,
                 "approvals": [],
+                "ai_moves": [],
             }
         mission = max(chat_missions, key=lambda item: _timestamp(item.get("created_at")))
         approvals = self.list_approvals(mission.get("id"))
@@ -239,6 +240,7 @@ class ChatPlusService:
             "execution": sanitize_payload(execution),
             "state": self.state_for_mission(mission, None),
             "approvals": approvals,
+            "ai_moves": self._build_ai_moves(execution),
         }
 
     def list_approvals(self, mission_id: str | None = None) -> list[dict[str, Any]]:
@@ -365,6 +367,79 @@ class ChatPlusService:
         return {"state": state, "label": _STATE_LABELS[state], "detail": detail}
 
     @staticmethod
+    def _human_move_label(step_name: str | None, tool_name: str | None) -> str:
+        """Convert internal step/tool names to human-readable labels."""
+        if not step_name and not tool_name:
+            return "Processing"
+        key = (step_name or tool_name or "").lower()
+        if "check_connection" in key or "account_status" in key:
+            return "Checking Pinterest connection"
+        if "start_onboarding" in key or "start_platform_onboarding" in key:
+            return "Starting Pinterest setup"
+        if "resume_onboarding" in key or "resume_platform_onboarding" in key:
+            return "Continuing Pinterest setup"
+        if "publish" in key:
+            return "Publishing content"
+        if "log" in key:
+            return "Recording goal"
+        # Fallback: humanize snake_case
+        return key.replace("_", " ").capitalize()
+
+    @staticmethod
+    def _build_ai_moves(execution: dict[str, Any] | None) -> list[dict[str, str]]:
+        """Derive AI Moves timeline from real execution report data."""
+        if not execution:
+            return []
+        report = execution.get("report") or {}
+        plan = report.get("plan") or []
+        executed_actions = report.get("executed_actions") or []
+        observations = report.get("observations") or []
+        current_step_index = report.get("current_step_index", 0)
+        final_status = str(report.get("final_status") or "").lower()
+
+        moves: list[dict[str, str]] = []
+        for i, step in enumerate(plan):
+            step_name = step.get("step_name")
+            tool_name = step.get("tool_name")
+            label = ChatPlusService._human_move_label(step_name, tool_name)
+
+            # Find matching executed action and observation
+            executed = next((e for e in executed_actions if e.get("step_name") == step_name), None)
+            obs = next((o for o in observations if o.get("action") == tool_name), None)
+
+            if executed:
+                # Step was executed
+                if obs and obs.get("success"):
+                    status = "done"
+                else:
+                    status = "failed"
+            elif i == current_step_index:
+                # Current step - determine if waiting or active
+                if final_status in {"wait_for_approval", "wait_for_human_input", "waiting_approval", "waiting_human", "waiting_input"}:
+                    status = "waiting"
+                else:
+                    status = "current"
+            else:
+                # Future step
+                status = "pending"
+
+            moves.append({"step": step_name or "", "label": label, "status": status})
+
+        # If no plan but execution has state info, add a generic move
+        if not moves:
+            exec_status = str(execution.get("status") or "").lower()
+            if exec_status in {"waiting_approval", "wait_for_approval"}:
+                moves.append({"step": "approval", "label": "Waiting for approval", "status": "waiting"})
+            elif exec_status in {"waiting_human", "wait_for_human_input", "waiting_input"}:
+                moves.append({"step": "human_input", "label": "Waiting for your action", "status": "waiting"})
+            elif exec_status in {"running", "active"}:
+                moves.append({"step": "working", "label": "Working on your goal", "status": "current"})
+            elif exec_status in {"completed", "complete", "succeeded"}:
+                moves.append({"step": "completed", "label": "Goal completed", "status": "done"})
+
+        return moves
+
+    @staticmethod
     def _assistant_text(
         goal: str,
         mission: dict[str, Any] | None,
@@ -373,32 +448,19 @@ class ChatPlusService:
         approvals: list[dict[str, Any]],
     ) -> str:
         execution = execution or {}
-        if state["state"] == "waiting_for_approval":
-            text = "I'm waiting for your approval before continuing. Review the approval below."
-        elif state["state"] == "waiting_for_human":
-            text = "A Pinterest authorization/action is required before the Employee can continue. Please complete the requested step."
-        elif state["state"] == "failed":
+        state_key = state["state"]
+        if state_key == "waiting_for_approval":
+            return "Waiting for your approval."
+        if state_key == "waiting_for_human":
+            return "Pinterest setup requires your action."
+        if state_key == "failed":
             error = execution.get("error") or (mission or {}).get("result", {}).get("error") or "The goal could not be completed"
-            text = f"I could not complete that goal: {error}"
-        elif state["state"] == "completed":
-            report = execution.get("report") or (mission or {}).get("result", {})
-            selected = (report or {}).get("selected_tools") or []
-            suffix = f" Used tools: {', '.join(str(tool) for tool in selected)}." if selected else ""
-            text = f"Your goal was processed through the Employee workflow.{suffix}"
-        else:
-            text = "Your goal is in the Employee workflow. I’ll keep its status available here."
-
-        lowered = goal.lower()
-        limitations: list[str] = []
-        if "pinterest" in lowered:
-            limitations.append("Pinterest actions use the existing connector and approval flow; this MVP does not provide live Pinterest opportunity search.")
-        if "opportunity" in lowered:
-            limitations.append("The Opportunity Engine is not available in this MVP, so no opportunity discovery was performed.")
-        if approvals:
-            limitations.append(f"Approval required: {approvals[0].get('id', 'pending action')}.")
-        if limitations:
-            text += " " + " ".join(limitations)
-        return text
+            return f"Failed: {error}"
+        if state_key == "completed":
+            return "Goal completed."
+        if state_key in {"working", "thinking"}:
+            return "Working on your goal..."
+        return "Ready for your next goal."
 
     def _update_mission_after_approval(self, approval: dict[str, Any], outcome: dict[str, Any]) -> None:
         mission_id = approval.get("mission_id")
