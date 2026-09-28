@@ -198,9 +198,10 @@ def _make_test_client(client, user_id="test-user"):
     import app.services.stores.platform_connection_store as pcs_mod
     import app.services.human_intervention as hi_mod
 
-    ows_mod.database_module.supabase_client = client
-    pcs_mod.database_module.supabase_client = client
-    hi_mod.database_module.supabase_client = client
+    for module in (ows_mod, pcs_mod, hi_mod):
+        database = getattr(module, "database_module", None)
+        if database is not None:
+            database.supabase_client = client
 
     return TestClient(app)
 
@@ -272,6 +273,59 @@ class TestOnboardingOwnershipIsRlsEnforced:
         resp = tc.get(f"/connectors/onboarding/{wf_id}", headers={"Authorization": "Bearer test-token"})
         # Should get 404 — the workflow doesn't exist in user B's scoped view
         assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+    def test_onboarding_start_persists_worker_and_authenticated_owner(self):
+        client = _FakeSupabaseClient()
+        owner_id = str(uuid4())
+        worker_id = str(uuid4())
+        client.table("workers").insert({
+            "id": worker_id,
+            "owner_id": owner_id,
+        }).execute()
+
+        tc = _make_test_client(client, user_id=owner_id)
+        response = tc.post(
+            "/connectors/onboarding/start",
+            json={"platform": "pinterest", "worker_id": worker_id},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 200, response.text
+        workflow = client.data["onboarding_workflows"][0]
+        assert worker_id != owner_id
+        assert workflow["worker_id"] == worker_id
+        assert workflow["owner_id"] == owner_id
+
+    def test_onboarding_start_persistence_failure_returns_http_error(self, monkeypatch):
+        class _FailingWorkflowStore:
+            def create(self, **kwargs):
+                return {"success": False, "error": "Workflow persistence failed"}
+
+        client = _FakeSupabaseClient()
+        owner_id = str(uuid4())
+        worker_id = str(uuid4())
+        client.table("workers").insert({
+            "id": worker_id,
+            "owner_id": owner_id,
+        }).execute()
+        connector = PinterestConnector(workflow_store=_FailingWorkflowStore())
+        monkeypatch.setattr(
+            connectors_module,
+            "_get_user_scoped_pinterest_connector",
+            lambda **kwargs: connector,
+        )
+
+        tc = _make_test_client(client, user_id=owner_id)
+        response = tc.post(
+            "/connectors/onboarding/start",
+            json={"platform": "pinterest", "worker_id": worker_id},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Workflow persistence failed"
+        assert connector._onboarding_workflows == {}
+        assert client.data["onboarding_workflows"] == []
 
 
 class TestUserScopedPinterestConnector:

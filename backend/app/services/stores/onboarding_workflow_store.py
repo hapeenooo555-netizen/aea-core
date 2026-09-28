@@ -63,6 +63,7 @@ class OnboardingWorkflowStore:
         total_steps: int,
         checkpoint_data: dict[str, Any] | None,
         step_history: list[dict[str, Any]] | None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a new onboarding workflow record.
 
@@ -90,6 +91,7 @@ class OnboardingWorkflowStore:
             "total_steps": int(total_steps),
             "checkpoint_data": safe_checkpoint,
             "step_history": safe_history,
+            "owner_id": owner_id,
             "created_at": now,
             "updated_at": now,
         }
@@ -97,7 +99,9 @@ class OnboardingWorkflowStore:
         client = self._client()
         if client is not None:
             try:
-                response = client.table(TABLE_NAME).insert(self._to_db_row(record)).execute()
+                response = client.table(TABLE_NAME).insert(
+                    self._to_db_row(record, owner_id=owner_id)
+                ).execute()
                 if response.data:
                     return {
                         "success": True,
@@ -453,7 +457,10 @@ class OnboardingWorkflowStore:
         return _clean(value)
 
     @staticmethod
-    def _to_db_row(record: dict[str, Any]) -> dict[str, Any]:
+    def _to_db_row(
+        record: dict[str, Any],
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
         """Convert a normalized record to a Supabase row payload."""
         row = {
             "id": record["workflow_id"],
@@ -466,6 +473,8 @@ class OnboardingWorkflowStore:
             "checkpoint_data": record.get("checkpoint_data") or {},
             "step_history": record.get("step_history") or [],
         }
+        if owner_id is not None:
+            row["owner_id"] = owner_id
         approval_id = record.get("started_by_approval_id")
         if approval_id:
             row["started_by_approval_id"] = approval_id
@@ -487,7 +496,7 @@ class OnboardingWorkflowStore:
         checkpoint = source.get("checkpoint_data") or {}
         step_history = source.get("step_history") or []
 
-        return {
+        normalized = {
             "workflow_id": source.get("id") or source.get("workflow_id"),
             "mission_id": source.get("mission_id"),
             "worker_id": source.get("worker_id"),
@@ -501,6 +510,12 @@ class OnboardingWorkflowStore:
             "created_at": source.get("created_at"),
             "updated_at": source.get("updated_at"),
         }
+        owner_id = source.get("owner_id")
+        if owner_id is None and fallback is not None:
+            owner_id = fallback.get("owner_id")
+        if owner_id is not None:
+            normalized["owner_id"] = owner_id
+        return normalized
 
 
 __all__ = ["OnboardingWorkflowStore"]

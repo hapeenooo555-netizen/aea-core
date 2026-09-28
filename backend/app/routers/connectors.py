@@ -200,7 +200,7 @@ async def start_onboarding(
             client=client,
             owner_id_uuid=current_user_id,
         )
-        result = connector.start_onboarding(worker_id)
+        result = connector.start_onboarding(worker_id, owner_id=current_user_id)
     else:
         registry = get_connector_registry()
         if not registry.has_connector(platform):
@@ -210,6 +210,13 @@ async def start_onboarding(
             )
         connector = registry.get(platform)
         result = connector.start_onboarding(worker_id)
+
+    if not result.get("success"):
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(result.get("error", "")).lower() else status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(
+            status_code=status_code,
+            detail=result.get("error", "Workflow creation failed"),
+        )
 
     return {
         "success": True,

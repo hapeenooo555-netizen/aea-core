@@ -76,6 +76,21 @@ def test_pinterest_start_onboarding():
     assert "instructions" in result
 
 
+def test_pinterest_start_onboarding_returns_persistence_failure_without_cache():
+    class _FailingWorkflowStore:
+        def create(self, **kwargs):
+            assert kwargs["worker_id"] == "worker-id"
+            assert kwargs["owner_id"] == "owner-id"
+            return {"success": False, "error": "Workflow persistence failed"}
+
+    connector = PinterestConnector(workflow_store=_FailingWorkflowStore())
+
+    result = connector.start_onboarding("worker-id", owner_id="owner-id")
+
+    assert result == {"success": False, "error": "Workflow persistence failed"}
+    assert connector._onboarding_workflows == {}
+
+
 def test_pinterest_resume_onboarding_invalid_workflow():
     """Test resuming onboarding with invalid workflow ID."""
     connector = PinterestConnector()

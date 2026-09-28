@@ -212,6 +212,7 @@ class PinterestConnector(BaseConnector):
         mission_id: str | None = None,
         approval_id: str | None = None,
         idempotency_key: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a Pinterest onboarding workflow.
 
@@ -233,8 +234,6 @@ class PinterestConnector(BaseConnector):
         Returns:
             Dictionary describing workflow state with human checkpoint.
         """
-        current_time = datetime.now(timezone.utc).isoformat()
-
         oauth = PinterestOAuthHelper(PinterestOAuthConfig())
 
         # If an approval_id is supplied, atomically claim or return the
@@ -346,25 +345,8 @@ class PinterestConnector(BaseConnector):
             }
         ]
 
-        workflow_state = {
-            "workflow_id": workflow_id,
-            "mission_id": mission_id,
-            "worker_id": worker_id,
-            "platform": "pinterest",
-            "status": "awaiting_human",
-            "current_step": 1,
-            "total_steps": 3,
-            "checkpoint_type": "oauth_authorization_required",
-            "created_at": current_time,
-            "updated_at": current_time,
-            "step_history": list(step_history),
-            "checkpoint_data": dict(checkpoint_data),
-            "aea_operation_key": idempotency_key,
-            "provider_idempotency": "unsupported",
-        }
-
         # Persist via the store. The store itself manages DB-first writes
-        # and in-memory fallback, so this call is safe in all environments.
+        # and reports failures when durable persistence is required.
         result = self._workflow_store.create(
             workflow_id=workflow_id,
             mission_id=mission_id,
@@ -375,10 +357,10 @@ class PinterestConnector(BaseConnector):
             total_steps=3,
             checkpoint_data=checkpoint_data,
             step_history=step_history,
+            owner_id=owner_id,
         )
         if not result.get("success"):
-            # Should not normally happen; fall back to local cache.
-            self._onboarding_workflows[workflow_id] = workflow_state
+            return result
 
         return {
             "success": True,
