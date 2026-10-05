@@ -10,6 +10,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client, verify
 from app.services.approval_gateway import ApprovalGateway
 from app.services.approval_resume_service import ApprovalResumeService
 from app.services.connectors.pinterest_connector import PinterestConnector
+from app.services.connectors.meta_marketing import MetaMarketingConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.human_intervention import HumanInterventionManager
 from app.services.mission_execution_service import MissionExecutionService
@@ -26,6 +27,7 @@ def _build_resume_service(current_user_id: str | None = None) -> ApprovalResumeS
 
     registry = ConnectorRegistry()
     registry.register(PinterestConnector(workflow_store=OnboardingWorkflowStore(durable_required=True)))
+    registry.register(MetaMarketingConnector())
     return ApprovalResumeService(
         approval_gateway=ApprovalGateway(),
         connector_registry=registry,
@@ -71,6 +73,7 @@ def _get_approval_gateway(client: Any | None = None) -> ApprovalGateway:
 def _get_resume_service(current_user_id: str, client: Any | None = None) -> ApprovalResumeService:
     """Get an ApprovalResumeService scoped to the current user."""
     registry = ConnectorRegistry()
+    registry.register(MetaMarketingConnector())
     registry.register(
         PinterestConnector(
             workflow_store=OnboardingWorkflowStore(
