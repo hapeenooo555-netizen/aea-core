@@ -74,7 +74,7 @@ class MetaMarketingConnector(BaseConnector):
         if not os.getenv("META_ACCESS_TOKEN"):
             return {"success": False, "status": "not_configured", "requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required", "error": "META_ACCESS_TOKEN is not configured"}
         if self._transport is not None:
-            return self._transport(channel=channel, worker_id=worker_id, content=dict(content), base_url=self.config.base_url, idempotency_key=idempotency_key)
+            return self._transport(channel=channel, worker_id=worker_id, owner_id=owner_id, content=dict(content), base_url=self.config.base_url, idempotency_key=idempotency_key)
         return self._publish_via_graph(channel, content, idempotency_key=idempotency_key)
 
     def _publish_via_graph(self, channel: str, content: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
