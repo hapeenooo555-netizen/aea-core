@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
-from app.services.connectors.pinterest_connector import PinterestConnector
+from app.services.connectors.pinterest_connector import PinterestConnector\nfrom app.services.connectors.meta_marketing import MetaMarketingConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.human_intervention import HumanInterventionManager
 from app.services.pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
@@ -39,7 +39,7 @@ def get_connector_registry() -> ConnectorRegistry:
         _connector_registry = ConnectorRegistry()
         # Register Pinterest connector
         pinterest_connector = PinterestConnector()
-        _connector_registry.register(pinterest_connector)
+        _connector_registry.register(pinterest_connector)\n        _connector_registry.register(MetaMarketingConnector())
     return _connector_registry
 
 
