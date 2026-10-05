@@ -17,7 +17,7 @@ from app.services.approval_gateway import ApprovalGateway
 
 SUPPORTED_CHANNELS = {"facebook", "instagram", "whatsapp"}
 LEAD_STATUSES = {"new", "qualified", "contacted", "negotiating", "won", "lost", "paused"}
-DEAL_STAGES = {"qualified", "proposal", "negotiating", "won", "lost"}
+DEAL_STAGES = {"qualified", "quote_pending_approval", "quote_sent", "negotiation", "won", "lost"}
 
 VERTICAL = "hape_brothers_marketing"
 
@@ -302,31 +302,73 @@ class HapeBrothersMarketingOS:
             return started
         return self.missions.transition(lead_id, "completed", result=result)
 
-    def record_deal(
-        self,
-        lead_id: str,
-        *,
-        stage: str,
-        amount: float | None = None,
-        currency: str = "TZS",
-        notes: str | None = None,
-    ) -> dict[str, Any]:
+    def draft_quote(self, lead_id: str, *, unit_price: float, delivery_cost: float = 0, currency: str = "TZS", notes: str | None = None) -> dict[str, Any]:
+        if unit_price < 0 or delivery_cost < 0:
+            return {"success": False, "error": "unit_price and delivery_cost must be non-negative"}
+        mission = self.missions.get_mission(lead_id)
+        if not self._is_lead(mission):
+            return {"success": False, "error": "Lead not found"}
+        metadata = dict(mission.get("metadata") or {})
+        lead = dict(metadata.get("lead") or {})
+        quantity = lead.get("quantity")
+        if not quantity:
+            return {"success": False, "error": "Lead quantity is required before drafting a quote"}
+        phone = lead.get("phone")
+        if not phone:
+            return {"success": False, "error": "Lead is missing a WhatsApp phone number"}
+        quantity = int(quantity)
+        subtotal = quantity * float(unit_price)
+        total = subtotal + float(delivery_cost)
+        cur = currency.strip().upper() or "TZS"
+        quote = {"quantity": quantity, "gauge": lead.get("gauge"), "product": lead.get("product") or "mabati", "delivery_location": lead.get("location"), "unit_price": float(unit_price), "subtotal": subtotal, "delivery_cost": float(delivery_cost), "total": total, "currency": cur, "notes": notes.strip() if notes else None, "created_at": _now_iso()}
+        message = f"HAPE BROTHERS QUOTATION\nProduct: {quote['product']}\nQuantity: {quantity} sheets" + (f"\nGauge: {quote['gauge']}" if quote["gauge"] else "") + (f"\nDelivery: {quote['delivery_location']}" if quote["delivery_location"] else "") + f"\nUnit price: {cur} {float(unit_price):,.0f}\nSubtotal: {cur} {subtotal:,.0f}" + (f"\nDelivery: {cur} {float(delivery_cost):,.0f}" if delivery_cost else "") + f"\nTOTAL: {cur} {total:,.0f}" + (f"\nNotes: {quote['notes']}" if quote["notes"] else "") + "\n\nPlease confirm if you would like us to proceed with your order."
+        quote["message"] = message
+        quote["approval_required"] = True
+        metadata["quote"] = quote
+        metadata["deal_stage"] = "quote_pending_approval"
+        metadata["lead"] = lead
+        approval = ApprovalGateway(client=self.client).create_request(mission_id=lead_id, action_type="publish_content", risk_level="medium", owner_id=self.owner_id, payload={"platform":"meta","worker_id":self.owner_id,"content":{"channel":"whatsapp","recipient":phone,"message":message},"lead_id":lead_id,"operation":"send_quote"}, client=self.client)
+        if not approval.get("success"):
+            return {"success": False, "error": approval.get("error", "Failed to create quote approval")}
+        approval_id = (approval.get("request") or {}).get("id")
+        metadata["quote"]["approval_request_id"] = approval_id
+        updated = self.missions.update_mission_metadata(lead_id, metadata=metadata, result={"action":"quote_drafted","deal_stage":"quote_pending_approval","approval_request_id":approval_id})
+        if not updated.get("success"):
+            return updated
+        return {"success": True, "status":"waiting_approval", "deal_stage":"quote_pending_approval", "lead_id":lead_id, "quote":quote, "approval_request_id":approval_id}
+
+    def get_pipeline(self, lead_id: str) -> dict[str, Any]:
+        mission = self.missions.get_mission(lead_id)
+        if not self._is_lead(mission):
+            return {"success": False, "error": "Lead not found"}
+        metadata = dict(mission.get("metadata") or {})
+        lead = dict(metadata.get("lead") or {})
+        stage = str(metadata.get("deal_stage") or "qualified")
+        if stage not in DEAL_STAGES:
+            stage = "qualified"
+        return {"success":True,"lead_id":lead_id,"deal_stage":stage,"lead_status":lead.get("status") or "new","qualification":metadata.get("qualification") or {},"quote":metadata.get("quote"),"deal":metadata.get("deal"),"next_action":lead.get("next_action")}
+
+    def record_deal(self, lead_id: str, *, stage: str, amount: float | None = None, currency: str = "TZS", notes: str | None = None) -> dict[str, Any]:
         stage = stage.strip().lower()
+        if stage == "negotiating": stage = "negotiation"
         if stage not in DEAL_STAGES:
             return {"success": False, "error": f"Unsupported deal stage '{stage}'"}
         mission = self.missions.get_mission(lead_id)
         if not self._is_lead(mission):
             return {"success": False, "error": "Lead not found"}
-        result = {
-            "action": "deal_update",
-            "stage": stage,
-            "amount": amount,
-            "currency": currency.strip().upper() or "TZS",
-            "notes": notes.strip() if notes else None,
-            "lead_status": "won" if stage == "won" else "lost" if stage == "lost" else "negotiating",
-            "updated_at": _now_iso(),
-        }
-        return self.missions.transition(lead_id, "completed", result=result)
+        metadata = dict(mission.get("metadata") or {})
+        lead = dict(metadata.get("lead") or {})
+        deal = dict(metadata.get("deal") or {})
+        deal.update({"stage":stage,"amount":amount,"currency":currency.strip().upper() or "TZS","notes":notes.strip() if notes else None,"updated_at":_now_iso()})
+        metadata["deal"] = deal
+        metadata["deal_stage"] = stage
+        if stage == "won": lead["status"]="won"
+        elif stage == "lost": lead["status"]="lost"
+        elif stage == "negotiation": lead["status"]="negotiating"
+        elif stage == "quote_sent": lead["status"]="contacted"
+        elif stage == "qualified": lead["status"]="qualified"
+        metadata["lead"] = lead
+        return self.missions.update_mission_metadata(lead_id, metadata=metadata, result={"action":"deal_update","stage":stage,"deal":deal,"lead_status":lead.get("status")})
 
     def dashboard(self) -> dict[str, Any]:
         rows = self.missions.list_missions(limit=500)
