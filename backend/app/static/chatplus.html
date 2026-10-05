@@ -1467,7 +1467,7 @@ function renderState(nextState) {
         const list = document.getElementById("leadDashboardList");
         if (!panel || !list) return;
         try {
-          const result = await api("/../marketing/leads?limit=20");
+          const result = await api("/../marketing/leads");
           const leads = Array.isArray(result.leads) ? result.leads : [];
           list.replaceChildren();
           if (!leads.length) {
@@ -1504,10 +1504,10 @@ function renderState(nextState) {
           const dashboard = document.getElementById("leadDashboardSummary");
           if (dashboard && result) {
             dashboard.textContent = [
-              "Leads: " + (result.leads_count ?? 0),
-              "Hot: " + (result.hot_leads ?? 0),
-              "Warm: " + (result.warm_leads ?? 0),
-              "Cold: " + (result.cold_leads ?? 0),
+              "Leads: " + ((result.lead_statuses ? Object.values(result.lead_statuses).reduce((a, b) => a + b, 0) : 0)),
+              "Hot: " + ((result.lead_statuses?.hot ?? 0)),
+              "Warm: " + ((result.lead_statuses?.warm ?? 0)),
+              "Cold: " + ((result.lead_statuses?.cold ?? 0)),
             ].join(" • ");
           }
         } catch (_) {}
