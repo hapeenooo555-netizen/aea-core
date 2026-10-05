@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.mission_orchestration import MissionOrchestrationService
+from app.services.lead_qualification import LeadQualificationService
 
 SUPPORTED_CHANNELS = {"facebook", "instagram", "whatsapp"}
 LEAD_STATUSES = {"new", "qualified", "contacted", "negotiating", "won", "lost", "paused"}
@@ -33,6 +34,7 @@ class HapeBrothersMarketingOS:
         self.owner_id = owner_id
         self.client = client
         self.missions = MissionOrchestrationService(owner_id, client=client)
+        self.qualifier = LeadQualificationService()
 
     @staticmethod
     def normalize_channels(channels: list[str]) -> list[str]:
@@ -188,6 +190,50 @@ class HapeBrothersMarketingOS:
             lead["updated_at"] = row.get("updated_at")
             leads.append(lead)
         return leads
+
+    def qualify_lead(self, lead_id: str, *, message: str | None = None) -> dict[str, Any]:
+        mission = self.missions.get_mission(lead_id)
+        if not self._is_lead(mission):
+            return {"success": False, "error": "Lead not found"}
+        metadata = dict(mission.get("metadata") or {})
+        lead = dict(metadata.get("lead") or {})
+        source_message = (message or lead.get("need") or "").strip()
+        result = self.qualifier.qualify(message=source_message, existing=lead)
+        qualification = result["qualification"]
+        lead.update({
+            "quantity": qualification.get("quantity") or lead.get("quantity"),
+            "gauge": qualification.get("gauge"),
+            "product": qualification.get("product"),
+            "location": qualification.get("location") or lead.get("location"),
+            "urgency": qualification.get("urgency"),
+            "qualification_score": qualification.get("score"),
+            "qualification_tier": qualification.get("tier"),
+            "missing_information": qualification.get("missing_information", []),
+            "next_action": qualification.get("next_action"),
+            "qualified_at": _now_iso(),
+            "status": "qualified" if qualification.get("score", 0) >= 40 else "new",
+        })
+        metadata["lead"] = lead
+        metadata["qualification"] = qualification
+        metadata["last_inbound_message"] = source_message
+        return self.missions.update_mission_metadata(lead_id, metadata=metadata, result={
+            "action": "lead_qualified",
+            "qualification": qualification,
+        })
+
+    def suggest_follow_up(self, lead_id: str) -> dict[str, Any]:
+        mission = self.missions.get_mission(lead_id)
+        if not self._is_lead(mission):
+            return {"success": False, "error": "Lead not found"}
+        lead = dict((mission.get("metadata") or {}).get("lead") or {})
+        missing = list(lead.get("missing_information") or [])
+        if missing:
+            labels = {"quantity": "quantity", "gauge": "gauge", "delivery_location": "delivery location"}
+            requested = ", ".join(labels.get(item, item) for item in missing)
+            message = f"Thank you for contacting HAPE BROTHERS. To prepare your roofing sheet quote, please share your {requested}."
+        else:
+            message = "Thank you for contacting HAPE BROTHERS. We have your requirements. We can prepare the next step for your order now."
+        return {"success": True, "status": "waiting_approval", "action": "follow_up", "channel": lead.get("channel") or "whatsapp", "message": message, "lead_id": lead_id, "qualification_tier": lead.get("qualification_tier")}
 
     def follow_up_lead(
         self,
