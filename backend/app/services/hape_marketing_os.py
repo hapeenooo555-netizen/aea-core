@@ -377,6 +377,7 @@ class HapeBrothersMarketingOS:
         rows = self.missions.list_missions(limit=500)
         counts = {"campaigns": 0, "content": 0, "leads": 0, "completed": 0, "waiting_approval": 0, "failed": 0}
         lead_statuses = {status: 0 for status in sorted(LEAD_STATUSES)}
+        qualification_tiers = {"hot": 0, "warm": 0, "cold": 0}
         for row in rows:
             metadata = row.get("metadata") or {}
             if metadata.get("vertical") != VERTICAL:
@@ -396,11 +397,15 @@ class HapeBrothersMarketingOS:
                 lead_status = str(lead.get("status") or "new")
                 if lead_status in lead_statuses:
                     lead_statuses[lead_status] += 1
+                tier = str(lead.get("qualification_tier") or "").lower()
+                if tier in qualification_tiers:
+                    qualification_tiers[tier] += 1
         return {
             "success": True,
             "vertical": VERTICAL,
             "counts": counts,
             "lead_statuses": lead_statuses,
+            "qualification_tiers": qualification_tiers,
             "supported_channels": sorted(SUPPORTED_CHANNELS),
             "external_execution": {
                 "facebook": "adapter_pending_credentials",
