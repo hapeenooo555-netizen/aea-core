@@ -188,6 +188,9 @@ class HapeBrothersMarketingOS:
             lead = dict(metadata.get("lead") or {})
             lead["id"] = row.get("id")
             lead["mission_status"] = row.get("status")
+            lead["deal_stage"] = metadata.get("deal_stage") or "qualified"
+            lead["quote"] = metadata.get("quote")
+            lead["deal"] = metadata.get("deal")
             lead["updated_at"] = row.get("updated_at")
             leads.append(lead)
         return leads
