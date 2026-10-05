@@ -71,6 +71,15 @@ class PublishRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class QuoteRequest(BaseModel):
+    unit_price: float = Field(..., ge=0)
+    delivery_cost: float = Field(default=0, ge=0)
+    currency: str = "TZS"
+    notes: str | None = Field(default=None, max_length=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DealRequest(BaseModel):
     stage: str
     amount: float | None = Field(default=None, ge=0)
@@ -243,6 +252,16 @@ async def follow_up_lead(
         channel=body.channel,
         next_action=body.next_action,
     ))
+
+
+@router.post("/leads/{lead_id}/quote/draft")
+async def draft_quote(lead_id: str, body: QuoteRequest, owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    return _result_or_raise(_service(owner_id, client).draft_quote(lead_id, unit_price=body.unit_price, delivery_cost=body.delivery_cost, currency=body.currency, notes=body.notes))
+
+
+@router.get("/leads/{lead_id}/pipeline")
+async def lead_pipeline(lead_id: str, owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    return _result_or_raise(_service(owner_id, client).get_pipeline(lead_id))
 
 
 @router.post("/leads/{lead_id}/deal")
