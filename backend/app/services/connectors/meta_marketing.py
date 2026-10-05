@@ -67,7 +67,7 @@ class MetaMarketingConnector(BaseConnector):
     def disconnect_account(self, worker_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
         return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "disconnected"}
 
-    def publish_content(self, worker_id: str, content: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+    def publish_content(self, worker_id: str, content: dict[str, Any], *, idempotency_key: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         channel = str(content.get("channel") or "").lower()
         if channel not in {"facebook", "instagram", "whatsapp"}:
             return {"success": False, "error": "channel must be facebook, instagram, or whatsapp"}
