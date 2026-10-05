@@ -215,6 +215,9 @@ class HapeBrothersMarketingOS:
             "lead_status": lead["status"],
             "next_action": lead["next_action"],
         }
+        started = self.missions.transition(lead_id, "active", result={"action": "follow_up_started"})
+        if not started.get("success"):
+            return started
         return self.missions.transition(lead_id, "completed", result=result)
 
     def record_deal(
