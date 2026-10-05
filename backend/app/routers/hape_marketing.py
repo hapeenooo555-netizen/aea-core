@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 from app.services.connectors.meta_marketing import MetaMarketingConnector
+from app.services.approval_gateway import ApprovalGateway
+
+SUPPORTED_CHANNELS = {"facebook", "instagram", "whatsapp"}
 
 router = APIRouter(prefix="/marketing", tags=["hape-brothers-marketing"])
 
@@ -101,19 +104,40 @@ async def publish_marketing_content(
     body: PublishRequest,
     owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
+    channel = body.channel.strip().lower()
+    if channel not in SUPPORTED_CHANNELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported channel '{channel}'")
     if body.approval_required:
+        gateway = ApprovalGateway(client=None)
+        approval = gateway.create_request(
+            mission_id=f"marketing-publish:{owner_id}",
+            action_type="publish_content",
+            risk_level="medium",
+            owner_id=owner_id,
+            payload={
+                "platform": "meta",
+                "worker_id": owner_id,
+                "content": {
+                    "channel": channel,
+                    "message": body.message,
+                },
+            },
+            client=None,
+        )
+        if not approval.get("success"):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=approval.get("error", "Failed to create approval request"))
         return {
             "success": True,
             "status": "waiting_approval",
             "owner_id": owner_id,
             "action": "publish_content",
-            "channel": body.channel.lower(),
+            "approval_request_id": (approval.get("request") or {}).get("id"),
+            "channel": channel,
             "message": body.message,
-            "idempotency_key": body.idempotency_key,
         }
     return MetaMarketingConnector().publish_content(
         owner_id,
-        {"channel": body.channel, "message": body.message},
+        {"channel": channel, "message": body.message},
         idempotency_key=body.idempotency_key,
     )
 
