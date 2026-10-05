@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from app.services.approval_gateway import ApprovalGateway
 from app.services.approval_resume_service import ApprovalResumeService
 from app.services.connectors.pinterest_connector import PinterestConnector
+from app.services.connectors.meta_marketing import MetaMarketingConnector
 from app.services.connectors.registry import ConnectorRegistry
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.human_intervention import HumanInterventionManager
@@ -84,6 +85,7 @@ def _build_resume_service(owner_id: str, client: Any | None, approval_gateway: A
             pin_store=pin_store,
         )
     )
+    registry.register(MetaMarketingConnector())
     return ApprovalResumeService(
         approval_gateway=approval_gateway,
         connector_registry=registry,
