@@ -196,6 +196,19 @@ class MissionOrchestrationService:
             rows = [row for row in rows if row.get("status") == status]
         return sorted(rows, key=lambda row: row.get("created_at") or "", reverse=True)[:limit]
 
+    def update_mission_metadata(self, mission_id: str, *, metadata: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Update owner-scoped mission metadata without changing lifecycle state."""
+        mission = self.get_mission(mission_id)
+        if not mission:
+            return {"success": False, "error": "Mission not found"}
+        updates: dict[str, Any] = {
+            "metadata": sanitize_payload(metadata),
+            "updated_at": _iso(_now()),
+        }
+        if result is not None:
+            updates["result"] = sanitize_payload(result)
+        return self._update_mission(mission_id, updates)
+
     def transition(self, mission_id: str, target: str, *, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
         target = target.lower()
         if target not in MISSION_STATES:
