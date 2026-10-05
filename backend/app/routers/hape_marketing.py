@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
+from app.services.connectors.meta_marketing import MetaMarketingConnector
 
 router = APIRouter(prefix="/marketing", tags=["hape-brothers-marketing"])
 
@@ -58,6 +59,15 @@ class FollowUpRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PublishRequest(BaseModel):
+    channel: str
+    message: str = Field(..., min_length=1, max_length=5000)
+    approval_required: bool = True
+    idempotency_key: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DealRequest(BaseModel):
     stage: str
     amount: float | None = Field(default=None, ge=0)
@@ -77,6 +87,35 @@ def _result_or_raise(result: dict[str, Any]) -> dict[str, Any]:
     error = str(result.get("error") or "Marketing operation failed")
     code = status.HTTP_404_NOT_FOUND if "not found" in error.lower() else status.HTTP_400_BAD_REQUEST
     raise HTTPException(status_code=code, detail=error)
+
+
+@router.get("/integrations/meta/status")
+async def meta_status(
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    return {"success": True, "owner_id": owner_id, "connector": MetaMarketingConnector().health_check()}
+
+
+@router.post("/publish")
+async def publish_marketing_content(
+    body: PublishRequest,
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    if body.approval_required:
+        return {
+            "success": True,
+            "status": "waiting_approval",
+            "owner_id": owner_id,
+            "action": "publish_content",
+            "channel": body.channel.lower(),
+            "message": body.message,
+            "idempotency_key": body.idempotency_key,
+        }
+    return MetaMarketingConnector().publish_content(
+        owner_id,
+        {"channel": body.channel, "message": body.message},
+        idempotency_key=body.idempotency_key,
+    )
 
 
 @router.get("/dashboard")
