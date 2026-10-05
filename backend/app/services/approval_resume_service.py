@@ -682,7 +682,21 @@ class ApprovalResumeService:
                 metadata = dict((mission or {}).get("metadata") or {})
                 lead = dict(metadata.get("lead") or {})
                 if lead:
-                    lead["status"] = "contacted"
+                    operation = payload.get("operation")
+                    if operation == "send_quote":
+                        metadata["deal_stage"] = "quote_sent"
+                        quote = dict(metadata.get("quote") or {})
+                        quote["sent_at"] = datetime.now(timezone.utc).isoformat()
+                        quote["approval_request_id"] = approval_request_id
+                        metadata["quote"] = quote
+                        deal = dict(metadata.get("deal") or {})
+                        deal["stage"] = "quote_sent"
+                        deal["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        metadata["deal"] = deal
+                        lead["status"] = "contacted"
+                        lead["next_action"] = "follow_up"
+                    else:
+                        lead["status"] = "contacted"
                     lead["last_contact_channel"] = "whatsapp"
                     lead["last_contact_at"] = datetime.now(timezone.utc).isoformat()
                     lead["last_contact_message"] = sanitized_content.get("message")
@@ -690,7 +704,7 @@ class ApprovalResumeService:
                     orchestration.update_mission_metadata(
                         lead_id,
                         metadata=metadata,
-                        result={"action": "lead_follow_up_sent", "approval_request_id": approval_request_id},
+                        result={"action": "lead_quote_sent" if operation == "send_quote" else "lead_follow_up_sent", "approval_request_id": approval_request_id},
                     )
             except Exception:
                 logger.exception("Failed to persist HAPE lead follow-up state for %s", lead_id)
