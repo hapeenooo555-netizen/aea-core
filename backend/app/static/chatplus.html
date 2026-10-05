@@ -1346,6 +1346,8 @@ function renderState(nextState) {
         renderState(result.state);
         renderApprovals();
         renderOrchestration();
+        loadMarketingDashboard();
+        loadMarketingLeads();
         schedulePoll();
       }
 
@@ -1390,7 +1392,6 @@ function renderState(nextState) {
         approvalsView.hidden = false;
         pending.forEach((approval) => {
           const card = makeElement("article", "approval-card");
-          const title = makeElement("div", "approval-title", ui.approvalTitle);
           const content = (approval.payload && approval.payload.content) || {};
           const isLeadFollowUp = approval.payload && approval.payload.operation === "lead_follow_up";
           const titleText = isLeadFollowUp ? "WhatsApp lead follow-up" : ui.approvalTitle;
@@ -1418,6 +1419,57 @@ function renderState(nextState) {
           card.append(status, actions);
           approvalsView.append(card);
         });
+      }
+
+      async function loadMarketingLeads() {
+        const panel = document.getElementById("leadDashboard");
+        const list = document.getElementById("leadDashboardList");
+        if (!panel || !list) return;
+        try {
+          const result = await api("/../marketing/leads?limit=20");
+          const leads = Array.isArray(result.leads) ? result.leads : [];
+          list.replaceChildren();
+          if (!leads.length) {
+            list.append(makeElement("div", "empty-approval", "No HAPE BROTHERS leads yet."));
+            return;
+          }
+          leads.forEach((lead) => {
+            const item = makeElement("article", "lead-row");
+            const qualification = lead.qualification || lead.metadata?.qualification || {};
+            const tier = String(qualification.tier || lead.qualification_tier || "cold").toUpperCase();
+            const score = qualification.score ?? lead.qualification_score ?? 0;
+            const summary = [
+              lead.name || lead.phone || "Lead",
+              lead.quantity ? String(lead.quantity) + " sheets" : null,
+              lead.gauge ? "Gauge " + lead.gauge : null,
+              lead.location || lead.delivery_location || null,
+            ].filter(Boolean).join(" • ");
+            item.append(
+              makeElement("div", "lead-row-title", summary),
+              makeElement("div", "lead-row-meta", tier + " • " + score + "/100")
+            );
+            list.append(item);
+          });
+          panel.hidden = false;
+        } catch (_) {
+          panel.hidden = true;
+        }
+      }
+
+      async function loadMarketingDashboard() {
+        try {
+          const result = await api("/../marketing/dashboard");
+          state.marketingDashboard = result || null;
+          const dashboard = document.getElementById("leadDashboardSummary");
+          if (dashboard && result) {
+            dashboard.textContent = [
+              "Leads: " + (result.leads_count ?? 0),
+              "Hot: " + (result.hot_leads ?? 0),
+              "Warm: " + (result.warm_leads ?? 0),
+              "Cold: " + (result.cold_leads ?? 0),
+            ].join(" • ");
+          }
+        } catch (_) {}
       }
 
       function openDrawer(drawer) {
