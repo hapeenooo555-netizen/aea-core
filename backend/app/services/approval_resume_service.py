@@ -40,11 +40,13 @@ a defense-in-depth).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from .approval_gateway import ApprovalGateway
 from .human_intervention import HumanInterventionManager
 from .p1_7_contracts import SENSITIVE_FIELDS
+from .mission_orchestration import MissionOrchestrationService
 
 logger = logging.getLogger(__name__)
 
@@ -671,6 +673,27 @@ class ApprovalResumeService:
                 platform=connector.platform,
                 worker_id=worker_id,
             )
+
+        lead_id = payload.get("lead_id")
+        if lead_id and current_user_id and sanitized_content.get("channel") == "whatsapp":
+            try:
+                orchestration = MissionOrchestrationService(current_user_id)
+                mission = orchestration.get_mission(lead_id)
+                metadata = dict((mission or {}).get("metadata") or {})
+                lead = dict(metadata.get("lead") or {})
+                if lead:
+                    lead["status"] = "contacted"
+                    lead["last_contact_channel"] = "whatsapp"
+                    lead["last_contact_at"] = datetime.now(timezone.utc).isoformat()
+                    lead["last_contact_message"] = sanitized_content.get("message")
+                    metadata["lead"] = lead
+                    orchestration.update_mission_metadata(
+                        lead_id,
+                        metadata=metadata,
+                        result={"action": "lead_follow_up_sent", "approval_request_id": approval_request_id},
+                    )
+            except Exception:
+                logger.exception("Failed to persist HAPE lead follow-up state for %s", lead_id)
 
         if result.get("status") == "duplicate":
             return {
