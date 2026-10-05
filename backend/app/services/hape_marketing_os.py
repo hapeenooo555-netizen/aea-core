@@ -13,6 +13,7 @@ from typing import Any
 
 from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.lead_qualification import LeadQualificationService
+from app.services.approval_gateway import ApprovalGateway
 
 SUPPORTED_CHANNELS = {"facebook", "instagram", "whatsapp"}
 LEAD_STATUSES = {"new", "qualified", "contacted", "negotiating", "won", "lost", "paused"}
@@ -233,7 +234,42 @@ class HapeBrothersMarketingOS:
             message = f"Thank you for contacting HAPE BROTHERS. To prepare your roofing sheet quote, please share your {requested}."
         else:
             message = "Thank you for contacting HAPE BROTHERS. We have your requirements. We can prepare the next step for your order now."
-        return {"success": True, "status": "waiting_approval", "action": "follow_up", "channel": lead.get("channel") or "whatsapp", "message": message, "lead_id": lead_id, "qualification_tier": lead.get("qualification_tier")}
+        channel = lead.get("channel") or "whatsapp"
+        if channel != "whatsapp":
+            return {"success": False, "error": "Automated lead follow-up currently supports WhatsApp only"}
+        recipient = lead.get("phone")
+        if not recipient:
+            return {"success": False, "error": "Lead is missing a WhatsApp phone number"}
+        approval = ApprovalGateway(client=self.client).create_request(
+            mission_id=lead_id,
+            action_type="publish_content",
+            risk_level="medium",
+            owner_id=self.owner_id,
+            payload={
+                "platform": "meta",
+                "worker_id": self.owner_id,
+                "content": {
+                    "channel": "whatsapp",
+                    "recipient": recipient,
+                    "message": message,
+                },
+                "lead_id": lead_id,
+                "operation": "lead_follow_up",
+            },
+            client=self.client,
+        )
+        if not approval.get("success"):
+            return {"success": False, "error": approval.get("error", "Failed to create follow-up approval")}
+        return {
+            "success": True,
+            "status": "waiting_approval",
+            "action": "follow_up",
+            "channel": channel,
+            "message": message,
+            "lead_id": lead_id,
+            "qualification_tier": lead.get("qualification_tier"),
+            "approval_request_id": (approval.get("request") or {}).get("id"),
+        }
 
     def follow_up_lead(
         self,
