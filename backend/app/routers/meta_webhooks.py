@@ -85,12 +85,16 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                     idempotency_key=f"whatsapp:{message_id}" if message_id else None,
                 )
                 if result.get("success"):
+                    lead_id = result.get("mission", {}).get("id")
+                    qualification = service.qualify_lead(lead_id, message=text) if lead_id else {"success": False}
                     processed += 1
                     leads.append({
-                        "lead_id": result.get("mission", {}).get("id"),
+                        "lead_id": lead_id,
                         "phone": sender,
                         "message_id": message_id,
                         "phone_number_id": metadata.get("phone_number_id"),
+                        "qualification": qualification.get("qualification") if qualification.get("success") else None,
+                        "follow_up_status": "waiting_approval",
                     })
                 else:
                     ignored += 1
