@@ -530,6 +530,41 @@
       color: var(--danger);
     }
 
+    .lead-dashboard-summary {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .lead-dashboard-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .lead-row {
+      display: grid;
+      gap: 3px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #f8fafb;
+    }
+
+    .lead-row-title {
+      font-size: 13px;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .lead-row-meta {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
     .empty-approval {
       padding: 12px 14px;
       border: 1px dashed var(--line);
@@ -898,6 +933,12 @@ Connect Pinterest
           </div>
           <div id="assistantResponse" class="assistant-response" hidden></div>
         </article>
+
+        <section id="leadDashboard" class="panel" aria-label="HAPE BROTHERS leads" hidden>
+          <div class="card-header">HAPE BROTHERS LEADS</div>
+          <div id="leadDashboardSummary" class="lead-dashboard-summary">Loading lead pipeline...</div>
+          <div id="leadDashboardList" class="lead-dashboard-list"></div>
+        </section>
 
         <section id="approvals" class="panel" aria-label="Approval requests">
           <div id="approvalLabel" class="card-header">Approval</div>
