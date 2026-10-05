@@ -187,6 +187,25 @@ async def list_leads(
     return {"success": True, "leads": leads, "count": len(leads)}
 
 
+@router.post("/leads/{lead_id}/qualify")
+async def qualify_lead(
+    lead_id: str,
+    message: str | None = None,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    return _result_or_raise(_service(owner_id, client).qualify_lead(lead_id, message=message))
+
+
+@router.post("/leads/{lead_id}/follow-up/suggest")
+async def suggest_follow_up(
+    lead_id: str,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    return _result_or_raise(_service(owner_id, client).suggest_follow_up(lead_id))
+
+
 @router.post("/leads/{lead_id}/follow-up")
 async def follow_up_lead(
     lead_id: str,
