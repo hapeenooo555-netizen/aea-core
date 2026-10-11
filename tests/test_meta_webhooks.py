@@ -38,6 +38,7 @@ def test_meta_webhook_rejects_bad_signature(monkeypatch) -> None:
 def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     secret = "secret"
     monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
     app = FastAPI()
     app.include_router(router)
     payload = {
@@ -67,3 +68,20 @@ def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     data = response.json()
     assert data["processed"] == 1
     assert data["leads"][0]["phone"] == "255700000000"
+
+
+
+def test_meta_webhook_requires_explicit_owner(monkeypatch) -> None:
+    monkeypatch.setenv("META_APP_SECRET", "secret")
+    monkeypatch.delenv("HAPE_BROTHERS_OWNER_ID", raising=False)
+    app = FastAPI()
+    app.include_router(router)
+    payload = {"entry": []}
+    raw = json.dumps(payload).encode()
+    signature = "sha256=" + hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 503
