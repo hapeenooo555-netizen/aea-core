@@ -273,6 +273,25 @@ class EmployeeVerticalSlice:
         cross-process exclusion; this lock also makes the local fallback safe.
         """
         with _execution_lock(execution_id):
+            # A concurrent caller may have passed run()'s initial state check
+            # before the first worker created its approval checkpoint. Recheck
+            # under the execution lock before doing any more work.
+            current = self._execution.get_execution(execution_id, owner_id=self.owner_id)
+            if current and current.get("status") == "WAITING_APPROVAL":
+                durable_result = current.get("result") or {}
+                approval_request_id = durable_result.get("approval_request_id")
+                report["execution_id"] = execution_id
+                report["required_user_action"] = "Approve the pending action"
+                report["resume_information"] = {
+                    "approval_request_id": approval_request_id,
+                    "execution_id": execution_id,
+                }
+                report["final_status"] = "WAIT_FOR_APPROVAL"
+                return {
+                    "success": False,
+                    "status": "WAIT_FOR_APPROVAL",
+                    "report": sanitize_payload(report),
+                }
             return self._execute_plan_locked(
                 mission_id, execution_id, plan, report, metadata
             )
