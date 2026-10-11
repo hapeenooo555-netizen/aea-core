@@ -128,11 +128,16 @@ class MetaMarketingConnector(BaseConnector):
         channel = str(content.get("channel") or "").lower()
         if channel not in {"facebook", "instagram", "whatsapp"}:
             return {"success": False, "error": "channel must be facebook, instagram, or whatsapp"}
-        if not os.getenv("META_ACCESS_TOKEN"):
-            return {"success": False, "status": "not_configured", "requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required", "error": "META_ACCESS_TOKEN is not configured"}
-        if self._transport is not None:
-            return self._transport(channel=channel, worker_id=worker_id, owner_id=owner_id, content=dict(content), base_url=self.config.base_url, idempotency_key=idempotency_key)
-        return self._publish_via_graph(channel, content, idempotency_key=idempotency_key)
+        # Fail closed until a verified per-owner OAuth token/asset store exists.
+        # A global environment token is not evidence of user authorization and
+        # must never be enough to trigger an external side effect.
+        return {
+            "success": False,
+            "status": "awaiting_authorization",
+            "requires_human_intervention": True,
+            "checkpoint_type": "oauth_authorization_required",
+            "error": "Meta publishing is disabled until verified per-owner OAuth, granted scopes, asset ownership, and secure token storage are implemented.",
+        }
 
     def _publish_via_graph(self, channel: str, content: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         token = os.getenv("META_ACCESS_TOKEN")
