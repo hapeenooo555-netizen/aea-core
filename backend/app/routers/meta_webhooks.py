@@ -49,6 +49,11 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Meta webhook signature")
 
     payload = await request.json()
+    owner_id = os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip()
+    if not owner_id:
+        # Never attach externally supplied leads to a synthetic/default owner.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta webhook owner is not configured")
+
     processed = 0
     ignored = 0
     leads: list[dict[str, Any]] = []
@@ -71,7 +76,7 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
 
                 metadata = value.get("metadata") or {}
                 service = HapeBrothersMarketingOS(
-                    owner_id=os.getenv("HAPE_BROTHERS_OWNER_ID", "meta-webhook"),
+                    owner_id=owner_id,
                     client=None,
                 )
                 result = service.create_lead(
