@@ -149,11 +149,24 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
 
                 mission = result.get("mission") or {}
                 lead_id = mission.get("id")
-                qualification = (
+                qualification_result = (
                     service.qualify_lead(lead_id, message=body)
                     if lead_id
-                    else {"success": False}
+                    else {"success": False, "error": "Created lead has no mission ID"}
                 )
+                if not qualification_result.get("success"):
+                    # The lead is durable, but do not claim qualification or approval
+                    # is complete when its metadata update failed.
+                    qualification_payload = None
+                    follow_up_status = "qualification_failed"
+                else:
+                    updated_mission = qualification_result.get("mission") or {}
+                    mission_result = updated_mission.get("result") or {}
+                    qualification_payload = (
+                        mission_result.get("qualification")
+                        or qualification_result.get("qualification")
+                    )
+                    follow_up_status = "not_started"
                 processed += 1
                 leads.append(
                     {
@@ -161,12 +174,8 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                         "phone": sender,
                         "message_id": message_id,
                         "phone_number_id": phone_number_id,
-                        "qualification": (
-                            qualification.get("qualification")
-                            if qualification.get("success")
-                            else None
-                        ),
-                        "follow_up_status": "waiting_approval",
+                        "qualification": qualification_payload,
+                        "follow_up_status": follow_up_status,
                     }
                 )
 
