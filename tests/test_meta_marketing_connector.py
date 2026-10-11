@@ -34,10 +34,18 @@ def test_meta_connect_account_rejects_unverified_asset_ids() -> None:
     assert result["checkpoint_type"] == "oauth_authorization_required"
 
 
-def test_meta_onboarding_never_claims_success_without_oauth() -> None:
+def test_meta_onboarding_requires_authenticated_owner() -> None:
     connector = MetaMarketingConnector()
     started = connector.start_onboarding("worker-a")
+    assert started["status"] == "failed"
+    assert "owner_id is required" in started["error"]
+
+
+def test_meta_onboarding_never_claims_success_without_oauth() -> None:
+    connector = MetaMarketingConnector()
+    started = connector.start_onboarding("worker-a", owner_id="owner-a")
     assert started["status"] == "awaiting_human"
+    assert started["owner_id"] == "owner-a"
     resumed = connector.resume_onboarding(started["workflow_id"], {"page_id": "fake-page"})
     assert resumed["status"] == "awaiting_human"
     assert resumed["requires_human_intervention"] is True
