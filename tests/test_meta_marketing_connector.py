@@ -57,18 +57,19 @@ def test_meta_disconnect_does_not_claim_revocation_without_token_store() -> None
     assert result["status"] == "awaiting_human"
 
 
-def test_meta_publish_requires_configuration(monkeypatch) -> None:
+def test_meta_publish_waits_for_oauth_when_no_token_is_configured(monkeypatch) -> None:
     monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
     result = MetaMarketingConnector().publish_content(
         "worker-a",
         {"channel": "whatsapp", "message": "Habari"},
+        owner_id="owner-a",
     )
     assert result["success"] is False
-    assert result["status"] == "not_configured"
+    assert result["status"] == "awaiting_authorization"
     assert result["checkpoint_type"] == "oauth_authorization_required"
 
 
-def test_meta_publish_uses_transport_without_leaking_token(monkeypatch) -> None:
+def test_meta_publish_cannot_be_triggered_by_global_token_or_transport(monkeypatch) -> None:
     monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
     captured = {}
 
@@ -79,8 +80,10 @@ def test_meta_publish_uses_transport_without_leaking_token(monkeypatch) -> None:
     result = MetaMarketingConnector(transport=transport).publish_content(
         "worker-a",
         {"channel": "facebook", "message": "New mabati stock"},
+        owner_id="owner-a",
         idempotency_key="post-1",
     )
-    assert result == {"success": True, "id": "remote-1"}
-    assert captured["channel"] == "facebook"
-    assert "access_token" not in captured
+    assert result["success"] is False
+    assert result["status"] == "awaiting_authorization"
+    assert result["checkpoint_type"] == "oauth_authorization_required"
+    assert captured == {}
