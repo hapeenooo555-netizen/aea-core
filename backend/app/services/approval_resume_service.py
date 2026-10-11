@@ -139,8 +139,11 @@ class ApprovalResumeService:
             )
 
         request_owner = request.get("owner_id")
+        # A request resumed through an authenticated API must have an explicit
+        # owner and that owner must match the caller. Missing ownership is not
+        # evidence of authorization; fail closed for legacy/unscoped requests.
         if current_user_id is not None:
-            if request_owner and request_owner != current_user_id:
+            if not request_owner or request_owner != current_user_id:
                 return self._fail(
                     "approval_unauthorized",
                     "Authenticated user is not authorized to resume this approval",
@@ -700,6 +703,8 @@ class ApprovalResumeService:
                         lead["next_action"] = "follow_up"
                     else:
                         lead["status"] = "contacted"
+                        if operation == "lead_follow_up":
+                            lead["next_action"] = payload.get("next_action") or "follow_up"
                     lead["last_contact_channel"] = "whatsapp"
                     lead["last_contact_at"] = datetime.now(timezone.utc).isoformat()
                     lead["last_contact_message"] = sanitized_content.get("message")

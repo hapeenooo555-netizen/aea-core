@@ -69,6 +69,7 @@ def _make_approval_request(
     action_type: str = "start_platform_onboarding",
     payload: dict | None = None,
     ttl_hours: int = 24,
+    owner_id: str | None = None,
 ) -> str:
     """Create an approval request and return its id."""
     payload = payload or {"platform": "pinterest", "worker_id": "worker-1"}
@@ -77,6 +78,7 @@ def _make_approval_request(
         action_type=action_type,
         risk_level="sensitive",
         payload=payload,
+        owner_id=owner_id,
         ttl_hours=ttl_hours,
     )
     assert result.get("success"), result
@@ -483,6 +485,7 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
     """publish_content resume fails when the platform is not connected."""
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -513,6 +516,7 @@ def test_publish_content_resume_success(resume_service, approval_gateway):
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -559,6 +563,7 @@ def test_publish_content_server_ignores_client_operation_key(
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -595,6 +600,7 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway)
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -642,6 +648,7 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -676,6 +683,7 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -744,6 +752,7 @@ def test_publish_content_missing_worker_id_fails(resume_service, approval_gatewa
     """publish_content without worker_id returns resume_failed."""
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -788,6 +797,7 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -804,3 +814,36 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
     result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "scheme" in result["error"].lower() or "http" in result["error"].lower()
+
+# ---------------------------------------------------------------------------
+# Security regression: authenticated resume requires explicit matching owner
+# ---------------------------------------------------------------------------
+def test_authenticated_resume_rejects_approval_owned_by_another_user(
+    approval_gateway, resume_service
+):
+    created = approval_gateway.create_request(
+        mission_id="mission-owner-a",
+        action_type="start_platform_onboarding",
+        risk_level="sensitive",
+        owner_id="owner-a",
+        payload={"platform": "pinterest", "worker_id": "worker-owner-a"},
+    )
+    request_id = created["request"]["id"]
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id, current_user_id="owner-b")
+
+    assert result["status"] == "approval_unauthorized"
+    assert "not authorized" in result["error"].lower()
+
+
+def test_authenticated_resume_rejects_legacy_approval_without_owner(
+    approval_gateway, resume_service
+):
+    request_id = _make_approval_request(approval_gateway)
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id, current_user_id="owner-a")
+
+    assert result["status"] == "approval_unauthorized"
+    assert "not authorized" in result["error"].lower()

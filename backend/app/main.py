@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app import database
-from app.routers import affiliate_jobs, approvals, atlas, chatplus, connectors, employee, hape_marketing, meta_webhooks, health, missions, workers
+from app.routers import affiliate_jobs, approvals, atlas, chatplus, connectors, employee, hape_marketing, meta_oauth, meta_webhooks, health, missions, workers
 
 # Import supabase_client for test compatibility
 supabase_client = database.supabase_client
@@ -42,3 +42,4 @@ app.include_router(affiliate_jobs.router, tags=["affiliate"])
 app.include_router(chatplus.router, tags=["chatplus"])
 app.include_router(hape_marketing.router, tags=["hape-brothers-marketing"])
 app.include_router(meta_webhooks.router, tags=["meta-webhooks"])
+app.include_router(meta_oauth.router, tags=["meta-oauth"])

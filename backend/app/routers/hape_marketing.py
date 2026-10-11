@@ -65,6 +65,7 @@ class FollowUpRequest(BaseModel):
 class PublishRequest(BaseModel):
     channel: str
     message: str = Field(..., min_length=1, max_length=5000)
+    asset_id: str | None = Field(default=None, min_length=1, max_length=100)
     approval_required: bool = True
     idempotency_key: str | None = None
 
@@ -116,39 +117,42 @@ async def publish_marketing_content(
     channel = body.channel.strip().lower()
     if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported channel '{channel}'")
-    if body.approval_required:
-        gateway = ApprovalGateway(client=None)
-        approval = gateway.create_request(
-            mission_id=f"marketing-publish:{owner_id}",
-            action_type="publish_content",
-            risk_level="medium",
-            owner_id=owner_id,
-            payload={
-                "platform": "meta",
-                "worker_id": owner_id,
-                "content": {
-                    "channel": channel,
-                    "message": body.message,
-                },
-            },
-            client=None,
+    # External publication must always pass through the human-approval gateway.
+    # Reject attempts to disable the gate instead of silently publishing directly.
+    if not body.approval_required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Human approval is mandatory for all external marketing publication",
         )
-        if not approval.get("success"):
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=approval.get("error", "Failed to create approval request"))
-        return {
-            "success": True,
-            "status": "waiting_approval",
-            "owner_id": owner_id,
-            "action": "publish_content",
-            "approval_request_id": (approval.get("request") or {}).get("id"),
-            "channel": channel,
-            "message": body.message,
-        }
-    return MetaMarketingConnector().publish_content(
-        owner_id,
-        {"channel": channel, "message": body.message},
-        idempotency_key=body.idempotency_key,
+
+    gateway = ApprovalGateway(client=None)
+    approval = gateway.create_request(
+        mission_id=f"marketing-publish:{owner_id}",
+        action_type="publish_content",
+        risk_level="medium",
+        owner_id=owner_id,
+        payload={
+            "platform": "meta",
+            "worker_id": owner_id,
+            "content": {
+                "channel": channel,
+                "message": body.message,
+                "asset_id": body.asset_id,
+            },
+        },
+        client=None,
     )
+    if not approval.get("success"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=approval.get("error", "Failed to create approval request"))
+    return {
+        "success": True,
+        "status": "waiting_approval",
+        "owner_id": owner_id,
+        "action": "publish_content",
+        "approval_request_id": (approval.get("request") or {}).get("id"),
+        "channel": channel,
+        "message": body.message,
+    }
 
 
 @router.get("/dashboard")

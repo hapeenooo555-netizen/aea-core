@@ -285,25 +285,52 @@ class HapeBrothersMarketingOS:
         channels = self.normalize_channels([channel])
         if not message.strip():
             return {"success": False, "error": "message is required"}
+        if channels[0] != "whatsapp":
+            return {"success": False, "error": "External lead follow-up currently supports WhatsApp only"}
         mission = self.missions.get_mission(lead_id)
         if not self._is_lead(mission):
             return {"success": False, "error": "Lead not found"}
         lead = dict((mission.get("metadata") or {}).get("lead") or {})
-        lead["status"] = "contacted"
-        lead["last_contact_channel"] = channels[0]
-        lead["last_contact_at"] = _now_iso()
-        lead["next_action"] = next_action.strip() or "follow_up"
-        result = {
+        recipient = lead.get("phone")
+        if not recipient:
+            return {"success": False, "error": "Lead is missing a WhatsApp phone number"}
+
+        # Preparing a follow-up is not the same as sending it. Persist an
+        # approval request and leave the lead's contact status unchanged
+        # until the authenticated approval-resume pipeline actually sends it.
+        next_step = next_action.strip() or "follow_up"
+        approval = ApprovalGateway(client=self.client).create_request(
+            mission_id=lead_id,
+            action_type="publish_content",
+            risk_level="medium",
+            owner_id=self.owner_id,
+            payload={
+                "platform": "meta",
+                "worker_id": self.owner_id,
+                "content": {
+                    "channel": "whatsapp",
+                    "recipient": recipient,
+                    "message": message.strip(),
+                },
+                "lead_id": lead_id,
+                "operation": "lead_follow_up",
+                "next_action": next_step,
+            },
+            client=self.client,
+        )
+        if not approval.get("success"):
+            return {"success": False, "error": approval.get("error", "Failed to create follow-up approval")}
+        return {
+            "success": True,
+            "status": "waiting_approval",
             "action": "follow_up",
-            "channel": channels[0],
+            "channel": "whatsapp",
             "message": message.strip(),
-            "lead_status": lead["status"],
-            "next_action": lead["next_action"],
+            "lead_id": lead_id,
+            "lead_status": lead.get("status") or "new",
+            "next_action": next_step,
+            "approval_request_id": (approval.get("request") or {}).get("id"),
         }
-        started = self.missions.transition(lead_id, "active", result={"action": "follow_up_started"})
-        if not started.get("success"):
-            return started
-        return self.missions.transition(lead_id, "completed", result=result)
 
     def draft_quote(self, lead_id: str, *, unit_price: float, delivery_cost: float = 0, currency: str = "TZS", notes: str | None = None) -> dict[str, Any]:
         if unit_price < 0 or delivery_cost < 0:
