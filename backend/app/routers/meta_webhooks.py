@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 from typing import Any
 
@@ -21,6 +22,31 @@ def _verify_signature(raw_body: bytes, signature: str | None) -> bool:
         return False
     expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature[7:], expected)
+
+
+def _resolve_owner_id(phone_number_id: str | None) -> str | None:
+    """Resolve the tenant from the Meta asset ID; never cross-fallback a configured map."""
+    raw_map = os.getenv("META_PHONE_NUMBER_OWNER_MAP", "").strip()
+    if raw_map:
+        try:
+            owner_map = json.loads(raw_map)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Meta phone-number owner mapping is invalid",
+            ) from exc
+        if not isinstance(owner_map, dict):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Meta phone-number owner mapping must be a JSON object",
+            )
+        owner = owner_map.get(str(phone_number_id or ""))
+        return str(owner).strip() if owner and str(owner).strip() else None
+
+    # Backward-compatible single-tenant configuration. Once a mapping is supplied,
+    # an unknown asset must not fall back to this owner.
+    owner = os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip()
+    return owner or None
 
 
 @router.get("")
@@ -49,10 +75,9 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Meta webhook signature")
 
     payload = await request.json()
-    owner_id = os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip()
-    if not owner_id:
-        # Never attach externally supplied leads to a synthetic/default owner.
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta webhook owner is not configured")
+    # Validate the configuration before processing any event. A supplied mapping is
+    # authoritative; unknown phone_number_id values are ignored, not assigned elsewhere.
+    _resolve_owner_id(None)
 
     processed = 0
     ignored = 0
@@ -63,6 +88,9 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
             value = change.get("value") or {}
             if change.get("field") != "messages":
                 continue
+            metadata = value.get("metadata") or {}
+            phone_number_id = metadata.get("phone_number_id")
+            owner_id = _resolve_owner_id(str(phone_number_id) if phone_number_id else None)
             for message in value.get("messages", []):
                 if message.get("type") != "text":
                     ignored += 1
@@ -70,15 +98,11 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                 sender = message.get("from")
                 text = ((message.get("text") or {}).get("body") or "").strip()
                 message_id = message.get("id")
-                if not sender or not text:
+                if not sender or not text or not owner_id:
                     ignored += 1
                     continue
 
-                metadata = value.get("metadata") or {}
-                service = HapeBrothersMarketingOS(
-                    owner_id=owner_id,
-                    client=None,
-                )
+                service = HapeBrothersMarketingOS(owner_id=owner_id, client=None)
                 result = service.create_lead(
                     name=f"WhatsApp {sender}",
                     phone=sender,
@@ -87,7 +111,7 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                     source="whatsapp",
                     channel="whatsapp",
                     need=text,
-                    idempotency_key=f"whatsapp:{message_id}" if message_id else None,
+                    idempotency_key=f"whatsapp:{phone_number_id}:{message_id}" if message_id else None,
                 )
                 if result.get("success"):
                     lead_id = result.get("mission", {}).get("id")
@@ -97,7 +121,7 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                         "lead_id": lead_id,
                         "phone": sender,
                         "message_id": message_id,
-                        "phone_number_id": metadata.get("phone_number_id"),
+                        "phone_number_id": phone_number_id,
                         "qualification": qualification.get("qualification") if qualification.get("success") else None,
                         "follow_up_status": "waiting_approval",
                     })
