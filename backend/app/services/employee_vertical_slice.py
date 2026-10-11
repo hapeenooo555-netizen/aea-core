@@ -192,6 +192,18 @@ class EmployeeVerticalSlice:
         mission_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Serialize same-mission workers before resolving or claiming execution."""
+        lock_key = f"mission:{self.owner_id}:{mission_id or goal}"
+        with _execution_lock(lock_key):
+            return self._run_serialized(goal, mission_id=mission_id, metadata=metadata)
+
+    def _run_serialized(
+        self,
+        goal: str,
+        *,
+        mission_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Understand, plan, validate, execute, observe, and report."""
         mission_result = self._resolve_mission(mission_id, goal)
         if not mission_result.get("success"):
@@ -401,9 +413,7 @@ class EmployeeVerticalSlice:
                 if status in {"not_started", "needs_reconnect", "failed", "onboarding"}:
                     report["next_step_required"] = True
 
-            # Creating an approval request completes this step's work even
-            # though the overall mission must pause until a human decides.
-            step_status = "completed" if result.get("success") or result.get("pending_approval") else "failed"
+            step_status = "completed" if result.get("success") else "failed"
             retry_category = None if result.get("success") else classify_failure(result.get("error", "execution failure")).category
             step_update = self._execution.update_step(
                 execution_id,
