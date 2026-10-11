@@ -47,39 +47,16 @@ def get_supabase_client() -> Any:
         return None
 
 
-def _get_supabase_health_client() -> Any:
-    """Return a dedicated service-role client used only by the health probe.
-
-    The privileged client is kept separate from the user-scoped application
-    client and is only used to perform the read-only missions.id query below.
-    """
-    global _supabase_health_client
-    if _supabase_health_client is not None:
-        return _supabase_health_client
-
-    url = os.getenv("SUPABASE_URL", "")
-    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not (url and service_role_key):
-        return None
-
-    try:
-        from supabase import create_client
-
-        _supabase_health_client = create_client(url, service_role_key)
-        return _supabase_health_client
-    except Exception:  # pragma: no cover - defensive runtime handling
-        return None
-
-
 def check_supabase_connection() -> bool:
-    """Verify Supabase with a bounded, read-only query using a dedicated client.
+    """Verify Supabase with a bounded, read-only query using the public client.
 
-    The service-role credential is isolated to this probe because the missions
-    table has owner-based RLS and the health endpoint has no user JWT. Only the
-    ID column is selected and at most one row is requested. No exception detail
-    or credential is returned to callers.
+    This probe deliberately uses the same anon-key client as normal
+    unauthenticated requests, not the service-role key. With owner-based RLS,
+    an unauthenticated query may return zero rows; a successful PostgREST
+    response still verifies the API/database path without bypassing RLS.
+    No exception details are returned to callers.
     """
-    client = _get_supabase_health_client()
+    client = get_supabase_client()
     if client is None:
         return False
     try:
