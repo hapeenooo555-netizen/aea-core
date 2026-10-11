@@ -69,6 +69,32 @@ def _get_supabase_health_client() -> Any:
         return None
 
 
+
+_meta_webhook_client: Any = None
+
+
+def get_supabase_service_client() -> Any:
+    """Return a dedicated server-side client for verified inbound Meta webhooks.
+
+    Never expose this privileged client to browser-facing routes. The webhook
+    must verify Meta's signature and resolve an explicit tenant owner before use.
+    """
+    global _meta_webhook_client
+    if _meta_webhook_client is not None:
+        return _meta_webhook_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+
+        _meta_webhook_client = create_client(url, service_role_key)
+        return _meta_webhook_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
+
 def check_supabase_connection() -> bool:
     """Verify connectivity with one bounded, read-only query.
 
