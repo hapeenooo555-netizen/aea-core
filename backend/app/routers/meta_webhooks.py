@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 
-from app.database import get_supabase_client
+from app.database import get_supabase_service_client
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 
 router = APIRouter(prefix="/webhooks/meta", tags=["meta-webhooks"])
@@ -83,10 +83,10 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
     if not os.getenv("META_PHONE_NUMBER_OWNER_MAP", "").strip() and not os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta webhook owner is not configured")
 
-    client = get_supabase_client()
+    client = get_supabase_service_client()
     if client is None:
         # Webhooks must never report success after writing leads only to process memory.
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Persistent lead storage is not configured")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Server-side Supabase service credentials are not configured")
 
     processed = 0
     ignored = 0
