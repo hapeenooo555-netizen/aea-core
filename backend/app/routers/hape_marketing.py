@@ -65,6 +65,7 @@ class FollowUpRequest(BaseModel):
 class PublishRequest(BaseModel):
     channel: str
     message: str = Field(..., min_length=1, max_length=5000)
+    asset_id: str | None = Field(default=None, min_length=1, max_length=100)
     approval_required: bool = True
     idempotency_key: str | None = None
 
@@ -136,6 +137,7 @@ async def publish_marketing_content(
             "content": {
                 "channel": channel,
                 "message": body.message,
+                "asset_id": body.asset_id,
             },
         },
         client=None,
