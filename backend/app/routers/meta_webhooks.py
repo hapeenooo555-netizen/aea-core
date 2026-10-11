@@ -76,17 +76,17 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
     if not _verify_signature(raw, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Meta webhook signature")
 
-    client = get_supabase_client()
-    if client is None:
-        # Webhooks must never report success after writing leads only to process memory.
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Persistent lead storage is not configured")
-
     payload = await request.json()
     # Validate the configuration before processing any event. A supplied mapping is
     # authoritative; unknown phone_number_id values are ignored, not assigned elsewhere.
     _resolve_owner_id(None)
     if not os.getenv("META_PHONE_NUMBER_OWNER_MAP", "").strip() and not os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta webhook owner is not configured")
+
+    client = get_supabase_client()
+    if client is None:
+        # Webhooks must never report success after writing leads only to process memory.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Persistent lead storage is not configured")
 
     processed = 0
     ignored = 0
@@ -135,7 +135,8 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                         "follow_up_status": "waiting_approval",
                     })
                 else:
-                    ignored += 1
+                    # Do not acknowledge a message that failed to persist; Meta can retry it.
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="WhatsApp lead persistence failed")
 
     return {
         "success": True,
