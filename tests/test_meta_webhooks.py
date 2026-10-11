@@ -120,3 +120,17 @@ def test_meta_webhook_does_not_fallback_for_unknown_phone_number_owner(monkeypat
     assert response.status_code == 200
     assert response.json()["processed"] == 0
     assert response.json()["ignored"] == 1
+
+def test_meta_webhook_verification_echoes_non_numeric_challenge_as_plain_text(monkeypatch) -> None:
+    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", "verify-me")
+    app = FastAPI()
+    app.include_router(router)
+    challenge = "verify-challenge-abc"
+    response = TestClient(app).get("/webhooks/meta", params={
+        "hub.mode": "subscribe",
+        "hub.verify_token": "verify-me",
+        "hub.challenge": challenge,
+    })
+    assert response.status_code == 200
+    assert response.text == challenge
+    assert response.headers["content-type"].startswith("text/plain")
