@@ -116,9 +116,12 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
             owner_id = _resolve_owner_id(str(phone_number_id) if phone_number_id else None)
             messages = value.get("messages", [])
             if messages and not owner_id:
-                # Do not assign an unknown Meta asset to a different tenant.
-                ignored += len(messages)
-                continue
+                # Fail visibly instead of acknowledging and silently dropping a
+                # message that cannot be assigned to the correct tenant.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="No owner is configured for this Meta phone number",
+                )
 
             for message in messages:
                 if message.get("type") != "text":
