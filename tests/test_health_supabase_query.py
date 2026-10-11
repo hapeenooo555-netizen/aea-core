@@ -44,7 +44,7 @@ class FakeClient:
 
 def test_connection_check_executes_read_only_limited_query(monkeypatch):
     client = FakeClient()
-    monkeypatch.setattr(database, "_get_supabase_health_client", lambda: client)
+    monkeypatch.setattr(database, "get_supabase_client", lambda: client)
 
     assert database.check_supabase_connection() is True
     assert client.table_name == "missions"
@@ -55,41 +55,18 @@ def test_connection_check_executes_read_only_limited_query(monkeypatch):
 
 def test_connection_check_returns_false_on_query_failure(monkeypatch):
     client = FakeClient(should_raise=True)
-    monkeypatch.setattr(database, "_get_supabase_health_client", lambda: client)
+    monkeypatch.setattr(database, "get_supabase_client", lambda: client)
 
     assert database.check_supabase_connection() is False
 
 
-def test_health_client_uses_service_role_key_only_for_probe(monkeypatch):
-    captured = {}
+def test_connection_check_does_not_require_service_role_key(monkeypatch):
     client = FakeClient()
-
-    def fake_create_client(url, key):
-        captured["url"] = url
-        captured["key"] = key
-        return client
-
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "private-test-key")
-    monkeypatch.setattr(database, "_supabase_health_client", None)
-    monkeypatch.setitem(sys.modules, "supabase", SimpleNamespace(create_client=fake_create_client))
-
-    assert database._get_supabase_health_client() is client
-    assert captured == {
-        "url": "https://example.supabase.co",
-        "key": "private-test-key",
-    }
-    assert database.supabase_client is not client
-
-
-def test_health_client_requires_service_role_key(monkeypatch):
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.setattr(database, "get_supabase_client", lambda: client)
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
-    monkeypatch.setattr(database, "_supabase_health_client", None)
 
-    assert database._get_supabase_health_client() is None
+    assert database.check_supabase_connection() is True
+    assert client.query.executed is True
 
 
 def test_health_reports_query_failure_as_degraded(monkeypatch):
@@ -97,8 +74,8 @@ def test_health_reports_query_failure_as_degraded(monkeypatch):
         def health_check(self):
             return {"status": "healthy", "services": {"mission_engine": True}}
 
-    # The production orchestrator currently has an unrelated circular import.
-    # Stub its module before the health endpoint performs its lazy import.
+    # Stub the orchestrator to isolate the health endpoint behavior from the
+    # separate service import graph.
     fake_module = SimpleNamespace(AgentOrchestrator=FakeOrchestrator)
     monkeypatch.setitem(sys.modules, "app.services.agent_orchestrator", fake_module)
     monkeypatch.setattr(health, "is_supabase_configured", lambda: True)
