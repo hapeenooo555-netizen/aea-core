@@ -12,6 +12,7 @@ from typing import Any
 
 supabase_client: Any = None
 _supabase_health_client: Any = None
+_meta_webhook_client: Any = None
 
 
 def _resolve_supabase_credential() -> tuple[str, str]:
@@ -65,6 +66,31 @@ def _get_supabase_health_client() -> Any:
 
         _supabase_health_client = create_client(url, service_role_key)
         return _supabase_health_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
+
+
+def get_meta_webhook_client() -> Any:
+    """Return a dedicated server-side client for signature-verified Meta webhooks.
+
+    This privileged client is intentionally separate from the user-scoped client
+    and the read-only health client. Callers must validate the Meta signature and
+    require an explicit HAPE_BROTHERS_OWNER_ID before using it. Never expose this
+    client to browser-facing routes or log its credential.
+    """
+    global _meta_webhook_client
+    if _meta_webhook_client is not None:
+        return _meta_webhook_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+
+        _meta_webhook_client = create_client(url, service_role_key)
+        return _meta_webhook_client
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
