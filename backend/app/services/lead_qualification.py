@@ -29,7 +29,7 @@ class LeadQualificationService:
     """Extract and score buying intent using auditable rules."""
 
     LOCATION_RE = re.compile(
-        r"\b(?:in|at|from|to)\s+([A-Za-z][A-Za-z .'-]{1,60})",
+        r"\b(?:in|at|from|to|delivery(?:\s+to)?)\s+([A-Za-z][A-Za-z .'-]{1,60})",
         re.IGNORECASE,
     )
     QUANTITY_RE = re.compile(
