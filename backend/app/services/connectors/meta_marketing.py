@@ -128,16 +128,58 @@ class MetaMarketingConnector(BaseConnector):
         channel = str(content.get("channel") or "").lower()
         if channel not in {"facebook", "instagram", "whatsapp"}:
             return {"success": False, "error": "channel must be facebook, instagram, or whatsapp"}
-        # Fail closed until a verified per-owner OAuth token/asset store exists.
-        # A global environment token is not evidence of user authorization and
-        # must never be enough to trigger an external side effect.
-        return {
-            "success": False,
-            "status": "awaiting_authorization",
-            "requires_human_intervention": True,
-            "checkpoint_type": "oauth_authorization_required",
-            "error": "Meta publishing is disabled until verified per-owner OAuth, granted scopes, asset ownership, and secure token storage are implemented.",
-        }
+        if not owner_id:
+            return {"success": False, "status": "awaiting_authorization", "requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required", "error": "Authenticated owner is required."}
+
+        # This method is invoked by ApprovalResumeService only after an approval
+        # request transitions to approved. Never use global environment tokens.
+        from ..meta_credentials import load_meta_credentials, resolve_meta_asset
+        credentials = load_meta_credentials(owner_id)
+        if not credentials:
+            return {"success": False, "status": "awaiting_authorization", "requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required", "error": "No verified Meta OAuth credentials are available for this owner."}
+
+        scopes = set(credentials.get("_verified_scopes") or [])
+        required = {"pages_manage_posts"} if channel == "facebook" else {"instagram_basic", "instagram_content_publish"} if channel == "instagram" else {"whatsapp_business_messaging"}
+        if not required.issubset(scopes):
+            return {"success": False, "status": "awaiting_human", "requires_human_intervention": True, "checkpoint_type": "required_meta_permissions_missing", "error": "The owner has not granted all permissions required for this action."}
+        if channel == "whatsapp":
+            return {"success": False, "status": "awaiting_human", "requires_human_intervention": True, "checkpoint_type": "whatsapp_asset_selection_required", "error": "WhatsApp Business phone-number assets are not yet verified and stored; sending remains disabled."}
+
+        asset = resolve_meta_asset(credentials, channel, content.get("asset_id"))
+        if not asset:
+            return {"success": False, "status": "awaiting_human", "requires_human_intervention": True, "checkpoint_type": "meta_asset_selection_required", "error": "Choose exactly one verified Page or linked Instagram professional account before publishing."}
+        token = asset["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        if idempotency_key:
+            headers["X-Idempotency-Key"] = idempotency_key
+        base = self.config.base_url
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                if channel == "facebook":
+                    message = content.get("message")
+                    if not isinstance(message, str) or not message.strip():
+                        return {"success": False, "status": "invalid_request", "error": "Facebook requires a non-empty message."}
+                    response = client.post(f"{base}/{asset['page_id']}/feed", headers=headers, data={"message": message})
+                    response.raise_for_status()
+                    remote = response.json()
+                    return {"success": True, "status": "published", "channel": channel, "asset_id": asset["asset_id"], "remote_id": remote.get("id")}
+                image_url = content.get("image_url")
+                caption = content.get("message", "")
+                if not isinstance(image_url, str) or not image_url.startswith("https://") or not caption:
+                    return {"success": False, "status": "invalid_request", "error": "Instagram requires a public HTTPS image_url and a caption in message."}
+                container = client.post(f"{base}/{asset['asset_id']}/media", headers=headers, data={"image_url": image_url, "caption": caption})
+                container.raise_for_status()
+                container_id = container.json().get("id")
+                if not container_id:
+                    return {"success": False, "status": "remote_error", "error": "Meta did not return an Instagram media container ID."}
+                published = client.post(f"{base}/{asset['asset_id']}/media_publish", headers=headers, data={"creation_id": container_id})
+                published.raise_for_status()
+                remote = published.json()
+                return {"success": True, "status": "published", "channel": channel, "asset_id": asset["asset_id"], "remote_id": remote.get("id")}
+        except httpx.HTTPStatusError as exc:
+            return {"success": False, "status": "remote_error", "http_status": exc.response.status_code, "error": "Meta rejected the approved publishing request."}
+        except httpx.HTTPError:
+            return {"success": False, "status": "transport_error", "error": "Could not reach Meta Graph API."}
 
     def _publish_via_graph(self, channel: str, content: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         token = os.getenv("META_ACCESS_TOKEN")
