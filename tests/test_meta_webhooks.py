@@ -161,6 +161,5 @@ def test_meta_webhook_does_not_cross_assign_unknown_mapped_asset(monkeypatch):
     app = FastAPI()
     app.include_router(router)
     response = _signed_post(TestClient(app), _message_payload(phone_number_id="123"))
-    assert response.status_code == 200
-    assert response.json()["processed"] == 0
-    assert response.json()["ignored"] == 1
+    assert response.status_code == 503
+    assert "No owner is configured" in response.json()["detail"]
