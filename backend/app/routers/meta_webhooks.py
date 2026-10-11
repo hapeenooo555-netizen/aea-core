@@ -78,6 +78,8 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
     # Validate the configuration before processing any event. A supplied mapping is
     # authoritative; unknown phone_number_id values are ignored, not assigned elsewhere.
     _resolve_owner_id(None)
+    if not os.getenv("META_PHONE_NUMBER_OWNER_MAP", "").strip() and not os.getenv("HAPE_BROTHERS_OWNER_ID", "").strip():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta webhook owner is not configured")
 
     processed = 0
     ignored = 0
