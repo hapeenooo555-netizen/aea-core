@@ -1,15 +1,17 @@
 from fastapi import APIRouter
 
 from app.database import check_supabase_connection, is_supabase_configured
-from app.services.agent_orchestrator import AgentOrchestrator
 
 router = APIRouter()
-orchestrator = AgentOrchestrator()
 
 
 @router.get("/health")
 def health_check() -> dict:
-    payload = dict(orchestrator.health_check())
+    # Import lazily to avoid the existing service import cycle during module
+    # collection (agent_orchestrator <-> employee_vertical_slice).
+    from app.services.agent_orchestrator import AgentOrchestrator
+
+    payload = dict(AgentOrchestrator().health_check())
     payload.setdefault("status", "healthy")
     payload["service"] = "aea-core-backend"
 
