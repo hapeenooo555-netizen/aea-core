@@ -10,6 +10,7 @@ from typing import Any
 
 # Placeholder for Supabase client
 supabase_client: Any = None
+supabase_service_client: Any = None
 
 
 def _resolve_supabase_credential() -> tuple[str, str]:
@@ -59,6 +60,32 @@ def get_supabase_client() -> Any:
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
+
+
+def get_supabase_service_client() -> Any:
+    """Get a server-only Supabase client using the explicit service-role secret.
+
+    This client bypasses RLS and must only be used by trusted server-side code
+    after authenticating the caller or verifying a signed provider webhook.
+    It deliberately never falls back to the anon/public key.
+    """
+    global supabase_service_client
+
+    if supabase_service_client is not None:
+        return supabase_service_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+
+    try:
+        from supabase import create_client
+
+        supabase_service_client = create_client(url, service_role_key)
+        return supabase_service_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
 
 def get_supabase_url() -> str:
     """Return the configured Supabase URL, or an empty string."""
