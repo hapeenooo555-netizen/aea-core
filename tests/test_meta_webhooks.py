@@ -37,8 +37,23 @@ def test_meta_webhook_rejects_bad_signature(monkeypatch) -> None:
 
 def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     secret = "secret"
+    persistent_client = object()
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: persistent_client)
+
+    class FakeMarketingOS:
+        def __init__(self, owner_id, client):
+            assert owner_id == "webhook-test-owner"
+            assert client is persistent_client
+        def create_lead(self, **kwargs):
+            assert kwargs["idempotency_key"] == "whatsapp:123:wamid.test-1"
+            return {"success": True, "mission": {"id": "lead-123"}}
+        def qualify_lead(self, lead_id, *, message=None):
+            assert lead_id == "lead-123"
+            return {"success": True, "qualification": {"tier": "high"}}
+
+    monkeypatch.setattr("app.routers.meta_webhooks.HapeBrothersMarketingOS", FakeMarketingOS)
     app = FastAPI()
     app.include_router(router)
     payload = {
@@ -70,6 +85,22 @@ def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     assert data["leads"][0]["phone"] == "255700000000"
 
 
+def test_meta_webhook_fails_closed_without_persistent_storage(monkeypatch) -> None:
+    secret = "secret"
+    monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: None)
+    app = FastAPI()
+    app.include_router(router)
+    raw = json.dumps({"entry": []}).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Persistent lead storage is not configured"
 
 def test_meta_webhook_requires_explicit_owner(monkeypatch) -> None:
     monkeypatch.setenv("META_APP_SECRET", "secret")
@@ -92,6 +123,7 @@ def test_meta_webhook_does_not_fallback_for_unknown_phone_number_owner(monkeypat
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "fallback-owner")
     monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", '{"known-phone-id":"mapped-owner"}')
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: object())
     app = FastAPI()
     app.include_router(router)
     payload = {
