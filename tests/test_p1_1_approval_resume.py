@@ -804,3 +804,36 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
     result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "scheme" in result["error"].lower() or "http" in result["error"].lower()
+
+# ---------------------------------------------------------------------------
+# Security regression: authenticated resume requires explicit matching owner
+# ---------------------------------------------------------------------------
+def test_authenticated_resume_rejects_approval_owned_by_another_user(
+    approval_gateway, resume_service
+):
+    created = approval_gateway.create_request(
+        mission_id="mission-owner-a",
+        action_type="start_platform_onboarding",
+        risk_level="sensitive",
+        owner_id="owner-a",
+        payload={"platform": "pinterest", "worker_id": "worker-owner-a"},
+    )
+    request_id = created["request"]["id"]
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id, current_user_id="owner-b")
+
+    assert result["status"] == "approval_unauthorized"
+    assert "not authorized" in result["error"].lower()
+
+
+def test_authenticated_resume_rejects_legacy_approval_without_owner(
+    approval_gateway, resume_service
+):
+    request_id = _make_approval_request(approval_gateway)
+    approval_gateway.approve_request(request_id)
+
+    result = resume_service.resume(request_id, current_user_id="owner-a")
+
+    assert result["status"] == "approval_unauthorized"
+    assert "not authorized" in result["error"].lower()
