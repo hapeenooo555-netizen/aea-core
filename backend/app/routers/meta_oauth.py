@@ -12,6 +12,7 @@ import json
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -110,7 +111,7 @@ def _persist_credentials(owner_id: str, token_data: dict[str, Any], profile: dic
         "display_name": profile.get("name"),
         "scopes": token_data.get("scope", "").split(",") if isinstance(token_data.get("scope"), str) else [],
         "expires_at": None,
-        "updated_at": "now()",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     # Use an upsert keyed by owner_id; the DB constraint is added by the
     # accompanying migration. The encrypted blob is never returned to clients.
@@ -212,7 +213,8 @@ async def meta_oauth_callback(
 
     # Persist only after OAuth exchange, identity, and Page access have succeeded.
     _persist_credentials(state_data["owner_id"], token_data, profile, pages)
-    response = {
+    response.delete_cookie(_STATE_COOKIE, path="/connectors/meta/oauth")
+    result = {
         "success": True,
         "status": "connected",
         "platform": "meta",
@@ -223,7 +225,7 @@ async def meta_oauth_callback(
         "token_returned_to_client": False,
         "message": "Meta authorization and Page access were verified. Publishing remains gated until a selected asset and permissions are validated for the requested action.",
     }
-    return response
+    return result
 
 
 @router.post("/disconnect")
