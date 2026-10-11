@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 
+from app.database import get_supabase_client
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 
 router = APIRouter(prefix="/webhooks/meta", tags=["meta-webhooks"])
@@ -75,6 +76,11 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
     if not _verify_signature(raw, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Meta webhook signature")
 
+    client = get_supabase_client()
+    if client is None:
+        # Webhooks must never report success after writing leads only to process memory.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Persistent lead storage is not configured")
+
     payload = await request.json()
     # Validate the configuration before processing any event. A supplied mapping is
     # authoritative; unknown phone_number_id values are ignored, not assigned elsewhere.
@@ -105,7 +111,7 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                     ignored += 1
                     continue
 
-                service = HapeBrothersMarketingOS(owner_id=owner_id, client=None)
+                service = HapeBrothersMarketingOS(owner_id=owner_id, client=client)
                 result = service.create_lead(
                     name=f"WhatsApp {sender}",
                     phone=sender,
