@@ -139,8 +139,11 @@ class ApprovalResumeService:
             )
 
         request_owner = request.get("owner_id")
+        # A request resumed through an authenticated API must have an explicit
+        # owner and that owner must match the caller. Missing ownership is not
+        # evidence of authorization; fail closed for legacy/unscoped requests.
         if current_user_id is not None:
-            if request_owner and request_owner != current_user_id:
+            if not request_owner or request_owner != current_user_id:
                 return self._fail(
                     "approval_unauthorized",
                     "Authenticated user is not authorized to resume this approval",
