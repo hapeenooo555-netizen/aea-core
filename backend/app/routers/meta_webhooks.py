@@ -58,6 +58,12 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
         )
 
     expected_phone_number_id = (os.getenv("META_WA_PHONE_NUMBER_ID") or "").strip()
+    if not expected_phone_number_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp webhook phone number ID is not configured",
+        )
+
     payload = await request.json()
     processed = 0
     ignored = 0
