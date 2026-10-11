@@ -6,7 +6,8 @@ import hmac
 import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse
 
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 
@@ -23,13 +24,13 @@ def _verify_signature(raw_body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(signature[7:], expected)
 
 
-@router.get("")
+@router.get("", response_class=PlainTextResponse)
 async def verify_meta_webhook(
-    hub_mode: str | None = None,
-    hub_verify_token: str | None = None,
-    hub_challenge: str | None = None,
-) -> Any:
-    """Handle Meta webhook subscription verification."""
+    hub_mode: str | None = Query(default=None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
+) -> PlainTextResponse:
+    """Handle Meta's GET subscription verification using its dotted query names."""
     verify_token = os.getenv("META_WEBHOOK_VERIFY_TOKEN")
     if (
         hub_mode == "subscribe"
@@ -37,7 +38,8 @@ async def verify_meta_webhook(
         and hmac.compare_digest(hub_verify_token or "", verify_token)
         and hub_challenge
     ):
-        return int(hub_challenge)
+        # Meta requires the challenge as plain text, not a JSON response.
+        return PlainTextResponse(content=hub_challenge, status_code=status.HTTP_200_OK)
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webhook verification failed")
 
 
