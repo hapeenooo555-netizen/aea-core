@@ -192,6 +192,17 @@ async def meta_oauth_callback(
             profile_response = client.get(f"{base}/me", params={"fields": "id,name"}, headers=headers)
             profile_response.raise_for_status()
             profile = profile_response.json()
+            permissions_response = client.get(f"{base}/me/permissions", headers=headers)
+            permissions_response.raise_for_status()
+            permission_rows = permissions_response.json().get("data") or []
+            granted_scopes = [
+                str(item.get("permission"))
+                for item in permission_rows
+                if isinstance(item, dict) and item.get("status") == "granted" and item.get("permission")
+            ]
+            if "pages_show_list" not in granted_scopes:
+                raise HTTPException(status_code=403, detail="Meta authorization did not grant pages_show_list")
+            token_data["scope"] = ",".join(granted_scopes)
             pages_response = client.get(
                 f"{base}/me/accounts",
                 params={"fields": "id,name,access_token,instagram_business_account{id,username}"},
