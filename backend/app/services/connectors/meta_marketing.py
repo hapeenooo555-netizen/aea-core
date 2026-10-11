@@ -46,26 +46,68 @@ class MetaMarketingConnector(BaseConnector):
         )
 
     def start_onboarding(self, worker_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
-        if not os.getenv("META_ACCESS_TOKEN"):
-            return {"status": "awaiting_human", "workflow_id": f"meta-connect-{worker_id}", "platform": self.platform, "requires_human_intervention": True, "checkpoint_type": "oauth_authorization_required", "instructions": "Configure Meta OAuth credentials and complete account authorization."}
-        return {"status": "completed", "workflow_id": f"meta-connect-{worker_id}", "platform": self.platform}
+        # Environment variables alone do not prove that a user completed OAuth,
+        # granted the required scopes, or owns the selected Meta assets.
+        return {
+            "status": "awaiting_human",
+            "workflow_id": f"meta-connect-{worker_id}",
+            "platform": self.platform,
+            "requires_human_intervention": True,
+            "checkpoint_type": "oauth_authorization_required",
+            "instructions": "Complete Meta OAuth authorization. Account linking is not verified until the OAuth callback, granted scopes, and asset ownership are validated and stored securely.",
+        }
 
     def resume_onboarding(self, workflow_id: str, human_input: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "completed", "workflow_id": workflow_id, "platform": self.platform, "requires_human_intervention": False}
+        # Do not treat caller-supplied IDs or arbitrary human input as proof
+        # of a successful OAuth exchange.
+        return {
+            "status": "awaiting_human",
+            "workflow_id": workflow_id,
+            "platform": self.platform,
+            "requires_human_intervention": True,
+            "checkpoint_type": "oauth_authorization_required",
+            "error": "Meta OAuth callback and durable token storage are not implemented; account connection remains unverified.",
+        }
 
     def health_check(self) -> dict[str, Any]:
-        configured = bool(os.getenv("META_ACCESS_TOKEN"))
-        return {"platform": self.platform, "status": "configured" if configured else "not_configured", "details": {"facebook": bool(os.getenv("META_PAGE_ID")), "instagram": bool(os.getenv("META_IG_USER_ID")), "whatsapp": bool(os.getenv("META_WA_PHONE_NUMBER_ID"))}}
+        # Report configuration presence, not account connection.
+        token_configured = bool(os.getenv("META_ACCESS_TOKEN"))
+        targets = {
+            "facebook": bool(os.getenv("META_PAGE_ID")),
+            "instagram": bool(os.getenv("META_IG_USER_ID")),
+            "whatsapp": bool(os.getenv("META_WA_PHONE_NUMBER_ID")),
+        }
+        configured = token_configured and any(targets.values())
+        return {
+            "platform": self.platform,
+            "status": "configured_unverified" if configured else "not_configured",
+            "details": {**targets, "token_configured": token_configured, "oauth_verified": False},
+        }
 
     def get_account_status(self) -> dict[str, Any]:
         h = self.health_check()
-        return {"status": "connected" if h["status"] == "configured" else "not_started", "details": h["details"]}
+        return {"status": "awaiting_authorization" if h["status"] == "configured_unverified" else "not_started", "details": h["details"]}
 
     def connect_account(self, worker_id: str, auth_data: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
-        return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "connected", "account": {"page_id": auth_data.get("page_id"), "instagram_user_id": auth_data.get("instagram_user_id"), "whatsapp_phone_number_id": auth_data.get("whatsapp_phone_number_id")}}
+        return {
+            "success": False,
+            "platform": self.platform,
+            "worker_id": worker_id,
+            "status": "awaiting_human",
+            "requires_human_intervention": True,
+            "checkpoint_type": "oauth_authorization_required",
+            "error": "Meta account linking requires a verified OAuth callback and secure token storage; supplied account IDs are not proof of authorization.",
+        }
 
     def disconnect_account(self, worker_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
-        return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "disconnected"}
+        return {
+            "success": False,
+            "platform": self.platform,
+            "worker_id": worker_id,
+            "status": "awaiting_human",
+            "requires_human_intervention": True,
+            "error": "Meta account revocation and durable token removal are not implemented; manual Meta app/account revocation is required.",
+        }
 
     def publish_content(self, worker_id: str, content: dict[str, Any], *, idempotency_key: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         channel = str(content.get("channel") or "").lower()
