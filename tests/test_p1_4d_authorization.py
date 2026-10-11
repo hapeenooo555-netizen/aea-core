@@ -121,32 +121,6 @@ def client() -> TestClient:
     tc.headers["Content-Type"] = "application/json"
     return tc
 
-# Module-level fixtures
-
-@pytest.fixture
-def user_a() -> str:
-    return str(uuid.uuid4())
-
-
-@pytest.fixture
-def user_b() -> str:
-    return str(uuid.uuid4())
-
-
-@pytest.fixture
-def client() -> TestClient:
-    """Create a TestClient for the FastAPI app.
-
-    This fixture creates the test client without database dependencies
-    by relying on the mock client fallback in the routers.
-    """
-    from app.main import app as fastapi_app
-
-    tc = TestClient(fastapi_app)
-    tc.headers["Content-Type"] = "application/json"
-    return tc
-
-
 # Helper to create a mock authorization header
 def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
