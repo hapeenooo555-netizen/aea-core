@@ -48,6 +48,16 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
     if not _verify_signature(raw, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Meta webhook signature")
 
+    # Never assign inbound leads to a shared fallback owner. The webhook is
+    # a server-to-server endpoint, so its tenant must be explicitly configured.
+    owner_id = (os.getenv("HAPE_BROTHERS_OWNER_ID") or "").strip()
+    if not owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp webhook owner is not configured",
+        )
+
+    expected_phone_number_id = (os.getenv("META_WA_PHONE_NUMBER_ID") or "").strip()
     payload = await request.json()
     processed = 0
     ignored = 0
@@ -57,6 +67,11 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
         for change in entry.get("changes", []):
             value = change.get("value") or {}
             if change.get("field") != "messages":
+                continue
+            metadata = value.get("metadata") or {}
+            incoming_phone_number_id = str(metadata.get("phone_number_id") or "")
+            if expected_phone_number_id and incoming_phone_number_id != expected_phone_number_id:
+                ignored += len(value.get("messages") or [])
                 continue
             for message in value.get("messages", []):
                 if message.get("type") != "text":
@@ -69,9 +84,8 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                     ignored += 1
                     continue
 
-                metadata = value.get("metadata") or {}
                 service = HapeBrothersMarketingOS(
-                    owner_id=os.getenv("HAPE_BROTHERS_OWNER_ID", "meta-webhook"),
+                    owner_id=owner_id,
                     client=None,
                 )
                 result = service.create_lead(
