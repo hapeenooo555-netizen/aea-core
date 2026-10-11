@@ -131,10 +131,10 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     step_names = [step["step_name"] for step in steps]
     # A valid status-check flow may include a second, pending onboarding
     # approval checkpoint. Assert that neither logical step is duplicated.
-    assert step_names.count("get_account_status") == 1
+    assert step_names.count("check_connection_status") == 1
     assert step_names.count("start_onboarding") <= 1
     assert len(step_names) == len(set(step_names))
-    status_step = next(step for step in steps if step["step_name"] == "get_account_status")
+    status_step = next(step for step in steps if step["step_name"] == "check_connection_status")
     assert status_step["status"] == "completed"
 
 
