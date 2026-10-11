@@ -213,7 +213,6 @@ async def meta_oauth_callback(
 
     # Persist only after OAuth exchange, identity, and Page access have succeeded.
     _persist_credentials(state_data["owner_id"], token_data, profile, pages)
-    response.delete_cookie(_STATE_COOKIE, path="/connectors/meta/oauth")
     result = {
         "success": True,
         "status": "connected",
