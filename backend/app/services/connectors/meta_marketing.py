@@ -182,34 +182,18 @@ class MetaMarketingConnector(BaseConnector):
             return {"success": False, "status": "transport_error", "error": "Could not reach Meta Graph API."}
 
     def _publish_via_graph(self, channel: str, content: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
-        token = os.getenv("META_ACCESS_TOKEN")
-        target = {"facebook": os.getenv("META_PAGE_ID"), "instagram": os.getenv("META_IG_USER_ID"), "whatsapp": os.getenv("META_WA_PHONE_NUMBER_ID")}.get(channel)
-        if not target:
-            return {"success": False, "status": "not_configured", "error": f"Missing Meta target ID for {channel}"}
-        headers = {"Authorization": f"Bearer {token}"}
-        if idempotency_key:
-            headers["X-Idempotency-Key"] = idempotency_key
-        try:
-            with httpx.Client(timeout=20.0) as client:
-                if channel == "whatsapp":
-                    recipient = content.get("recipient") or content.get("to")
-                    message = content.get("message")
-                    if not recipient or not message:
-                        return {"success": False, "status": "invalid_request", "error": "WhatsApp requires recipient and message"}
-                    response = client.post(f"{self.config.base_url}/{target}/messages", headers=headers, json={"messaging_product": "whatsapp", "to": recipient, "type": "text", "text": {"body": message}})
-                elif channel == "facebook":
-                    message = content.get("message")
-                    if not message:
-                        return {"success": False, "status": "invalid_request", "error": "Facebook requires message"}
-                    response = client.post(f"{self.config.base_url}/{target}/feed", headers=headers, data={"message": message})
-                else:
-                    return {"success": False, "status": "manual_platform_step_required", "requires_human_intervention": True, "error": "Instagram requires a media container before final publish"}
-                response.raise_for_status()
-                return {"success": True, "status": "published", "channel": channel, "remote": response.json()}
-        except httpx.HTTPStatusError as exc:
-            return {"success": False, "status": "remote_error", "http_status": exc.response.status_code, "error": exc.response.text[:500]}
-        except httpx.HTTPError as exc:
-            return {"success": False, "status": "transport_error", "error": str(exc)}
+        """Block legacy global-token publishing outside the approval pipeline.
+
+        External Meta publication must use owner-scoped, verified credentials
+        through publish_content after ApprovalResumeService authorizes it.
+        This legacy helper is retained only for compatibility and fails closed.
+        """
+        return {
+            "success": False,
+            "status": "approval_pipeline_required",
+            "requires_human_intervention": True,
+            "error": "Direct Meta publishing is disabled; use the owner-scoped approval pipeline.",
+        }
 
     def get_analytics(self, worker_id: str) -> dict[str, Any]:
         return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "adapter_ready"}
