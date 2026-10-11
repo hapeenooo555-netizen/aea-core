@@ -19,6 +19,8 @@ class CountingConnector(BaseConnector):
     def __init__(self, barrier: threading.Barrier | None = None) -> None:
         super().__init__()
         self.calls = 0
+        self.status_calls = 0
+        self.onboarding_calls = 0
         self.keys: list[str | None] = []
         self.barrier = barrier
         self.lock = threading.Lock()
@@ -37,6 +39,7 @@ class CountingConnector(BaseConnector):
     def get_account_status(self, worker_id=None):
         with self.lock:
             self.calls += 1
+            self.status_calls += 1
         if self.barrier:
             self.barrier.wait(timeout=2)
         return {"success": True, "status": "not_started", "details": {"connected": False}}
@@ -44,6 +47,7 @@ class CountingConnector(BaseConnector):
     def start_onboarding(self, worker_id, **kwargs):
         with self.lock:
             self.calls += 1
+            self.onboarding_calls += 1
             self.keys.append(kwargs.get("idempotency_key"))
         return {"success": True, "status": "completed"}
 
@@ -119,7 +123,8 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
         thread.join(timeout=5)
 
     assert len(results) == 2
-    assert connector.calls == 1
+    assert connector.status_calls == 1
+    assert connector.onboarding_calls == 0
     assert {result["status"] for result in results} <= {"COMPLETE", "RETRY", "WAIT_FOR_APPROVAL"}
     execution_id = next(result["report"]["execution_id"] for result in results if result.get("report"))
     steps = execution.load_steps_for_execution(execution_id, "owner")
