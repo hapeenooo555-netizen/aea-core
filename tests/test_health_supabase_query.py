@@ -1,6 +1,10 @@
 """Regression tests for the live Supabase query in /health."""
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app import database
 from app.routers import health
@@ -57,12 +61,15 @@ def test_connection_check_returns_false_on_query_failure(monkeypatch):
 
 
 def test_health_reports_query_failure_as_degraded(monkeypatch):
+    class FakeOrchestrator:
+        def health_check(self):
+            return {"status": "healthy", "services": {"mission_engine": True}}
+
     monkeypatch.setattr(health, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(health, "check_supabase_connection", lambda: False)
     monkeypatch.setattr(
-        health.orchestrator,
-        "health_check",
-        lambda: {"status": "healthy", "services": {"mission_engine": True}},
+        "app.services.agent_orchestrator.AgentOrchestrator",
+        FakeOrchestrator,
     )
 
     result = health.health_check()
