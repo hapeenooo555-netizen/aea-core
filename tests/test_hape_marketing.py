@@ -120,3 +120,40 @@ def test_api_creates_lead() -> None:
     })
     assert response.status_code == 201
     assert response.json()["success"] is True
+
+
+
+def test_quote_rejects_price_below_configured_floor(monkeypatch) -> None:
+    monkeypatch.setenv("HAPE_BROTHERS_MIN_UNIT_PRICE_TZS", "12250")
+    result = HapeBrothersMarketingOS("owner-a").draft_quote(
+        "not-a-real-lead",
+        unit_price=12000,
+        delivery_cost=0,
+        currency="TZS",
+    )
+    assert result["success"] is False
+    assert "below the configured minimum" in result["error"]
+
+
+def test_quote_at_or_above_floor_requires_approval(monkeypatch) -> None:
+    monkeypatch.setenv("HAPE_BROTHERS_MIN_UNIT_PRICE_TZS", "12250")
+    service = HapeBrothersMarketingOS("owner-quote-test")
+    created = service.create_lead(
+        name="Mwanza Hardware",
+        phone="255700000003",
+        location="Mwanza",
+        channel="whatsapp",
+        need="500 sheets gauge 32",
+        quantity=500,
+    )
+    lead_id = created["mission"]["id"]
+    result = service.draft_quote(
+        lead_id,
+        unit_price=13000,
+        delivery_cost=50000,
+        currency="TZS",
+    )
+    assert result["success"] is True
+    assert result["status"] == "waiting_approval"
+    assert result["quote"]["total"] == 6550000
+    assert result["approval_request_id"]
