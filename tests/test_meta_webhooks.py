@@ -109,7 +109,16 @@ def test_meta_webhook_persists_lead_with_explicit_owner(monkeypatch):
         def qualify_lead(self, lead_id, *, message=None):
             assert lead_id == "lead-123"
             assert message == "Nahitaji mabati gauge 32, sheets 500"
-            return {"success": True, "qualification": {"tier": "high"}}
+            return {
+                "success": True,
+                "mission": {
+                    "id": "lead-123",
+                    "result": {
+                        "action": "lead_qualified",
+                        "qualification": {"tier": "high"},
+                    },
+                },
+            }
 
     monkeypatch.setattr("app.routers.meta_webhooks.HapeBrothersMarketingOS", FakeMarketingOS)
     app = FastAPI()
@@ -121,6 +130,7 @@ def test_meta_webhook_persists_lead_with_explicit_owner(monkeypatch):
     assert data["processed"] == 1
     assert data["leads"][0]["lead_id"] == "lead-123"
     assert data["leads"][0]["qualification"]["tier"] == "high"
+    assert data["leads"][0]["follow_up_status"] == "not_started"
 
 
 def test_meta_webhook_fails_closed_without_service_client(monkeypatch):
