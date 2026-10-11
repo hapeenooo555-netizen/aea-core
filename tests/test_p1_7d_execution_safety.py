@@ -105,7 +105,13 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     results = []
     result_lock = threading.Lock()
 
+    start_barrier = threading.Barrier(2)
+
     def run(employee):
+        # Ensure both workers begin the same mission concurrently; without
+        # this barrier a fast first worker can finish before the second starts,
+        # making a claim-step race assertion nondeterministic.
+        start_barrier.wait(timeout=2)
         result = employee.run("Check my Pinterest account status", mission_id="mission-race")
         with result_lock:
             results.append(result)
@@ -114,7 +120,7 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=3)
+        thread.join(timeout=5)
 
     assert len(results) == 2
     assert connector.calls == 1
