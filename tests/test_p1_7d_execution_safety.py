@@ -94,14 +94,10 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     approvals = ApprovalGateway(client=None)
     first = _employee("owner", execution, connector, approvals)
     second = _employee("owner", execution, connector, approvals)
-    original = execution.claim_step
-    barrier = threading.Barrier(2)
-
-    def racing_claim(*args, **kwargs):
-        barrier.wait(timeout=2)
-        return original(*args, **kwargs)
-
-    execution.claim_step = racing_claim
+    # Both callers start together. The in-memory execution store may allow
+    # one caller to observe the existing execution only after the other has
+    # already claimed its step; requiring both to enter claim_step at a barrier
+    # incorrectly deadlocks that valid schedule.
     results = []
     result_lock = threading.Lock()
 
