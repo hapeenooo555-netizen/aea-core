@@ -7,6 +7,9 @@
 #
 # Binds to 0.0.0.0 with PORT env (default 8000 for local dev).
 # Does NOT read or print any secrets.
+# Disable Uvicorn access logs: request paths may include query parameters,
+# including Meta's hub.verify_token during webhook verification.
+# Keep application/deploy logs enabled; avoid logging raw request URLs.
 set -euo pipefail
 
 cd "$(dirname "$0")/backend"
@@ -22,4 +25,5 @@ PORT="${PORT:-8000}"
 
 exec python3 -m uvicorn app.main:app \
     --host 0.0.0.0 \
-    --port "$PORT"
+    --port "$PORT" \
+    --no-access-log
