@@ -29,11 +29,11 @@ class LeadQualificationService:
     """Extract and score buying intent using auditable rules."""
 
     LOCATION_RE = re.compile(
-        r"\b(?:in|at|from|to)\s+([A-Za-z][A-Za-z .'-]{1,60})",
+        r"\b(?:in|at|from|to|delivery(?:\s+to)?)\s+([A-Za-z][A-Za-z .'-]{1,60})",
         re.IGNORECASE,
     )
     QUANTITY_RE = re.compile(
-        r"\b(\d[\d,]*)\s*(?:pcs?|pieces?|sheets?|bati|mabati)\b",
+        r"\b(?:(\d[\d,]*)\s*(?:pcs?|pieces?|sheets?|bati|mabati)\b|(?:bati|mabati|sheets?|pieces?|pcs?)\s*(\d[\d,]*))",
         re.IGNORECASE,
     )
     GAUGE_RE = re.compile(r"\b(?:gauge|ga|g)\s*[-:]?\s*(\d{1,2})\b", re.IGNORECASE)
@@ -101,7 +101,10 @@ class LeadQualificationService:
 
     def _quantity(self, text: str) -> int | None:
         match = self.QUANTITY_RE.search(text)
-        return int(match.group(1).replace(",", "")) if match else None
+        if not match:
+            return None
+        value = match.group(1) or match.group(2)
+        return int(value.replace(",", ""))
 
     def _gauge(self, text: str) -> str | None:
         match = self.GAUGE_RE.search(text)
@@ -109,7 +112,17 @@ class LeadQualificationService:
 
     def _location(self, text: str) -> str | None:
         match = self.LOCATION_RE.search(text)
-        return match.group(1).strip(" .,") if match else None
+        if not match:
+            return None
+        location = match.group(1).strip(" .,")
+        # Urgency words are separate qualification signals, not part of the location.
+        location = re.sub(
+            r"\s+\b(?:today|now|asap|urgent|haraka|leo|kesho)\b.*$",
+            "",
+            location,
+            flags=re.IGNORECASE,
+        )
+        return location.strip(" .,") or None
 
     @staticmethod
     def _product(text: str) -> str | None:

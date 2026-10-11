@@ -80,7 +80,7 @@ def test_lead_capture_and_follow_up_are_owner_scoped() -> None:
         message="Habari, tunaweza kukutumia quotation ya bati 500.",
     )
     assert follow_up["success"] is True
-    assert follow_up["result"]["action"] == "follow_up"
+    assert follow_up["mission"]["result"]["action"] == "follow_up"
 
 
 def test_content_draft_contains_channel_safe_fields() -> None:
@@ -120,3 +120,55 @@ def test_api_creates_lead() -> None:
     })
     assert response.status_code == 201
     assert response.json()["success"] is True
+
+
+
+def test_quote_rejects_price_below_configured_floor(monkeypatch) -> None:
+    monkeypatch.setenv("HAPE_BROTHERS_MIN_UNIT_PRICE_TZS", "12250")
+    result = HapeBrothersMarketingOS("owner-a").draft_quote(
+        "not-a-real-lead",
+        unit_price=12000,
+        delivery_cost=0,
+        currency="TZS",
+    )
+    assert result["success"] is False
+    assert "below the configured minimum" in result["error"]
+
+
+def test_quote_at_or_above_floor_requires_approval(monkeypatch) -> None:
+    monkeypatch.setenv("HAPE_BROTHERS_MIN_UNIT_PRICE_TZS", "12250")
+    service = HapeBrothersMarketingOS("owner-quote-test")
+    created = service.create_lead(
+        name="Mwanza Hardware",
+        phone="255700000003",
+        location="Mwanza",
+        channel="whatsapp",
+        need="500 sheets gauge 32",
+        quantity=500,
+    )
+    lead_id = created["mission"]["id"]
+    result = service.draft_quote(
+        lead_id,
+        unit_price=13000,
+        delivery_cost=50000,
+        currency="TZS",
+    )
+    assert result["success"] is True
+    assert result["status"] == "waiting_approval"
+    assert result["quote"]["total"] == 6550000
+    assert result["approval_request_id"]
+
+
+
+def test_publish_rejects_bypassing_human_approval() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user_id] = lambda: "approval-owner"
+    tc = TestClient(app)
+    response = tc.post("/marketing/publish", json={
+        "channel": "facebook",
+        "message": "New gauge 32 mabati available",
+        "approval_required": False,
+    })
+    assert response.status_code == 400
+    assert "Human approval is mandatory" in response.json()["detail"]

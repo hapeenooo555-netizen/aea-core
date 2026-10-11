@@ -192,17 +192,8 @@ def _make_test_client(client, user_id="test-user"):
     }
     app.dependency_overrides[get_user_scoped_client] = lambda: client
 
-    # Patch database modules so stores resolve to our fake client
-    connectors_module.OnboardingWorkflowStore  # already imported
-    import app.services.stores.onboarding_workflow_store as ows_mod
-    import app.services.stores.platform_connection_store as pcs_mod
-    import app.services.human_intervention as hi_mod
-
-    for module in (ows_mod, pcs_mod, hi_mod):
-        database = getattr(module, "database_module", None)
-        if database is not None:
-            database.supabase_client = client
-
+    # Pass the fake client through dependency injection only. Mutating the
+    # shared app.database.supabase_client here leaks state into unrelated tests.
     return TestClient(app)
 
 

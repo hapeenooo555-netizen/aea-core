@@ -7,7 +7,8 @@ record the PostgREST query shape and simulate RPC failures.
 Specifically validated:
   - get_execution queries by execution_id column (not DB PK id)
   - update_execution_state queries by execution_id column
-  - claim_step falls back to PostgREST when claim_mission_step RPC fails
+  - legacy mode may fall back to PostgREST when claim_mission_step RPC fails
+  - durable-required mode fails closed when claim_mission_step RPC fails
   - stale in-progress lease is recovered (marked failed, new step inserted)
   - load_steps_for_execution does NOT send owner_id filter (no such column)
   - update_step does NOT send owner_id filter (no such column on mission_steps)
@@ -94,6 +95,7 @@ class FakeClient:
         self.execution_rows: list[dict] = []
         self.step_rows: list[dict] = []
         self.rpc_response: Any = []  # default: empty (RPC "fails")
+        self.rpc_error: Exception | None = None
         self.insert_responses: dict[str, list[dict]] = {}
         self.update_responses: dict[str, list[dict]] = {}
         self._current_table: str = ""
@@ -151,6 +153,8 @@ class FakeClient:
         return FakeResponse([])
 
     def _handle_rpc(self, func_name: str, params: dict) -> FakeResponse:
+        if self.rpc_error is not None:
+            raise self.rpc_error
         return FakeResponse(self.rpc_response)
 
 
@@ -167,6 +171,12 @@ def fake_client():
 def svc(fake_client):
     from app.services.mission_execution_service import MissionExecutionService
     return MissionExecutionService(client=fake_client, durable_required=True)
+
+
+@pytest.fixture
+def legacy_svc(fake_client):
+    from app.services.mission_execution_service import MissionExecutionService
+    return MissionExecutionService(client=fake_client, durable_required=False)
 
 
 _EXECUTION_ID = str(uuid4())
@@ -278,12 +288,12 @@ def test_update_execution_state_queries_by_execution_id_column(svc, fake_client)
 # 3. claim_step PostgREST fallback
 # ---------------------------------------------------------------------------
 
-def test_claim_step_falls_back_to_postgREST_when_rpc_returns_empty(svc, fake_client):
+def test_claim_step_falls_back_to_postgREST_when_rpc_returns_empty(legacy_svc, fake_client):
     """When claim_mission_step RPC returns empty, fallback must use PostgREST."""
     fake_client.rpc_response = []  # RPC returns no data → fallback
     fake_client.execution_rows = [_make_execution_row()]
 
-    result = svc.claim_step(
+    result = legacy_svc.claim_step(
         execution_id=_EXECUTION_ID,
         owner_id=_OWNER_ID,
         step_id=_STEP_ID,
@@ -314,13 +324,13 @@ def test_claim_step_falls_back_to_postgREST_when_rpc_returns_empty(svc, fake_cli
     assert inserted["status"] == "in_progress"
 
 
-def test_claim_step_fallback_uses_get_execution_for_mission_id(svc, fake_client):
+def test_claim_step_fallback_uses_get_execution_for_mission_id(legacy_svc, fake_client):
     """The PostgREST fallback must retrieve the execution via get_execution to get mission_id."""
     fake_client.rpc_response = []
     fake_client.execution_rows = [_make_execution_row()]
     fake_client.step_rows = []
 
-    svc.claim_step(
+    legacy_svc.claim_step(
         execution_id=_EXECUTION_ID,
         owner_id=_OWNER_ID,
         step_id=_STEP_ID,
@@ -346,7 +356,7 @@ def test_claim_step_fallback_uses_get_execution_for_mission_id(svc, fake_client)
 _STALE_TIME = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
 
 
-def test_claim_step_fallback_recovers_stale_in_progress_lease(svc, fake_client):
+def test_claim_step_fallback_recovers_stale_in_progress_lease(legacy_svc, fake_client):
     """When a stale in_progress step exists, it should be marked failed and a new step claimed."""
     fake_client.rpc_response = []
     fake_client.execution_rows = [_make_execution_row()]
@@ -358,7 +368,7 @@ def test_claim_step_fallback_recovers_stale_in_progress_lease(svc, fake_client):
     )
     fake_client.step_rows = [existing_step]
 
-    result = svc.claim_step(
+    result = legacy_svc.claim_step(
         execution_id=_EXECUTION_ID,
         owner_id=_OWNER_ID,
         step_id=str(uuid4()),
@@ -379,7 +389,7 @@ def test_claim_step_fallback_recovers_stale_in_progress_lease(svc, fake_client):
     assert stale["retry_category"] == "EXECUTION"
 
 
-def test_claim_step_fallback_returns_existing_completed_step(svc, fake_client):
+def test_claim_step_fallback_returns_existing_completed_step(legacy_svc, fake_client):
     """When a completed step with same operation_key exists, return it without inserting a new one."""
     fake_client.rpc_response = []
     fake_client.execution_rows = [_make_execution_row()]
@@ -391,7 +401,7 @@ def test_claim_step_fallback_returns_existing_completed_step(svc, fake_client):
     fake_client.step_rows = [existing]
     initial_count = len(fake_client.step_rows)
 
-    result = svc.claim_step(
+    result = legacy_svc.claim_step(
         execution_id=_EXECUTION_ID,
         owner_id=_OWNER_ID,
         step_id=str(uuid4()),
@@ -409,7 +419,7 @@ def test_claim_step_fallback_returns_existing_completed_step(svc, fake_client):
     )
 
 
-def test_claim_step_fallback_returns_existing_by_idempotency_key(svc, fake_client):
+def test_claim_step_fallback_returns_existing_by_idempotency_key(legacy_svc, fake_client):
     """When a step with same idempotency_key exists, return it without inserting."""
     fake_client.rpc_response = []
     fake_client.execution_rows = [_make_execution_row()]
@@ -420,7 +430,7 @@ def test_claim_step_fallback_returns_existing_by_idempotency_key(svc, fake_clien
     fake_client.step_rows = [existing]
     initial_count = len(fake_client.step_rows)
 
-    result = svc.claim_step(
+    result = legacy_svc.claim_step(
         execution_id=_EXECUTION_ID,
         owner_id=_OWNER_ID,
         step_id=str(uuid4()),
@@ -502,3 +512,41 @@ def test_update_step_fails_when_durable_required_and_no_rows(svc, fake_client):
     )
 
     assert result["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# Strict durable claim behavior
+# ---------------------------------------------------------------------------
+
+def test_durable_claim_fails_closed_when_rpc_returns_no_claim(svc, fake_client):
+    """Strict durable mode must never use a non-atomic PostgREST fallback."""
+    fake_client.rpc_response = []
+    result = svc.claim_step(
+        execution_id=_EXECUTION_ID,
+        owner_id=_OWNER_ID,
+        step_id=str(uuid4()),
+        attempt_index=0,
+        idempotency_key="strict-key",
+        step_name="strict_step",
+        operation_key="strict-operation",
+    )
+    assert result["success"] is False
+    assert "RPC returned no claim" in result["error"]
+    assert fake_client.table_calls == []
+
+
+def test_durable_claim_fails_closed_when_rpc_raises(svc, fake_client):
+    """An RPC exception in strict durable mode must not fall back to SQL reads/inserts."""
+    fake_client.rpc_error = RuntimeError("database unavailable")
+    result = svc.claim_step(
+        execution_id=_EXECUTION_ID,
+        owner_id=_OWNER_ID,
+        step_id=str(uuid4()),
+        attempt_index=0,
+        idempotency_key="strict-key-error",
+        step_name="strict_step",
+        operation_key="strict-operation-error",
+    )
+    assert result["success"] is False
+    assert "RPC failed" in result["error"]
+    assert fake_client.table_calls == []

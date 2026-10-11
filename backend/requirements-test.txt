@@ -3,3 +3,4 @@
 #   pip install -r backend/requirements.txt -r backend/requirements-test.txt
 
 pytest>=8.0,<10.0
+psycopg2-binary>=2.9,<3

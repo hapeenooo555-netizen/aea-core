@@ -606,8 +606,14 @@ class MissionExecutionService:
                             "step": self._normalize_step(step_json),
                             "claimed": claimed,
                         }
-            except Exception:
-                pass
+            except Exception as exc:
+                if self._durable_required:
+                    return {"success": False, "error": f"Durable step claim RPC failed: {exc}"}
+
+            # In strict durable mode the RPC is the only acceptable claim path.
+            # A PostgREST read-then-insert fallback is not atomic across workers.
+            if self._durable_required:
+                return {"success": False, "error": "Durable step claim RPC returned no claim"}
 
             try:
                 existing = client.table(STEP_TABLE).select("*").eq("execution_id", execution_id).eq("idempotency_key", idempotency_key).limit(1).execute()

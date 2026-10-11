@@ -16,7 +16,7 @@ def test_qualifies_high_intent_roofing_lead() -> None:
     assert q["quantity"] == 500
     assert q["gauge"] == "32"
     assert q["product"] == "metal_roofing_sheet"
-    assert q["location"] == "Mwanza leo"
+    assert q["location"] == "Mwanza"
     assert q["urgency"] == "urgent"
     assert q["tier"] == "hot"
     assert q["next_action"] == "send_quote"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from threading import Lock, RLock
 from uuid import uuid4
 
 from .approval_gateway import ApprovalGateway
@@ -33,6 +34,18 @@ from .stores.onboarding_workflow_store import OnboardingWorkflowStore
 from .tool_registry import ToolRegistry
 from .tool_safety import ToolSafetyError, ToolValidator
 from .action_engine import ActionEngine
+
+
+# Process-local serialization complements the durable database claim RPC.
+# It protects the in-memory fallback and prevents duplicate side effects when
+# two workers in this process resume the same execution concurrently.
+_EXECUTION_LOCKS_GUARD = Lock()
+_EXECUTION_LOCKS: dict[str, RLock] = {}
+
+
+def _execution_lock(execution_id: str) -> RLock:
+    with _EXECUTION_LOCKS_GUARD:
+        return _EXECUTION_LOCKS.setdefault(execution_id, RLock())
 
 
 class EmployeeVerticalSlice:
@@ -179,6 +192,18 @@ class EmployeeVerticalSlice:
         mission_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Serialize same-mission workers before resolving or claiming execution."""
+        lock_key = f"mission:{self.owner_id}:{mission_id or goal}"
+        with _execution_lock(lock_key):
+            return self._run_serialized(goal, mission_id=mission_id, metadata=metadata)
+
+    def _run_serialized(
+        self,
+        goal: str,
+        *,
+        mission_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Understand, plan, validate, execute, observe, and report."""
         mission_result = self._resolve_mission(mission_id, goal)
         if not mission_result.get("success"):
@@ -212,6 +237,23 @@ class EmployeeVerticalSlice:
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
 
         existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
+        if existing_execution and existing_execution.get("status") == "WAITING_APPROVAL":
+            # Do not rerun the plan while an approval request is outstanding:
+            # that would create duplicate approval requests under concurrent workers.
+            durable_result = existing_execution.get("result") or {}
+            approval_request_id = durable_result.get("approval_request_id")
+            report["execution_id"] = existing_execution.get("execution_id")
+            report["required_user_action"] = "Approve the pending action"
+            report["resume_information"] = {
+                "approval_request_id": approval_request_id,
+                "execution_id": existing_execution.get("execution_id"),
+            }
+            report["final_status"] = "WAIT_FOR_APPROVAL"
+            return {
+                "success": False,
+                "status": "WAIT_FOR_APPROVAL",
+                "report": sanitize_payload(report),
+            }
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
             return self._resume_execution(mission_id, existing_execution, report, plan)
 
@@ -230,6 +272,43 @@ class EmployeeVerticalSlice:
         return self._execute_plan(mission_id, execution_id, plan, report, metadata)
 
     def _execute_plan(
+        self,
+        mission_id: str,
+        execution_id: str,
+        plan: list[dict[str, Any]],
+        report: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Serialize same-process workers before evaluating side effects.
+
+        Durable deployments still rely on the database claim RPC for
+        cross-process exclusion; this lock also makes the local fallback safe.
+        """
+        with _execution_lock(execution_id):
+            # A concurrent caller may have passed run()'s initial state check
+            # before the first worker created its approval checkpoint. Recheck
+            # under the execution lock before doing any more work.
+            current = self._execution.get_execution(execution_id, owner_id=self.owner_id)
+            if current and current.get("status") == "WAITING_APPROVAL":
+                durable_result = current.get("result") or {}
+                approval_request_id = durable_result.get("approval_request_id")
+                report["execution_id"] = execution_id
+                report["required_user_action"] = "Approve the pending action"
+                report["resume_information"] = {
+                    "approval_request_id": approval_request_id,
+                    "execution_id": execution_id,
+                }
+                report["final_status"] = "WAIT_FOR_APPROVAL"
+                return {
+                    "success": False,
+                    "status": "WAIT_FOR_APPROVAL",
+                    "report": sanitize_payload(report),
+                }
+            return self._execute_plan_locked(
+                mission_id, execution_id, plan, report, metadata
+            )
+
+    def _execute_plan_locked(
         self,
         mission_id: str,
         execution_id: str,

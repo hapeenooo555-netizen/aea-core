@@ -116,6 +116,11 @@ async def publish_marketing_content(
     channel = body.channel.strip().lower()
     if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported channel '{channel}'")
+    if not body.approval_required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Human approval is mandatory before publishing external marketing content",
+        )
     if body.approval_required:
         gateway = ApprovalGateway(client=None)
         approval = gateway.create_request(

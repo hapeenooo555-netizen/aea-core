@@ -37,7 +37,23 @@ def test_meta_webhook_rejects_bad_signature(monkeypatch) -> None:
 
 def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     secret = "secret"
+    persistent_client = object()
     monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: persistent_client)
+
+    class FakeMarketingOS:
+        def __init__(self, owner_id, client):
+            assert owner_id == "webhook-test-owner"
+            assert client is persistent_client
+        def create_lead(self, **kwargs):
+            assert kwargs["idempotency_key"] == "whatsapp:123:wamid.test-1"
+            return {"success": True, "mission": {"id": "lead-123"}}
+        def qualify_lead(self, lead_id, *, message=None):
+            assert lead_id == "lead-123"
+            return {"success": True, "qualification": {"tier": "high"}}
+
+    monkeypatch.setattr("app.routers.meta_webhooks.HapeBrothersMarketingOS", FakeMarketingOS)
     app = FastAPI()
     app.include_router(router)
     payload = {
@@ -67,3 +83,86 @@ def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     data = response.json()
     assert data["processed"] == 1
     assert data["leads"][0]["phone"] == "255700000000"
+
+
+def test_meta_webhook_fails_closed_without_persistent_storage(monkeypatch) -> None:
+    secret = "secret"
+    monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: None)
+    app = FastAPI()
+    app.include_router(router)
+    raw = json.dumps({"entry": []}).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Server-side Supabase service credentials are not configured"
+
+def test_meta_webhook_requires_explicit_owner(monkeypatch) -> None:
+    monkeypatch.setenv("META_APP_SECRET", "secret")
+    monkeypatch.delenv("HAPE_BROTHERS_OWNER_ID", raising=False)
+    app = FastAPI()
+    app.include_router(router)
+    payload = {"entry": []}
+    raw = json.dumps(payload).encode()
+    signature = "sha256=" + hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 503
+
+
+def test_meta_webhook_does_not_fallback_for_unknown_phone_number_owner(monkeypatch) -> None:
+    secret = "secret"
+    monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "fallback-owner")
+    monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", '{"known-phone-id":"mapped-owner"}')
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: object())
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "entry": [{
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "metadata": {"phone_number_id": "unknown-phone-id"},
+                    "messages": [{
+                        "id": "wamid.unknown-tenant",
+                        "from": "255700000002",
+                        "type": "text",
+                        "text": {"body": "Nahitaji bati 500 gauge 32"},
+                    }],
+                },
+            }],
+        }],
+    }
+    raw = json.dumps(payload).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["processed"] == 0
+    assert response.json()["ignored"] == 1
+
+def test_meta_webhook_verification_echoes_non_numeric_challenge_as_plain_text(monkeypatch) -> None:
+    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", "verify-me")
+    app = FastAPI()
+    app.include_router(router)
+    challenge = "verify-challenge-abc"
+    response = TestClient(app).get("/webhooks/meta", params={
+        "hub.mode": "subscribe",
+        "hub.verify_token": "verify-me",
+        "hub.challenge": challenge,
+    })
+    assert response.status_code == 200
+    assert response.text == challenge
+    assert response.headers["content-type"].startswith("text/plain")

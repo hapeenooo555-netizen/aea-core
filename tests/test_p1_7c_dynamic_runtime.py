@@ -65,9 +65,16 @@ def test_completed_step_is_not_re_executed_on_resume():
 
 def test_retry_limit_is_bounded_for_transient_failures():
     employee = _slice()
+    # Inject a transient connector failure at the execution boundary. This
+    # tests bounded retry behavior without relying on unsupported metadata
+    # fields being copied into a tool's validated input payload.
+    employee._execute_tool = lambda *args, **kwargs: {
+        "success": False,
+        "status": "retrying",
+        "error": "connection timed out while checking Pinterest status",
+    }
     result = employee.run(
-        "Check my Pinterest connection but fail transiently",
-        metadata={"requested_actions": ["pinterest.get_account_status"], "content_inputs": {"force_error": "transient"}},
+        "Check my Pinterest connection",
         mission_id="mission-dynamic-4",
     )
     assert result["report"]["final_status"] in {"FAIL", "RETRY"}
