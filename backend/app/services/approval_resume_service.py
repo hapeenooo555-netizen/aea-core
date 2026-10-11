@@ -46,7 +46,6 @@ from typing import Any
 from .approval_gateway import ApprovalGateway
 from .human_intervention import HumanInterventionManager
 from .p1_7_contracts import SENSITIVE_FIELDS
-from .mission_orchestration import MissionOrchestrationService
 
 logger = logging.getLogger(__name__)
 
@@ -677,6 +676,10 @@ class ApprovalResumeService:
         lead_id = payload.get("lead_id")
         if lead_id and current_user_id and sanitized_content.get("channel") == "whatsapp":
             try:
+                # Import lazily: mission orchestration composes the employee
+                # vertical slice, which itself imports this resume service.
+                from .mission_orchestration import MissionOrchestrationService
+
                 orchestration = MissionOrchestrationService(current_user_id)
                 mission = orchestration.get_mission(lead_id)
                 metadata = dict((mission or {}).get("metadata") or {})
