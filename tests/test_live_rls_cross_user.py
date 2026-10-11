@@ -26,7 +26,7 @@ _REQUIRED = (
     "SUPABASE_ANON_KEY",
 )
 _MISSING = [name for name in _REQUIRED if not os.environ.get(name)]
-pytestmark = pytest.mark.skipif(
+_LIVE_TEST_SKIP = pytest.mark.skipif(
     bool(_MISSING),
     reason="Opt-in RLS smoke test requires dedicated test-environment URL and two test users",
 )
@@ -68,6 +68,21 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+def test_guard_refuses_known_production_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AEA_TEST_ENVIRONMENT", "1")
+    monkeypatch.setenv("AEA_TEST_API_URL", "https://heroic-charisma-production-8896.up.railway.app")
+    with pytest.raises(pytest.fail.Exception, match="Refusing to create test records"):
+        _base_url()
+
+
+def test_guard_requires_explicit_test_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AEA_TEST_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("AEA_TEST_API_URL", "https://staging.example.test")
+    with pytest.raises(pytest.skip.Exception, match="disposable test/staging"):
+        _base_url()
+
+
+@_LIVE_TEST_SKIP
 def test_second_user_cannot_read_or_list_first_users_mission() -> None:
     """Verify API-level owner isolation using two real Supabase JWTs."""
     base_url = _base_url()
