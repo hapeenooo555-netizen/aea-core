@@ -87,3 +87,43 @@ def test_meta_publish_cannot_be_triggered_by_global_token_or_transport(monkeypat
     assert result["status"] == "awaiting_authorization"
     assert result["checkpoint_type"] == "oauth_authorization_required"
     assert captured == {}
+
+
+def test_meta_publishing_requires_owner_scoped_credentials(monkeypatch) -> None:
+    from app.services import meta_credentials
+
+    monkeypatch.setattr(meta_credentials, "load_meta_credentials", lambda owner_id: None)
+    result = MetaMarketingConnector().publish_content(
+        "worker-a",
+        {"channel": "facebook", "message": "New mabati stock"},
+        owner_id="owner-a",
+    )
+    assert result["success"] is False
+    assert result["status"] == "awaiting_authorization"
+
+
+def test_meta_asset_selection_only_uses_verified_oauth_assets() -> None:
+    from app.services.meta_credentials import resolve_meta_asset
+
+    credentials = {
+        "pages": [
+            {"id": "page-a", "access_token": "test-credential-a"},
+            {"id": "page-b", "access_token": "test-credential-b"},
+        ]
+    }
+    assert resolve_meta_asset(credentials, "facebook") is None
+    assert resolve_meta_asset(credentials, "facebook", "page-a")["page_id"] == "page-a"
+    assert resolve_meta_asset(credentials, "facebook", "page-foreign") is None
+    assert resolve_meta_asset(credentials, "whatsapp") is None
+
+
+def test_instagram_asset_must_be_linked_to_verified_page() -> None:
+    from app.services.meta_credentials import resolve_meta_asset
+
+    credentials = {
+        "pages": [
+            {"id": "page-a", "access_token": "test-credential-a", "instagram_business_account": {"id": "ig-a"}}
+        ]
+    }
+    assert resolve_meta_asset(credentials, "instagram")["asset_id"] == "ig-a"
+    assert resolve_meta_asset(credentials, "instagram", "ig-foreign") is None
