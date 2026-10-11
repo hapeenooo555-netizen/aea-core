@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse
 
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 
@@ -63,7 +64,7 @@ async def verify_meta_webhook(
         and hmac.compare_digest(hub_verify_token or "", verify_token)
         and hub_challenge
     ):
-        return int(hub_challenge)
+        return PlainTextResponse(hub_challenge)
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webhook verification failed")
 
 
