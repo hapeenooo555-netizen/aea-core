@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import time
 from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 from supabase import create_client
@@ -23,6 +24,10 @@ def load_meta_credentials(owner_id: str) -> dict[str, Any] | None:
         raw = Fernet(encryption_key.encode()).decrypt(rows[0]["encrypted_credentials"].encode())
         bundle = json.loads(raw.decode())
         if not isinstance(bundle, dict) or not isinstance(bundle.get("access_token"), str):
+            return None
+        expires_in = bundle.get("expires_in")
+        issued_at = bundle.get("issued_at")
+        if expires_in and issued_at and time.time() >= int(issued_at) + int(expires_in):
             return None
         bundle["_verified_scopes"] = rows[0].get("scopes") or []
         return bundle
