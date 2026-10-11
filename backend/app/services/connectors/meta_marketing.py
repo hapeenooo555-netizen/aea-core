@@ -45,16 +45,31 @@ class MetaMarketingConnector(BaseConnector):
             human_intervention_capable=True,
         )
 
-    def start_onboarding(self, worker_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
-        # Environment variables alone do not prove that a user completed OAuth,
-        # granted the required scopes, or owns the selected Meta assets.
+    def start_onboarding(
+        self,
+        worker_id: str,
+        *,
+        owner_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        # Match the connector onboarding contract used by /connectors/onboarding/start.
+        # Environment variables alone do not prove OAuth, scopes, or asset ownership.
+        if not owner_id:
+            return {
+                "status": "failed",
+                "workflow_id": f"meta-connect-{worker_id}",
+                "platform": self.platform,
+                "requires_human_intervention": True,
+                "error": "Authenticated owner_id is required to start Meta account linking",
+            }
         return {
             "status": "awaiting_human",
-            "workflow_id": f"meta-connect-{worker_id}",
+            "workflow_id": f"meta-connect-{owner_id}-{worker_id}",
             "platform": self.platform,
+            "owner_id": owner_id,
             "requires_human_intervention": True,
             "checkpoint_type": "oauth_authorization_required",
-            "instructions": "Complete Meta OAuth authorization. Account linking is not verified until the OAuth callback, granted scopes, and asset ownership are validated and stored securely.",
+            "instructions": "Meta OAuth authorization is not yet implemented. Do not publish until the callback, granted scopes, asset ownership, and per-owner token storage are verified.",
         }
 
     def resume_onboarding(self, workflow_id: str, human_input: dict[str, Any]) -> dict[str, Any]:
