@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from threading import Lock, RLock
 from uuid import uuid4
 
 from .approval_gateway import ApprovalGateway
@@ -33,6 +34,18 @@ from .stores.onboarding_workflow_store import OnboardingWorkflowStore
 from .tool_registry import ToolRegistry
 from .tool_safety import ToolSafetyError, ToolValidator
 from .action_engine import ActionEngine
+
+
+# Process-local serialization complements the durable database claim RPC.
+# It protects the in-memory fallback and prevents duplicate side effects when
+# two workers in this process resume the same execution concurrently.
+_EXECUTION_LOCKS_GUARD = Lock()
+_EXECUTION_LOCKS: dict[str, RLock] = {}
+
+
+def _execution_lock(execution_id: str) -> RLock:
+    with _EXECUTION_LOCKS_GUARD:
+        return _EXECUTION_LOCKS.setdefault(execution_id, RLock())
 
 
 class EmployeeVerticalSlice:
@@ -230,6 +243,24 @@ class EmployeeVerticalSlice:
         return self._execute_plan(mission_id, execution_id, plan, report, metadata)
 
     def _execute_plan(
+        self,
+        mission_id: str,
+        execution_id: str,
+        plan: list[dict[str, Any]],
+        report: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Serialize same-process workers before evaluating side effects.
+
+        Durable deployments still rely on the database claim RPC for
+        cross-process exclusion; this lock also makes the local fallback safe.
+        """
+        with _execution_lock(execution_id):
+            return self._execute_plan_locked(
+                mission_id, execution_id, plan, report, metadata
+            )
+
+    def _execute_plan_locked(
         self,
         mission_id: str,
         execution_id: str,
