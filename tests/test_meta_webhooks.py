@@ -14,32 +14,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.routers.meta_webhooks import router
 
 
-def test_meta_webhook_verification(monkeypatch) -> None:
-    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", "verify-me")
+def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(router)
-    response = TestClient(app).get("/webhooks/meta", params={
+    return app
+
+
+def test_meta_webhook_verification_uses_meta_dotted_query_names(monkeypatch) -> None:
+    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", "verify-me")
+    response = TestClient(_app()).get("/webhooks/meta", params={
         "hub.mode": "subscribe",
         "hub.verify_token": "verify-me",
         "hub.challenge": "12345",
     })
     assert response.status_code == 200
     assert response.text == "12345"
+    assert response.headers["content-type"].startswith("text/plain")
+
+
+def test_meta_webhook_verification_rejects_wrong_token(monkeypatch) -> None:
+    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", "verify-me")
+    response = TestClient(_app()).get("/webhooks/meta", params={
+        "hub.mode": "subscribe",
+        "hub.verify_token": "wrong-token",
+        "hub.challenge": "12345",
+    })
+    assert response.status_code == 403
 
 
 def test_meta_webhook_rejects_bad_signature(monkeypatch) -> None:
     monkeypatch.setenv("META_APP_SECRET", "secret")
-    app = FastAPI()
-    app.include_router(router)
-    response = TestClient(app).post("/webhooks/meta", content=b"{}")
+    response = TestClient(_app()).post("/webhooks/meta", content=b"{}")
     assert response.status_code == 401
 
 
 def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     secret = "secret"
     monkeypatch.setenv("META_APP_SECRET", secret)
-    app = FastAPI()
-    app.include_router(router)
+    app = _app()
     payload = {
         "entry": [{
             "changes": [{
