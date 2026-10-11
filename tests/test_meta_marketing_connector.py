@@ -18,7 +18,7 @@ def test_meta_connector_does_not_expose_token(monkeypatch) -> None:
     monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
     result = MetaMarketingConnector().get_account_status()
     assert "secret" not in str(result)
-    assert result["status"] == "connected"
+    assert result["status"] == "configured_unverified"
 
 
 def test_meta_publish_requires_configuration(monkeypatch) -> None:
@@ -48,3 +48,21 @@ def test_meta_publish_uses_transport_without_leaking_token(monkeypatch) -> None:
     assert result == {"success": True, "id": "remote-1"}
     assert captured["channel"] == "facebook"
     assert "access_token" not in captured
+
+
+
+def test_meta_onboarding_does_not_claim_oauth_completed(monkeypatch) -> None:
+    monkeypatch.setenv("META_ACCESS_TOKEN", "placeholder-token")
+    result = MetaMarketingConnector().start_onboarding("worker-a")
+    assert result["status"] == "awaiting_human"
+    assert result["requires_human_intervention"] is True
+    assert result["checkpoint_type"] == "meta_oauth_not_implemented"
+
+
+def test_meta_connect_account_does_not_claim_success_without_oauth() -> None:
+    result = MetaMarketingConnector().connect_account(
+        "worker-a",
+        {"page_id": "page-123", "instagram_user_id": "ig-123"},
+    )
+    assert result["success"] is False
+    assert result["status"] == "not_implemented"
