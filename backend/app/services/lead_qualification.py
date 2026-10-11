@@ -33,7 +33,7 @@ class LeadQualificationService:
         re.IGNORECASE,
     )
     QUANTITY_RE = re.compile(
-        r"\b(\d[\d,]*)\s*(?:pcs?|pieces?|sheets?|bati|mabati)\b",
+        r"\b(?:(\d[\d,]*)\s*(?:pcs?|pieces?|sheets?|bati|mabati)\b|(?:bati|mabati|sheets?|pieces?|pcs?)\s*(\d[\d,]*))",
         re.IGNORECASE,
     )
     GAUGE_RE = re.compile(r"\b(?:gauge|ga|g)\s*[-:]?\s*(\d{1,2})\b", re.IGNORECASE)
@@ -116,7 +116,12 @@ class LeadQualificationService:
             return None
         location = match.group(1).strip(" .,")
         # Urgency words are separate qualification signals, not part of the location.
-        location = re.sub(r"\\s+\\b(?:today|now|asap|urgent|haraka|leo|kesho)\\b.*$", "", location, flags=re.IGNORECASE)
+        location = re.sub(
+            r"\s+\b(?:today|now|asap|urgent|haraka|leo|kesho)\b.*$",
+            "",
+            location,
+            flags=re.IGNORECASE,
+        )
         return location.strip(" .,") or None
 
     @staticmethod
