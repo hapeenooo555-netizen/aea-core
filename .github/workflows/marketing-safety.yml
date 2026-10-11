@@ -4,9 +4,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - "tests/test_hape_marketing.py"
-      - "tests/test_meta_webhooks.py"
-      - "tests/test_meta_marketing_connector.py"
+      - "tests/**"
       - ".github/workflows/marketing-safety.yml"
   push:
     branches:
