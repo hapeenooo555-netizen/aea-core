@@ -4,6 +4,17 @@
 -- Additive and non-destructive; existing grants are preserved.
 BEGIN;
 
+ALTER TABLE public.mission_steps
+    ADD COLUMN IF NOT EXISTS operation_key TEXT,
+    ADD COLUMN IF NOT EXISTS claim_token TEXT,
+    ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NULL;
+
+CREATE INDEX IF NOT EXISTS idx_mission_steps_operation_key
+    ON public.mission_steps (execution_id, operation_key);
+CREATE INDEX IF NOT EXISTS idx_mission_steps_lease
+    ON public.mission_steps (lease_expires_at)
+    WHERE status = 'in_progress';
+
 CREATE OR REPLACE FUNCTION public.claim_mission_step(
     p_execution_id UUID,
     p_step_id UUID,
