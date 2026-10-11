@@ -40,7 +40,7 @@ def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     persistent_client = object()
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
-    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: persistent_client)
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: persistent_client)
 
     class FakeMarketingOS:
         def __init__(self, owner_id, client):
@@ -89,7 +89,7 @@ def test_meta_webhook_fails_closed_without_persistent_storage(monkeypatch) -> No
     secret = "secret"
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "webhook-test-owner")
-    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: None)
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: None)
     app = FastAPI()
     app.include_router(router)
     raw = json.dumps({"entry": []}).encode()
@@ -100,7 +100,7 @@ def test_meta_webhook_fails_closed_without_persistent_storage(monkeypatch) -> No
         headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
     )
     assert response.status_code == 503
-    assert response.json()["detail"] == "Persistent lead storage is not configured"
+    assert response.json()["detail"] == "Server-side Supabase service credentials are not configured"
 
 def test_meta_webhook_requires_explicit_owner(monkeypatch) -> None:
     monkeypatch.setenv("META_APP_SECRET", "secret")
@@ -123,7 +123,7 @@ def test_meta_webhook_does_not_fallback_for_unknown_phone_number_owner(monkeypat
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "fallback-owner")
     monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", '{"known-phone-id":"mapped-owner"}')
-    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_client", lambda: object())
+    monkeypatch.setattr("app.routers.meta_webhooks.get_supabase_service_client", lambda: object())
     app = FastAPI()
     app.include_router(router)
     payload = {
