@@ -700,6 +700,8 @@ class ApprovalResumeService:
                         lead["next_action"] = "follow_up"
                     else:
                         lead["status"] = "contacted"
+                        if operation == "lead_follow_up":
+                            lead["next_action"] = payload.get("next_action") or "follow_up"
                     lead["last_contact_channel"] = "whatsapp"
                     lead["last_contact_at"] = datetime.now(timezone.utc).isoformat()
                     lead["last_contact_message"] = sanitized_content.get("message")
