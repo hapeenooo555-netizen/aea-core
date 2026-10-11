@@ -85,3 +85,38 @@ def test_meta_webhook_requires_explicit_owner(monkeypatch) -> None:
         headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
     )
     assert response.status_code == 503
+
+
+def test_meta_webhook_does_not_fallback_for_unknown_phone_number_owner(monkeypatch) -> None:
+    secret = "secret"
+    monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "fallback-owner")
+    monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", '{"known-phone-id":"mapped-owner"}')
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "entry": [{
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "metadata": {"phone_number_id": "unknown-phone-id"},
+                    "messages": [{
+                        "id": "wamid.unknown-tenant",
+                        "from": "255700000002",
+                        "type": "text",
+                        "text": {"body": "Nahitaji bati 500 gauge 32"},
+                    }],
+                },
+            }],
+        }],
+    }
+    raw = json.dumps(payload).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["processed"] == 0
+    assert response.json()["ignored"] == 1
