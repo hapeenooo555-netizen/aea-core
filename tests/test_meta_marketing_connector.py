@@ -127,3 +127,25 @@ def test_instagram_asset_must_be_linked_to_verified_page() -> None:
     }
     assert resolve_meta_asset(credentials, "instagram")["asset_id"] == "ig-a"
     assert resolve_meta_asset(credentials, "instagram", "ig-foreign") is None
+
+
+def test_legacy_global_token_publisher_fails_closed(monkeypatch) -> None:
+    monkeypatch.setenv("META_ACCESS_TOKEN", "must-not-be-used")
+    monkeypatch.setenv("META_PAGE_ID", "page-123")
+    monkeypatch.setenv("META_WA_PHONE_NUMBER_ID", "phone-123")
+
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError("legacy helper must not make an external request")
+
+    import app.services.connectors.meta_marketing as module
+    monkeypatch.setattr(module.httpx, "Client", forbidden_client)
+
+    connector = MetaMarketingConnector()
+    result = connector._publish_via_graph(
+        "whatsapp",
+        {"recipient": "255700000000", "message": "Must remain blocked"},
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "approval_pipeline_required"
+    assert result["requires_human_intervention"] is True
