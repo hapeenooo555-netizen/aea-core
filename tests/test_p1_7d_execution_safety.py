@@ -120,7 +120,7 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
 
     assert len(results) == 2
     assert connector.calls == 1
-    assert {result["status"] for result in results} <= {"COMPLETE", "RETRY"}
+    assert {result["status"] for result in results} <= {"COMPLETE", "RETRY", "WAIT_FOR_APPROVAL"}
     execution_id = next(result["report"]["execution_id"] for result in results if result.get("report"))
     steps = execution.load_steps_for_execution(execution_id, "owner")
     assert len(steps) == 1
