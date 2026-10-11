@@ -52,3 +52,38 @@ jobs:
         run: python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
       - name: Run complete repository test suite
         run: python -m pytest -q
+
+  durable-claim-postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: aea_claim_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aea_claim_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/aea_claim_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-test.txt
+      - name: Install backend and test dependencies
+        run: python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
+      - name: Test atomic claim migration and independent-worker races
+        run: python -m pytest -q tests/test_atomic_mission_step_claim_migration.py tests/test_postgres_atomic_mission_step_claim.py
