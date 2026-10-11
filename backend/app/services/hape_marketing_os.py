@@ -9,6 +9,7 @@ connector adapters once the required platform credentials are configured.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from app.services.mission_orchestration import MissionOrchestrationService
@@ -306,8 +307,24 @@ class HapeBrothersMarketingOS:
         return self.missions.transition(lead_id, "completed", result=result)
 
     def draft_quote(self, lead_id: str, *, unit_price: float, delivery_cost: float = 0, currency: str = "TZS", notes: str | None = None) -> dict[str, Any]:
-        if unit_price < 0 or delivery_cost < 0:
-            return {"success": False, "error": "unit_price and delivery_cost must be non-negative"}
+        if unit_price <= 0 or delivery_cost < 0:
+            return {"success": False, "error": "unit_price must be positive and delivery_cost must be non-negative"}
+        cur = currency.strip().upper() or "TZS"
+        if cur != "TZS":
+            return {"success": False, "error": "Only TZS quotations are enabled for HAPE BROTHERS until a currency-specific pricing policy is configured"}
+        try:
+            minimum_price = float(os.getenv("HAPE_BROTHERS_MIN_UNIT_PRICE_TZS", "12250"))
+        except ValueError:
+            return {"success": False, "error": "HAPE_BROTHERS_MIN_UNIT_PRICE_TZS must be a valid number"}
+        if minimum_price <= 0:
+            return {"success": False, "error": "HAPE_BROTHERS_MIN_UNIT_PRICE_TZS must be greater than zero"}
+        if float(unit_price) < minimum_price:
+            return {
+                "success": False,
+                "error": f"Unit price is below the configured minimum of TZS {minimum_price:,.0f} per sheet",
+                "minimum_unit_price": minimum_price,
+                "requires_human_policy_update": True,
+            }
         mission = self.missions.get_mission(lead_id)
         if not self._is_lead(mission):
             return {"success": False, "error": "Lead not found"}
@@ -322,7 +339,6 @@ class HapeBrothersMarketingOS:
         quantity = int(quantity)
         subtotal = quantity * float(unit_price)
         total = subtotal + float(delivery_cost)
-        cur = currency.strip().upper() or "TZS"
         quote = {"quantity": quantity, "gauge": lead.get("gauge"), "product": lead.get("product") or "mabati", "delivery_location": lead.get("location"), "unit_price": float(unit_price), "subtotal": subtotal, "delivery_cost": float(delivery_cost), "total": total, "currency": cur, "notes": notes.strip() if notes else None, "created_at": _now_iso()}
         message = f"HAPE BROTHERS QUOTATION\nProduct: {quote['product']}\nQuantity: {quantity} sheets" + (f"\nGauge: {quote['gauge']}" if quote["gauge"] else "") + (f"\nDelivery: {quote['delivery_location']}" if quote["delivery_location"] else "") + f"\nUnit price: {cur} {float(unit_price):,.0f}\nSubtotal: {cur} {subtotal:,.0f}" + (f"\nDelivery: {cur} {float(delivery_cost):,.0f}" if delivery_cost else "") + f"\nTOTAL: {cur} {total:,.0f}" + (f"\nNotes: {quote['notes']}" if quote["notes"] else "") + "\n\nPlease confirm if you would like us to proceed with your order."
         quote["message"] = message
