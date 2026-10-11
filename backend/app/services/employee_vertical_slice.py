@@ -225,6 +225,23 @@ class EmployeeVerticalSlice:
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
 
         existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
+        if existing_execution and existing_execution.get("status") == "WAITING_APPROVAL":
+            # Do not rerun the plan while an approval request is outstanding:
+            # that would create duplicate approval requests under concurrent workers.
+            durable_result = existing_execution.get("result") or {}
+            approval_request_id = durable_result.get("approval_request_id")
+            report["execution_id"] = existing_execution.get("execution_id")
+            report["required_user_action"] = "Approve the pending action"
+            report["resume_information"] = {
+                "approval_request_id": approval_request_id,
+                "execution_id": existing_execution.get("execution_id"),
+            }
+            report["final_status"] = "WAIT_FOR_APPROVAL"
+            return {
+                "success": False,
+                "status": "WAIT_FOR_APPROVAL",
+                "report": sanitize_payload(report),
+            }
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
             return self._resume_execution(mission_id, existing_execution, report, plan)
 
@@ -365,7 +382,9 @@ class EmployeeVerticalSlice:
                 if status in {"not_started", "needs_reconnect", "failed", "onboarding"}:
                     report["next_step_required"] = True
 
-            step_status = "completed" if result.get("success") else "failed"
+            # Creating an approval request completes this step's work even
+            # though the overall mission must pause until a human decides.
+            step_status = "completed" if result.get("success") or result.get("pending_approval") else "failed"
             retry_category = None if result.get("success") else classify_failure(result.get("error", "execution failure")).category
             step_update = self._execution.update_step(
                 execution_id,
