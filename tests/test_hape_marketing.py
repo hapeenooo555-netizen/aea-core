@@ -157,3 +157,18 @@ def test_quote_at_or_above_floor_requires_approval(monkeypatch) -> None:
     assert result["status"] == "waiting_approval"
     assert result["quote"]["total"] == 6550000
     assert result["approval_request_id"]
+
+
+
+def test_publish_rejects_bypassing_human_approval() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user_id] = lambda: "approval-owner"
+    tc = TestClient(app)
+    response = tc.post("/marketing/publish", json={
+        "channel": "facebook",
+        "message": "New gauge 32 mabati available",
+        "approval_required": False,
+    })
+    assert response.status_code == 400
+    assert "Human approval is mandatory" in response.json()["detail"]
