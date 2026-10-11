@@ -1,6 +1,8 @@
 """Database module for AEA Core.
 
-Provides database client initialization and connection management.
+Normal application queries use the public key plus the user's JWT so RLS
+continues to enforce per-user ownership. A separate, narrowly scoped
+service-role client is used only for the read-only health probe.
 """
 
 from __future__ import annotations
@@ -13,19 +15,14 @@ _supabase_health_client: Any = None
 
 
 def _resolve_supabase_credential() -> tuple[str, str]:
-    """Resolve URL and public API key for user-scoped requests.
-
-    SUPABASE_KEY takes precedence. SUPABASE_ANON_KEY is the fallback.
-    The service-role key is intentionally not used here so normal application
-    data access continues to respect RLS.
-    """
+    """Resolve URL and public API key for user-scoped requests."""
     url = os.getenv("SUPABASE_URL", "")
     key = os.getenv("SUPABASE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
     return url, key
 
 
 def is_supabase_configured() -> bool:
-    """Return whether URL and API key configuration are present."""
+    """Return whether URL and public API key configuration are present."""
     url, key = _resolve_supabase_credential()
     return bool(url and key)
 
@@ -47,16 +44,40 @@ def get_supabase_client() -> Any:
         return None
 
 
-def check_supabase_connection() -> bool:
-    """Verify Supabase with a bounded, read-only query using the public client.
+def _get_supabase_health_client() -> Any:
+    """Create a separate service-role client exclusively for the health probe.
 
-    This probe deliberately uses the same anon-key client as normal
-    unauthenticated requests, not the service-role key. With owner-based RLS,
-    an unauthenticated query may return zero rows; a successful PostgREST
-    response still verifies the API/database path without bypassing RLS.
-    No exception details are returned to callers.
+    The database migration revokes SELECT on protected tables from anon and
+    grants it to authenticated. Since /health has no user JWT, the public
+    client cannot verify a SELECT against missions. This client is isolated
+    from normal application data paths and never returns query data.
     """
-    client = get_supabase_client()
+    global _supabase_health_client
+    if _supabase_health_client is not None:
+        return _supabase_health_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+
+        _supabase_health_client = create_client(url, service_role_key)
+        return _supabase_health_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
+
+
+def check_supabase_connection() -> bool:
+    """Verify connectivity with one bounded, read-only query.
+
+    The dedicated service-role client bypasses RLS, so the probe is
+    intentionally constrained to SELECT id FROM missions LIMIT 1. Returned
+    rows and exception details are discarded. The privileged client is never
+    used by normal application requests.
+    """
+    client = _get_supabase_health_client()
     if client is None:
         return False
     try:
