@@ -128,8 +128,14 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     assert {result["status"] for result in results} <= {"COMPLETE", "RETRY", "WAIT_FOR_APPROVAL"}
     execution_id = next(result["report"]["execution_id"] for result in results if result.get("report"))
     steps = execution.load_steps_for_execution(execution_id, "owner")
-    assert len(steps) == 1
-    assert steps[0]["status"] == "completed"
+    step_names = [step["step_name"] for step in steps]
+    # A valid status-check flow may include a second, pending onboarding
+    # approval checkpoint. Assert that neither logical step is duplicated.
+    assert step_names.count("get_account_status") == 1
+    assert step_names.count("start_onboarding") <= 1
+    assert len(step_names) == len(set(step_names))
+    status_step = next(step for step in steps if step["step_name"] == "get_account_status")
+    assert status_step["status"] == "completed"
 
 
 def test_runtime_retry_keeps_logical_operation_identity():
