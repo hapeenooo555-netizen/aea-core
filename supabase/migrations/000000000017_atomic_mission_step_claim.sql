@@ -38,6 +38,7 @@ DECLARE
     v_existing public.mission_steps%ROWTYPE;
     v_latest public.mission_steps%ROWTYPE;
     v_inserted public.mission_steps%ROWTYPE;
+    v_target public.mission_steps%ROWTYPE;
     v_mission_id UUID;
     v_operation_key TEXT := COALESCE(p_operation_key, p_idempotency_key);
 BEGIN
@@ -106,16 +107,32 @@ BEGIN
         END IF;
     END IF;
 
-    INSERT INTO public.mission_steps (
-        id, mission_id, execution_id, step_name, worker_role, status,
-        attempt_index, idempotency_key, operation_key, claim_token,
-        lease_expires_at, started_at, completed_at, result, retry_category, created_at
-    ) VALUES (
-        p_step_id, v_mission_id, p_execution_id, 'claimed_step', 'employee', 'in_progress',
-        p_attempt_index, p_idempotency_key, v_operation_key, p_claim_token,
-        now() + make_interval(secs => GREATEST(COALESCE(p_lease_seconds, 60), 1)),
-        now(), NULL, '{}'::jsonb, NULL, now()
-    )
+    -- The service creates a pending step row before claiming it. Validate
+    -- that exact row belongs to this execution's mission, then claim it by UPDATE.
+    -- Do not INSERT here: that would diverge from the application's durable-step
+    -- lifecycle and bypass its step-name/worker metadata.
+    SELECT * INTO v_target
+    FROM public.mission_steps
+    WHERE id = p_step_id AND mission_id = v_mission_id
+    LIMIT 1;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT NULL::jsonb, false;
+        RETURN;
+    END IF;
+
+    UPDATE public.mission_steps
+    SET execution_id = p_execution_id,
+        attempt_index = p_attempt_index,
+        idempotency_key = p_idempotency_key,
+        operation_key = v_operation_key,
+        claim_token = p_claim_token,
+        lease_expires_at = now() + make_interval(secs => GREATEST(COALESCE(p_lease_seconds, 60), 1)),
+        status = 'in_progress',
+        started_at = COALESCE(started_at, now()),
+        completed_at = NULL,
+        result = '{}'::jsonb,
+        retry_category = NULL
+    WHERE id = p_step_id AND mission_id = v_mission_id
     RETURNING * INTO v_inserted;
 
     RETURN QUERY SELECT to_jsonb(v_inserted), true;
