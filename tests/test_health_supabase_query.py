@@ -44,7 +44,7 @@ class FakeClient:
 
 def test_connection_check_executes_read_only_limited_query(monkeypatch):
     client = FakeClient()
-    monkeypatch.setattr(database, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(database, "_get_supabase_health_client", lambda: client)
 
     assert database.check_supabase_connection() is True
     assert client.table_name == "missions"
@@ -55,9 +55,41 @@ def test_connection_check_executes_read_only_limited_query(monkeypatch):
 
 def test_connection_check_returns_false_on_query_failure(monkeypatch):
     client = FakeClient(should_raise=True)
-    monkeypatch.setattr(database, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(database, "_get_supabase_health_client", lambda: client)
 
     assert database.check_supabase_connection() is False
+
+
+def test_health_client_uses_service_role_key_only_for_probe(monkeypatch):
+    captured = {}
+    client = FakeClient()
+
+    def fake_create_client(url, key):
+        captured["url"] = url
+        captured["key"] = key
+        return client
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "private-test-key")
+    monkeypatch.setattr(database, "_supabase_health_client", None)
+    monkeypatch.setitem(sys.modules, "supabase", SimpleNamespace(create_client=fake_create_client))
+
+    assert database._get_supabase_health_client() is client
+    assert captured == {
+        "url": "https://example.supabase.co",
+        "key": "private-test-key",
+    }
+    assert database.supabase_client is not client
+
+
+def test_health_client_requires_service_role_key(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.setattr(database, "_supabase_health_client", None)
+
+    assert database._get_supabase_health_client() is None
 
 
 def test_health_reports_query_failure_as_degraded(monkeypatch):
