@@ -1,0 +1,48 @@
+name: Backend tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "fix/healthcheck-supabase-query"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-test.txt
+
+      - name: Install backend and test dependencies
+        run: python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
+
+      - name: Run Supabase health-query regression tests
+        run: python -m pytest -q tests/test_health_supabase_query.py
+
+      - name: Run health-related regression tests
+        run: python -m pytest -q tests/test_sprint2.py
+
+      - name: Run tests for modules changed in this PR
+        run: >-
+          python -m pytest -q
+          tests/test_connectors_base.py
+          tests/test_meta_marketing_connector.py
+          tests/test_p1_1_approval_resume.py
+          tests/test_p1_7b_employee_slice.py
+          tests/test_p1_8_approval_integration.py
+          tests/test_p1_8_orchestration.py
+          tests/test_chatplus.py
