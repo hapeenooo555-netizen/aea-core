@@ -14,11 +14,39 @@ def test_meta_connector_has_three_channel_capabilities() -> None:
     assert caps["publish_content"] is True
 
 
-def test_meta_connector_does_not_expose_token(monkeypatch) -> None:
+def test_meta_connector_does_not_claim_connection_from_environment_token(monkeypatch) -> None:
     monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
+    monkeypatch.setenv("META_PAGE_ID", "page-123")
     result = MetaMarketingConnector().get_account_status()
     assert "secret" not in str(result)
-    assert result["status"] == "connected"
+    assert result["status"] == "awaiting_authorization"
+    assert result["details"]["oauth_verified"] is False
+    assert result["details"]["token_configured"] is True
+
+
+def test_meta_connect_account_rejects_unverified_asset_ids() -> None:
+    result = MetaMarketingConnector().connect_account(
+        "worker-a",
+        {"page_id": "user-supplied-page", "instagram_user_id": "user-supplied-ig"},
+    )
+    assert result["success"] is False
+    assert result["status"] == "awaiting_human"
+    assert result["checkpoint_type"] == "oauth_authorization_required"
+
+
+def test_meta_onboarding_never_claims_success_without_oauth() -> None:
+    connector = MetaMarketingConnector()
+    started = connector.start_onboarding("worker-a")
+    assert started["status"] == "awaiting_human"
+    resumed = connector.resume_onboarding(started["workflow_id"], {"page_id": "fake-page"})
+    assert resumed["status"] == "awaiting_human"
+    assert resumed["requires_human_intervention"] is True
+
+
+def test_meta_disconnect_does_not_claim_revocation_without_token_store() -> None:
+    result = MetaMarketingConnector().disconnect_account("worker-a")
+    assert result["success"] is False
+    assert result["status"] == "awaiting_human"
 
 
 def test_meta_publish_requires_configuration(monkeypatch) -> None:
