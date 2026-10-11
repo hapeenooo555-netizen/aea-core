@@ -7,7 +7,7 @@ import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 
@@ -51,9 +51,9 @@ def _resolve_owner_id(phone_number_id: str | None) -> str | None:
 
 @router.get("")
 async def verify_meta_webhook(
-    hub_mode: str | None = None,
-    hub_verify_token: str | None = None,
-    hub_challenge: str | None = None,
+    hub_mode: str | None = Query(default=None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
 ) -> Any:
     """Handle Meta webhook subscription verification."""
     verify_token = os.getenv("META_WEBHOOK_VERIFY_TOKEN")
