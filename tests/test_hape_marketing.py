@@ -120,3 +120,34 @@ def test_api_creates_lead() -> None:
     })
     assert response.status_code == 201
     assert response.json()["success"] is True
+
+
+def test_publish_rejects_bypassing_human_approval() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user_id] = lambda: "approval-owner"
+    tc = TestClient(app)
+    response = tc.post("/marketing/publish", json={
+        "channel": "facebook",
+        "message": "New gauge 32 mabati available",
+        "approval_required": False,
+    })
+    assert response.status_code == 400
+    assert "Human approval is mandatory" in response.json()["detail"]
+
+
+def test_publish_with_approval_queues_request_instead_of_publishing(monkeypatch) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user_id] = lambda: "approval-owner"
+    tc = TestClient(app)
+    response = tc.post("/marketing/publish", json={
+        "channel": "whatsapp",
+        "message": "Habari, HAPE BROTHERS tuna mabati ya gauge 32.",
+        "approval_required": True,
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["status"] == "waiting_approval"
+    assert body["approval_request_id"]
