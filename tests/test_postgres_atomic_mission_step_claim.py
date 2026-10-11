@@ -49,12 +49,15 @@ def isolated_postgres_schema():
                 CREATE TABLE public.mission_steps (
                     id UUID PRIMARY KEY,
                     mission_id UUID,
-                    execution_id UUID NOT NULL,
+                    execution_id UUID,
                     step_name TEXT NOT NULL,
                     worker_role TEXT NOT NULL,
                     status TEXT NOT NULL,
                     attempt_index INTEGER NOT NULL DEFAULT 0,
-                    idempotency_key TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT UNIQUE,
+                    operation_key TEXT,
+                    claim_token TEXT,
+                    lease_expires_at TIMESTAMPTZ,
                     started_at TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ,
                     result JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -88,6 +91,18 @@ def _claim(execution_id: str, operation_key: str, attempt: int, lease_seconds: i
     conn = _connect()
     try:
         with conn.cursor() as cur:
+            # Match the production lifecycle: create a pending step row first;
+            # the RPC claims that exact row instead of inserting a replacement.
+            cur.execute(
+                """
+                INSERT INTO public.mission_steps
+                    (id, mission_id, execution_id, step_name, worker_role, status, attempt_index, result)
+                SELECT %s, mission_id, NULL, %s, 'employee', 'pending', %s, '{}'::jsonb
+                FROM public.mission_executions WHERE execution_id = %s
+                """,
+                (step_id, f"step-{attempt}", attempt, execution_id),
+            )
+            assert cur.rowcount == 1
             cur.execute(
                 """
                 SELECT step, claimed
