@@ -39,6 +39,7 @@ def test_meta_webhook_creates_whatsapp_lead(monkeypatch) -> None:
     secret = "secret"
     monkeypatch.setenv("META_APP_SECRET", secret)
     monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "hape-owner")
+    monkeypatch.setenv("META_WA_PHONE_NUMBER_ID", "123")
     app = FastAPI()
     app.include_router(router)
     payload = {
@@ -120,3 +121,21 @@ def test_meta_webhook_ignores_unconfigured_phone_number_id(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["processed"] == 0
     assert response.json()["ignored"] == 1
+
+
+def test_meta_webhook_fails_closed_when_phone_number_id_not_configured(monkeypatch) -> None:
+    secret = "secret"
+    monkeypatch.setenv("META_APP_SECRET", secret)
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", "hape-owner")
+    monkeypatch.delenv("META_WA_PHONE_NUMBER_ID", raising=False)
+    app = FastAPI()
+    app.include_router(router)
+    raw = json.dumps({"entry": []}).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhooks/meta",
+        content=raw,
+        headers={"X-Hub-Signature-256": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "WhatsApp webhook phone number ID is not configured"
