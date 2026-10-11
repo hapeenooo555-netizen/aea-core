@@ -163,3 +163,33 @@ def test_meta_webhook_does_not_cross_assign_unknown_mapped_asset(monkeypatch):
     response = _signed_post(TestClient(app), _message_payload(phone_number_id="123"))
     assert response.status_code == 503
     assert "No owner is configured" in response.json()["detail"]
+
+def test_meta_webhook_reports_qualification_failure_without_claiming_follow_up(monkeypatch):
+    monkeypatch.setenv("META_APP_SECRET", "test-secret")
+    monkeypatch.setenv("HAPE_BROTHERS_OWNER_ID", OWNER_ID)
+    monkeypatch.setattr(
+        "app.routers.meta_webhooks.get_supabase_service_client",
+        lambda: object(),
+    )
+
+    class FakeMarketingOS:
+        def __init__(self, owner_id, client):
+            assert owner_id == OWNER_ID
+
+        def create_lead(self, **kwargs):
+            return {"success": True, "mission": {"id": "lead-456"}}
+
+        def qualify_lead(self, lead_id, *, message=None):
+            return {"success": False, "error": "database write failed"}
+
+    monkeypatch.setattr("app.routers.meta_webhooks.HapeBrothersMarketingOS", FakeMarketingOS)
+    app = FastAPI()
+    app.include_router(router)
+    response = _signed_post(TestClient(app), _message_payload(message_id="wamid.test-2"))
+
+    assert response.status_code == 200
+    lead = response.json()["leads"][0]
+    assert lead["lead_id"] == "lead-456"
+    assert lead["qualification"] is None
+    assert lead["follow_up_status"] == "qualification_failed"
+
