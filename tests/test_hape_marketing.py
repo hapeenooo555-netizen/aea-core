@@ -80,7 +80,12 @@ def test_lead_capture_and_follow_up_are_owner_scoped() -> None:
         message="Habari, tunaweza kukutumia quotation ya bati 500.",
     )
     assert follow_up["success"] is True
-    assert follow_up["result"]["action"] == "follow_up"
+    assert follow_up["status"] == "waiting_approval"
+    assert follow_up["action"] == "follow_up"
+    assert follow_up["approval_request_id"]
+    refreshed = service_a.missions.get_mission(lead_id)
+    refreshed_lead = (refreshed.get("metadata") or {}).get("lead") or {}
+    assert refreshed_lead.get("status") != "contacted"
 
 
 def test_content_draft_contains_channel_safe_fields() -> None:
