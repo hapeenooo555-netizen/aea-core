@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 supabase_client: Any = None
+_supabase_health_client: Any = None
 
 
 def _resolve_supabase_credential() -> tuple[str, str]:
@@ -30,7 +31,7 @@ def is_supabase_configured() -> bool:
 
 
 def get_supabase_client() -> Any:
-    """Get or initialize the Supabase client, or return None if unavailable."""
+    """Get or initialize the user-scoped Supabase client, or return None."""
     global supabase_client
     if supabase_client is not None:
         return supabase_client
@@ -39,20 +40,46 @@ def get_supabase_client() -> Any:
         return None
     try:
         from supabase import create_client
+
         supabase_client = create_client(url, key)
         return supabase_client
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
 
-def check_supabase_connection() -> bool:
-    """Run a harmless read-only query to verify the Supabase data API.
+def _get_supabase_health_client() -> Any:
+    """Return a dedicated service-role client used only by the health probe.
 
-    The query selects only the ID from the existing missions table, limited to
-    one row. An empty result is still success; query exceptions or a missing
-    client report failure. Exception details are not returned or logged.
+    The privileged client is kept separate from the user-scoped application
+    client and is only used to perform the read-only missions.id query below.
     """
-    client = get_supabase_client()
+    global _supabase_health_client
+    if _supabase_health_client is not None:
+        return _supabase_health_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+
+    try:
+        from supabase import create_client
+
+        _supabase_health_client = create_client(url, service_role_key)
+        return _supabase_health_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
+
+
+def check_supabase_connection() -> bool:
+    """Verify Supabase with a bounded, read-only query using a dedicated client.
+
+    The service-role credential is isolated to this probe because the missions
+    table has owner-based RLS and the health endpoint has no user JWT. Only the
+    ID column is selected and at most one row is requested. No exception detail
+    or credential is returned to callers.
+    """
+    client = _get_supabase_health_client()
     if client is None:
         return False
     try:
@@ -86,6 +113,7 @@ def get_supabase_client_for_user(user_access_token: str) -> Any:
         return None
     try:
         from supabase import create_client
+
         client = create_client(url, anon_key)
         client.auth.set_session(access_token=user_access_token, refresh_token="")
         return client
