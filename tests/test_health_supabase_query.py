@@ -65,12 +65,12 @@ def test_health_reports_query_failure_as_degraded(monkeypatch):
         def health_check(self):
             return {"status": "healthy", "services": {"mission_engine": True}}
 
+    # The production orchestrator currently has an unrelated circular import.
+    # Stub its module before the health endpoint performs its lazy import.
+    fake_module = SimpleNamespace(AgentOrchestrator=FakeOrchestrator)
+    monkeypatch.setitem(sys.modules, "app.services.agent_orchestrator", fake_module)
     monkeypatch.setattr(health, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(health, "check_supabase_connection", lambda: False)
-    monkeypatch.setattr(
-        "app.services.agent_orchestrator.AgentOrchestrator",
-        FakeOrchestrator,
-    )
 
     result = health.health_check()
 
