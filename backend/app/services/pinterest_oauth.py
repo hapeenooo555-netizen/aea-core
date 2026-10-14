@@ -1,8 +1,8 @@
 """Pinterest OAuth helper for AEA Core affiliate onboarding.
 
 Provides OAuth 2.0 authorization URL construction and CSRF state
-management without exchanging authorization codes (Phase 2) and without
-calling the real Pinterest API (Phase 2+).
+management for the Pinterest connector. Authorization-code exchange and
+durable connection completion are implemented by the connectors router.
 
 State is persisted in the existing ``human_intervention_checkpoints``
 table via the ``HumanInterventionManager``.  No schema migration is
@@ -39,7 +39,7 @@ PINTEREST_AUTH_BASE_URL = "https://www.pinterest.com/oauth/"
 DEFAULT_SCOPES = [
     "user_accounts:read",
     "boards:read",
-    "pins:create",
+    "pins:write",
 ]
 
 DEFAULT_STATE_TTL_SECONDS = 900
@@ -59,8 +59,8 @@ class PinterestOAuthConfig:
 
     @property
     def is_configured(self) -> bool:
-        """Return True only when all three required env vars are present."""
-        return bool(self.client_id and self.redirect_uri)
+        """Return True only when all required OAuth credentials are present."""
+        return bool(self.client_id and self.client_secret and self.redirect_uri)
 
     @property
     def has_secret(self) -> bool:
@@ -151,13 +151,14 @@ class PinterestOAuthHelper:
             Fully-qualified authorization URL.
 
         Raises:
-            ValueError: If OAuth is not configured (missing client_id or
-                redirect_uri).
+            ValueError: If OAuth is not configured (missing client ID,
+                client secret, or redirect URI).
         """
         if not self._config.is_configured:
             raise ValueError(
                 "Pinterest OAuth is not configured: "
-                "PINTEREST_CLIENT_ID and PINTEREST_REDIRECT_URI must be set."
+                "PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET, and "
+                "PINTEREST_REDIRECT_URI must be set."
             )
 
         scope_list = scopes if scopes is not None else self.scopes
@@ -178,9 +179,9 @@ class PinterestOAuthHelper:
     ) -> tuple[str, str]:
         """Generate a new OAuth state and the corresponding authorization URL.
 
-        When OAuth is not configured (no ``PINTEREST_CLIENT_ID`` /
-        ``PINTEREST_REDIRECT_URI`` in the environment), a simulated
-        URL is returned so that the state checkpoint flow still works
+        When OAuth is not configured (missing client ID, client secret,
+        or redirect URI), a simulated URL is returned so that the state
+        checkpoint flow still works
         in test/non-production environments.  In this mode the URL
         points to Pinterest's OAuth entry point but without real
         client credentials — suitable for HITL simulation only.
