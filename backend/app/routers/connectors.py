@@ -557,6 +557,138 @@ async def complete_checkpoint(
     }
 
 
+class PinterestOAuthStartRequest(BaseModel):
+    """Authenticated request to begin Pinterest OAuth for an existing owned worker/mission."""
+
+    worker_id: str
+    mission_id: str
+
+
+@oauth_router.post("/start")
+async def start_pinterest_oauth(
+    request: PinterestOAuthStartRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a durable onboarding workflow and matching callback checkpoint.
+
+    This endpoint requires a valid Supabase bearer token. Both worker and mission
+    must belong to the caller; no caller-supplied owner ID is trusted.
+    """
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authenticated Supabase storage is unavailable",
+        )
+
+    # Prove ownership of both resources before creating OAuth state.
+    try:
+        worker_rows = (
+            client.table("workers")
+            .select("id")
+            .eq("id", request.worker_id)
+            .eq("owner_id", current_user_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        mission_rows = (
+            client.table("missions")
+            .select("id")
+            .eq("id", request.mission_id)
+            .eq("owner_id", current_user_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify worker and mission ownership",
+        ) from exc
+    if not worker_rows or not mission_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker or mission not found")
+
+    oauth = PinterestOAuthHelper(PinterestOAuthConfig())
+    if not oauth.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pinterest OAuth is not configured on the server",
+        )
+
+    connector = _get_user_scoped_pinterest_connector(
+        client=client,
+        owner_id_uuid=current_user_id,
+    )
+    try:
+        workflow = connector.start_onboarding(
+            request.worker_id,
+            mission_id=request.mission_id,
+            owner_id=current_user_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create Pinterest onboarding workflow",
+        ) from exc
+    if not workflow.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=workflow.get("error", "Failed to create Pinterest onboarding workflow"),
+        )
+
+    metadata = workflow.get("metadata") or {}
+    authorization_url = metadata.get("authorization_url")
+    state = metadata.get("oauth_state")
+    workflow_id = workflow.get("workflow_id")
+    if not authorization_url or not state or not workflow_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth workflow did not return required state metadata",
+        )
+
+    # The public callback resolves state through this durable checkpoint. Bind
+    # it to the authenticated owner and exact workflow; never trust query data.
+    checkpoint_metadata = {
+        **metadata,
+        "workflow_id": workflow_id,
+        "oauth_state": state,
+        "oauth_state_owner": current_user_id,
+        "oauth_state_workflow": workflow_id,
+        "worker_id": request.worker_id,
+        "mission_id": request.mission_id,
+    }
+    manager = get_human_intervention_manager(client=client)
+    checkpoint_result = manager.create_checkpoint(
+        mission_id=request.mission_id,
+        platform="pinterest",
+        checkpoint_type="oauth_authorization_required",
+        instructions="Authorize AEA to access your Pinterest account to continue onboarding.",
+        metadata=checkpoint_metadata,
+        ttl_hours=24,
+    )
+    if not checkpoint_result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist Pinterest OAuth callback checkpoint",
+        )
+
+    return {
+        "success": True,
+        "status": "awaiting_human",
+        "platform": "pinterest",
+        "workflow_id": workflow_id,
+        "checkpoint_id": (checkpoint_result.get("checkpoint") or {}).get("checkpoint_id")
+            or (checkpoint_result.get("checkpoint") or {}).get("id"),
+        "authorization_url": authorization_url,
+        "scopes": oauth.scopes,
+        "expires_in_seconds": 900,
+        "requires_human_intervention": True,
+    }
+
+
 @oauth_router.get("/callback")
 async def pinterest_oauth_callback(
     code: str | None = None,
