@@ -242,7 +242,7 @@ class PinterestConnector(BaseConnector):
         if approval_id:
             candidate_workflow_id = str(uuid4())
             auth_url, oauth_state = oauth.generate_authorization_url(
-                owner_id=worker_id,
+                owner_id=owner_id or worker_id,
                 workflow_id=candidate_workflow_id,
             )
             checkpoint_data = {
@@ -258,7 +258,7 @@ class PinterestConnector(BaseConnector):
                 "metadata": {
                     "authorization_url": auth_url,
                     "scopes": oauth.scopes,
-                    **(oauth.state_metadata(oauth_state, worker_id, candidate_workflow_id)),
+                    **(oauth.state_metadata(oauth_state, owner_id or worker_id, candidate_workflow_id)),
                 },
             }
             step_history = [
@@ -313,7 +313,7 @@ class PinterestConnector(BaseConnector):
 
         # Create the initial workflow state
         auth_url, oauth_state = oauth.generate_authorization_url(
-            owner_id=worker_id,
+            owner_id=owner_id or worker_id,
             workflow_id=workflow_id,
         )
         checkpoint_data = {
@@ -330,7 +330,7 @@ class PinterestConnector(BaseConnector):
                 "authorization_url": auth_url,
                 "scopes": oauth.scopes,
                 **(
-                    oauth.state_metadata(oauth_state, worker_id, workflow_id)
+                    oauth.state_metadata(oauth_state, owner_id or worker_id, workflow_id)
                 ),
             },
         }
