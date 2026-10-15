@@ -379,6 +379,7 @@ class ApprovalResumeService:
         platform: str,
         connector: Any,
         operation_key: str | None = None,
+        current_user_id: str | None = None,
     ) -> dict[str, Any]:
         """Handle resume of ``start_platform_onboarding``."""
         result = connector.start_onboarding(
