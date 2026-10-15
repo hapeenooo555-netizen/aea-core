@@ -567,7 +567,7 @@ async def pinterest_oauth_callback(
     """Public Pinterest redirect endpoint, authenticated by persisted OAuth state."""
     if not state or not re.fullmatch(r"[A-Za-z0-9_-]{43,}", state):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing or invalid OAuth state")
-    client = database_module.get_supabase_service_client()
+    client = database_module.get_supabase_oauth_callback_client()
     if client is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OAuth callback storage is unavailable")
     helper = PinterestOAuthHelper(PinterestOAuthConfig())
