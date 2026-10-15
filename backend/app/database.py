@@ -95,6 +95,33 @@ def get_supabase_service_client() -> Any:
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
+_oauth_callback_client: Any = None
+
+
+def get_supabase_oauth_callback_client() -> Any:
+    """Return a dedicated service-role client for state-bound OAuth callbacks.
+
+    Callers must validate the persisted, high-entropy, short-lived OAuth state
+    and its owner/workflow binding before performing any writes. This client
+    is never returned to a browser or exposed through an API response.
+    """
+    global _oauth_callback_client
+    if _oauth_callback_client is not None:
+        return _oauth_callback_client
+
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+
+        _oauth_callback_client = create_client(url, service_role_key)
+        return _oauth_callback_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
+
+
 def check_supabase_connection() -> bool:
     """Verify connectivity with one bounded, read-only query.
 
