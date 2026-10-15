@@ -177,28 +177,16 @@ class PinterestOAuthHelper:
         workflow_id: str,
         scopes: list[str] | None = None,
     ) -> tuple[str, str]:
-        """Generate a new OAuth state and the corresponding authorization URL.
-
-        When OAuth is not configured (missing client ID, client secret,
-        or redirect URI), a simulated URL is returned so that the state
-        checkpoint flow still works
-        in test/non-production environments.  In this mode the URL
-        points to Pinterest's OAuth entry point but without real
-        client credentials — suitable for HITL simulation only.
+        """Generate an authorization URL; fail closed when credentials are missing.
 
         Returns:
             Tuple of (authorization_url, state).
+
+        Raises:
+            ValueError: If the required Pinterest OAuth configuration is absent.
         """
         state = self.generate_state(owner_id, workflow_id)
-        if not self._config.is_configured:
-            logger.warning(
-                "Pinterest OAuth not configured; returning simulated "
-                "authorization URL for workflow %s",
-                workflow_id,
-            )
-            url = f"{self.auth_base_url}?state={state}"
-        else:
-            url = self.build_authorization_url(state, scopes=scopes)
+        url = self.build_authorization_url(state, scopes=scopes)
         return url, state
 
     # ------------------------------------------------------------------
