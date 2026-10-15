@@ -219,7 +219,7 @@ class PinterestOAuthHelper:
         now_ts = now_ts or time.time()
         expires_at = metadata.get("oauth_state_expires_at")
         if expires_at is None:
-            return False
+            return True
         try:
             return float(expires_at) <= now_ts
         except (TypeError, ValueError):
@@ -265,13 +265,12 @@ class PinterestOAuthHelper:
             return False, "state_mismatch"
 
         stored_owner = md.get("oauth_state_owner")
-        if stored_owner and stored_owner != owner_id:
+        if not stored_owner or not secrets.compare_digest(str(stored_owner), str(owner_id)):
             return False, "owner_mismatch"
 
-        if workflow_id:
-            stored_wf = md.get("oauth_state_workflow")
-            if stored_wf and stored_wf != workflow_id:
-                return False, "workflow_mismatch"
+        stored_wf = md.get("oauth_state_workflow")
+        if not stored_wf or not workflow_id or not secrets.compare_digest(str(stored_wf), str(workflow_id)):
+            return False, "workflow_mismatch"
 
         if self._is_state_consumed(md):
             return False, "state_already_consumed"
