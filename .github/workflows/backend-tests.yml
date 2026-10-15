@@ -45,6 +45,9 @@ jobs:
       - name: Run opt-in cross-user RLS smoke test
         run: python -m pytest -q tests/test_live_rls_cross_user.py
 
+      - name: Run Pinterest OAuth security tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_pinterest_oauth_config_security.py
+
       - name: Run tests for modules changed in this PR
         run: >-
           python -m pytest -q
