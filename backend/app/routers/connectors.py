@@ -666,17 +666,17 @@ async def pinterest_oauth_callback(
             detail=f"OAuth state validation failed: {reason}",
         )
 
-    # When OAuth is not configured (e.g. test environments), return
-    # the checkpoint-completed state without attempting a network call.
     config = PinterestOAuthConfig()
     if not config.is_configured:
-        return {
-            "success": True,
-            "status": "checkpoint_completed",
-            "checkpoint_id": checkpoint_id,
-            "message": "Pinterest authorization code received. Token exchange will complete the connection.",
-            "next_step": "token_exchange",
-        }
+        manager.fail_oauth_callback(
+            state,
+            owner_id=current_user_id,
+            reason="Pinterest OAuth configuration is incomplete",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pinterest OAuth is not configured on the server",
+        )
 
     # Phase 2: Exchange authorization code for access/refresh tokens.
     # Only the winning callback performs this exchange.
