@@ -593,14 +593,6 @@ async def pinterest_oauth_callback(
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing authorization code")
 
-    if error:
-        return {
-            "success": False,
-            "status": "denied",
-            "error": error,
-            "error_description": error_description,
-        }
-
     # Phase 1: Claim the checkpoint by OAuth state.
     # The returned status determines whether this callback may
     # perform the token exchange.
