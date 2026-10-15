@@ -312,6 +312,7 @@ class ApprovalResumeService:
                     platform=platform,
                     connector=connector,
                     operation_key=payload.get("operation_key"),
+                    current_user_id=current_user_id,
                 )
             if action_type == "resume_platform_onboarding":
                 return self._handle_resume_onboarding(
@@ -378,6 +379,7 @@ class ApprovalResumeService:
         platform: str,
         connector: Any,
         operation_key: str | None = None,
+        current_user_id: str | None = None,
     ) -> dict[str, Any]:
         """Handle resume of ``start_platform_onboarding``."""
         result = connector.start_onboarding(
@@ -385,6 +387,7 @@ class ApprovalResumeService:
             mission_id=mission_id,
             approval_id=approval_request_id,
             idempotency_key=operation_key,
+            owner_id=current_user_id,
         )
         workflow_id = result.get("workflow_id")
 

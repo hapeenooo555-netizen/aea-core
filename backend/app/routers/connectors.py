@@ -7,11 +7,13 @@ and human intervention checkpoints.
 from __future__ import annotations
 
 import httpx
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
+from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.meta_marketing import MetaMarketingConnector
@@ -27,6 +29,8 @@ router = APIRouter(
     tags=["connectors"],
     dependencies=[Depends(get_current_user_id)],
 )
+
+oauth_router = APIRouter(prefix="/connectors/oauth", tags=["connectors"])
 
 # Initialize services
 _connector_registry: ConnectorRegistry | None = None
@@ -59,9 +63,12 @@ def get_human_intervention_manager(
     When a user-scoped ``client`` is supplied it is forwarded so that RLS
     policies evaluate against the authenticated user identity.
     """
+    # Do not reuse a manager bound to a different user's database client.
+    if client is not None:
+        return HumanInterventionManager(client=client)
     global _human_intervention_manager
     if _human_intervention_manager is None:
-        _human_intervention_manager = HumanInterventionManager(client=client)
+        _human_intervention_manager = HumanInterventionManager()
     return _human_intervention_manager
 
 
@@ -550,53 +557,41 @@ async def complete_checkpoint(
     }
 
 
-@router.get("/oauth/callback")
+@oauth_router.get("/callback")
 async def pinterest_oauth_callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
     error_description: str | None = None,
-    current_user_id: str = Depends(get_current_user_id),
-    client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Pinterest OAuth 2.0 callback endpoint (GET).
-
-    Receives the authorization ``code`` and CSRF ``state`` as query
-    parameters from Pinterest's redirect.  Validates the state against
-    the stored checkpoint, exchanges the code for access/refresh tokens,
-    persists the connection, and resumes the onboarding workflow.
-
-    The cryptographically random persisted OAuth state is the trusted
-    boundary. The callback relies on it to determine which checkpoint
-    to process and whether this callback may perform the token exchange.
-
-    Args:
-        code: Authorization code from Pinterest (never stored or logged).
-        state: CSRF state token to validate.
-        error: OAuth error code from Pinterest (if denied).
-        error_description: OAuth error description (if denied).
-        current_user_id: Authenticated user identity (from JWT via FastAPI Depends).
-        client: User-scoped Supabase client (RLS-enforced).
-
-    Returns:
-        Dictionary with connection status and next-step guidance.
-    """
-    if error:
-        return {
-            "success": False,
-            "status": "denied",
-            "error": error,
-            "error_description": error_description,
-        }
-
-    if not code or not state:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'code' or 'state' parameter",
-        )
-
+    """Public Pinterest redirect endpoint, authenticated by persisted OAuth state."""
+    if not state or not re.fullmatch(r"[A-Za-z0-9_-]{43,}", state):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing or invalid OAuth state")
+    client = database_module.get_supabase_oauth_callback_client()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OAuth callback storage is unavailable")
     helper = PinterestOAuthHelper(PinterestOAuthConfig())
     manager = get_human_intervention_manager(client=client)
+
+    if error:
+        checkpoint = manager.find_checkpoint_by_oauth_state_any(state)
+        if checkpoint is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+        metadata = checkpoint.get("metadata") or {}
+        if isinstance(metadata.get("metadata"), dict):
+            metadata = metadata["metadata"]
+        current_user_id = metadata.get("oauth_state_owner")
+        workflow_binding = metadata.get("oauth_state_workflow")
+        if not current_user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+        valid, _ = helper.validate_state(state, checkpoint, current_user_id, workflow_binding)
+        if not valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
+        manager.fail_oauth_callback(state, owner_id=current_user_id, reason="User denied Pinterest authorization")
+        return {"success": False, "status": "denied", "error": error, "error_description": error_description}
+
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing authorization code")
 
     # Phase 1: Claim the checkpoint by OAuth state.
     # The returned status determines whether this callback may
@@ -606,7 +601,7 @@ async def pinterest_oauth_callback(
     #   'completed' -> already completed, idempotent result
     #   'failed'    -> definitive failure, new auth required
     #   'unknown'   -> checkpoint not found
-    claim_result = manager.claim_oauth_callback(state, owner_id=current_user_id)
+    claim_result = manager.claim_oauth_callback(state, owner_id=None)
     if claim_result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -616,6 +611,13 @@ async def pinterest_oauth_callback(
     claim_status = claim_result.get("status")
     checkpoint = claim_result.get("checkpoint", {})
     checkpoint_id = checkpoint.get("id")
+    checkpoint_metadata = checkpoint.get("metadata") or {}
+    if isinstance(checkpoint_metadata.get("metadata"), dict):
+        checkpoint_metadata = checkpoint_metadata["metadata"]
+    current_user_id = checkpoint_metadata.get("oauth_state_owner")
+    workflow_binding = checkpoint_metadata.get("oauth_state_workflow")
+    if not current_user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth state has no owner binding")
 
     if claim_status == "processing":
         return {
@@ -655,6 +657,7 @@ async def pinterest_oauth_callback(
         received_state=state,
         checkpoint=checkpoint,
         owner_id=current_user_id,
+        workflow_id=workflow_binding,
     )
     if not is_valid:
         manager.fail_oauth_callback(state, owner_id=current_user_id, reason=reason)
@@ -663,17 +666,17 @@ async def pinterest_oauth_callback(
             detail=f"OAuth state validation failed: {reason}",
         )
 
-    # When OAuth is not configured (e.g. test environments), return
-    # the checkpoint-completed state without attempting a network call.
     config = PinterestOAuthConfig()
     if not config.is_configured:
-        return {
-            "success": True,
-            "status": "checkpoint_completed",
-            "checkpoint_id": checkpoint_id,
-            "message": "Pinterest authorization code received. Token exchange will complete the connection.",
-            "next_step": "token_exchange",
-        }
+        manager.fail_oauth_callback(
+            state,
+            owner_id=current_user_id,
+            reason="Pinterest OAuth configuration is incomplete",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pinterest OAuth is not configured on the server",
+        )
 
     # Phase 2: Exchange authorization code for access/refresh tokens.
     # Only the winning callback performs this exchange.

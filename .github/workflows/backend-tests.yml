@@ -14,6 +14,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Dummy credentials keep workflow tests on the configured OAuth path.
+      # These values are test-only and are never used by a deployed service.
+      PINTEREST_CLIENT_ID: test-client-id
+      PINTEREST_CLIENT_SECRET: test-client-secret
+      PINTEREST_REDIRECT_URI: https://example.test/connectors/oauth/callback
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

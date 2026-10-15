@@ -1,8 +1,8 @@
 """Pinterest OAuth helper for AEA Core affiliate onboarding.
 
 Provides OAuth 2.0 authorization URL construction and CSRF state
-management without exchanging authorization codes (Phase 2) and without
-calling the real Pinterest API (Phase 2+).
+management for the Pinterest connector. Authorization-code exchange and
+durable connection completion are implemented by the connectors router.
 
 State is persisted in the existing ``human_intervention_checkpoints``
 table via the ``HumanInterventionManager``.  No schema migration is
@@ -39,7 +39,7 @@ PINTEREST_AUTH_BASE_URL = "https://www.pinterest.com/oauth/"
 DEFAULT_SCOPES = [
     "user_accounts:read",
     "boards:read",
-    "pins:create",
+    "pins:write",
 ]
 
 DEFAULT_STATE_TTL_SECONDS = 900
@@ -59,8 +59,8 @@ class PinterestOAuthConfig:
 
     @property
     def is_configured(self) -> bool:
-        """Return True only when all three required env vars are present."""
-        return bool(self.client_id and self.redirect_uri)
+        """Return True only when all required OAuth credentials are present."""
+        return bool(self.client_id and self.client_secret and self.redirect_uri)
 
     @property
     def has_secret(self) -> bool:
@@ -151,13 +151,14 @@ class PinterestOAuthHelper:
             Fully-qualified authorization URL.
 
         Raises:
-            ValueError: If OAuth is not configured (missing client_id or
-                redirect_uri).
+            ValueError: If OAuth is not configured (missing client ID,
+                client secret, or redirect URI).
         """
         if not self._config.is_configured:
             raise ValueError(
                 "Pinterest OAuth is not configured: "
-                "PINTEREST_CLIENT_ID and PINTEREST_REDIRECT_URI must be set."
+                "PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET, and "
+                "PINTEREST_REDIRECT_URI must be set."
             )
 
         scope_list = scopes if scopes is not None else self.scopes
@@ -176,28 +177,16 @@ class PinterestOAuthHelper:
         workflow_id: str,
         scopes: list[str] | None = None,
     ) -> tuple[str, str]:
-        """Generate a new OAuth state and the corresponding authorization URL.
-
-        When OAuth is not configured (no ``PINTEREST_CLIENT_ID`` /
-        ``PINTEREST_REDIRECT_URI`` in the environment), a simulated
-        URL is returned so that the state checkpoint flow still works
-        in test/non-production environments.  In this mode the URL
-        points to Pinterest's OAuth entry point but without real
-        client credentials — suitable for HITL simulation only.
+        """Generate an authorization URL; fail closed when credentials are missing.
 
         Returns:
             Tuple of (authorization_url, state).
+
+        Raises:
+            ValueError: If the required Pinterest OAuth configuration is absent.
         """
         state = self.generate_state(owner_id, workflow_id)
-        if not self._config.is_configured:
-            logger.warning(
-                "Pinterest OAuth not configured; returning simulated "
-                "authorization URL for workflow %s",
-                workflow_id,
-            )
-            url = f"{self.auth_base_url}?state={state}"
-        else:
-            url = self.build_authorization_url(state, scopes=scopes)
+        url = self.build_authorization_url(state, scopes=scopes)
         return url, state
 
     # ------------------------------------------------------------------
@@ -230,7 +219,7 @@ class PinterestOAuthHelper:
         now_ts = now_ts or time.time()
         expires_at = metadata.get("oauth_state_expires_at")
         if expires_at is None:
-            return False
+            return True
         try:
             return float(expires_at) <= now_ts
         except (TypeError, ValueError):
@@ -276,13 +265,12 @@ class PinterestOAuthHelper:
             return False, "state_mismatch"
 
         stored_owner = md.get("oauth_state_owner")
-        if stored_owner and stored_owner != owner_id:
+        if not stored_owner or not secrets.compare_digest(str(stored_owner), str(owner_id)):
             return False, "owner_mismatch"
 
-        if workflow_id:
-            stored_wf = md.get("oauth_state_workflow")
-            if stored_wf and stored_wf != workflow_id:
-                return False, "workflow_mismatch"
+        stored_wf = md.get("oauth_state_workflow")
+        if not stored_wf or not workflow_id or not secrets.compare_digest(str(stored_wf), str(workflow_id)):
+            return False, "workflow_mismatch"
 
         if self._is_state_consumed(md):
             return False, "state_already_consumed"
