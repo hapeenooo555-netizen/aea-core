@@ -60,3 +60,22 @@ def test_state_metadata_binds_owner_and_workflow(monkeypatch):
     assert metadata["oauth_state_owner"] == "auth-user-uuid"
     assert metadata["oauth_state_workflow"] == "workflow-1"
     assert metadata["oauth_state_expires_at"] > time.time()
+
+
+def test_state_validation_rejects_missing_expiry_owner_and_workflow(monkeypatch):
+    monkeypatch.setenv("PINTEREST_CLIENT_ID", "test-client")
+    monkeypatch.setenv("PINTEREST_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("PINTEREST_REDIRECT_URI", "https://example.test/connectors/oauth/callback")
+    helper = PinterestOAuthHelper(PinterestOAuthConfig())
+    base = {"metadata": {"oauth_state": "opaque-state"}}
+
+    valid, reason = helper.validate_state("opaque-state", base, owner_id="owner-1", workflow_id="workflow-1")
+    assert valid is False
+    assert reason == "owner_mismatch"
+
+    metadata = helper.state_metadata("opaque-state", "owner-1", "workflow-1")
+    metadata.pop("oauth_state_expires_at")
+    checkpoint = {"metadata": metadata}
+    valid, reason = helper.validate_state("opaque-state", checkpoint, owner_id="owner-1", workflow_id="workflow-1")
+    assert valid is False
+    assert reason == "state_expired"
