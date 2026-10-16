@@ -142,6 +142,8 @@ async def list_missions(
             detail="Supabase user-scoped client is unavailable.",
         )
 
+    mission_engine = MissionEngine(client=client)
+
     try:
         response = (
             client.table("missions")
@@ -156,7 +158,7 @@ async def list_missions(
             return [
                 normalized
                 for row in rows
-                if (normalized := MissionEngine._normalize_mission(row)) is not None
+                if (normalized := mission_engine._normalize_mission(row)) is not None
             ]
     except Exception:
         logger.warning("User-scoped mission listing failed; attempting owner-scoped server fallback")
@@ -179,7 +181,7 @@ async def list_missions(
         return [
             normalized
             for row in rows
-            if (normalized := MissionEngine._normalize_mission(row)) is not None
+            if (normalized := mission_engine._normalize_mission(row)) is not None
         ]
     except Exception as exc:
         logger.exception("Owner-scoped mission listing failed")
