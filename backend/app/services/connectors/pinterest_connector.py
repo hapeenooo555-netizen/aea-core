@@ -794,38 +794,82 @@ class PinterestConnector(BaseConnector):
                 "error": "content missing required field 'link_url'",
             }
 
-        if self._connection_store is not None:
-            conn = self._connection_store.get(worker_id, "pinterest")
-            if conn is None or conn.get("status") != "connected":
+        # A real Pinterest publish requires an image URL and a valid encrypted
+        # token. Do not report success until Pinterest confirms the pin creation.
+        image_url = content.get("image_url")
+        title = content.get("title")
+        if not image_url or not isinstance(image_url, str):
+            return {"success": False, "error": "content missing required field 'image_url'"}
+        image_valid, image_error = self._validate_url(image_url)
+        if not image_valid:
+            return {"success": False, "error": f"Invalid image_url: {image_error}"}
+
+        if not owner_id:
+            return {"success": False, "error": "Authenticated owner_id is required to publish"}
+
+        try:
+            from ..pinterest_token_vault import get_access_token
+            stored_token = get_access_token(owner_id=owner_id)
+        except Exception:
+            return {"success": False, "error": "Pinterest credential vault unavailable"}
+        if not stored_token:
+            return {"success": False, "error": "Pinterest is not connected for this account", "requires": ["connect_platform"]}
+        if stored_token.get("expired"):
+            return {"success": False, "error": "Pinterest access token expired; reconnect Pinterest"}
+
+        # Resolve board name to the provider's real board ID unless an explicit
+        # board_id was supplied by the authenticated boards endpoint.
+        board_id = content.get("board_id")
+        headers = {"Authorization": f"Bearer {stored_token['access_token']}", "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=25.0) as client:
+                if not board_id:
+                    boards_response = client.get(
+                        "https://api.pinterest.com/v5/boards",
+                        headers=headers,
+                        params={"page_size": 100},
+                    )
+                    if boards_response.status_code != 200:
+                        return {"success": False, "error": "Pinterest board lookup failed", "provider_status": boards_response.status_code}
+                    boards_data = boards_response.json()
+                    match = next(
+                        (b for b in boards_data.get("items", []) if str(b.get("name", "")).casefold() == str(board_name).casefold()),
+                        None,
+                    )
+                    if not match:
+                        return {"success": False, "error": "Pinterest board not found; choose a board from the connected account"}
+                    board_id = match.get("id")
+                if not board_id:
+                    return {"success": False, "error": "Pinterest board ID is missing"}
+
+                pin_payload: dict[str, Any] = {
+                    "board_id": str(board_id),
+                    "media_source": {"source_type": "image_url", "url": image_url},
+                    "description": str(pin_text)[:800],
+                    "link": final_url if 'final_url' in locals() else link_url,
+                }
+                if title:
+                    pin_payload["title"] = str(title)[:100]
+                publish_response = client.post(
+                    "https://api.pinterest.com/v5/pins",
+                    headers=headers,
+                    json=pin_payload,
+                )
+            if publish_response.status_code not in (200, 201):
                 return {
                     "success": False,
-                    "error": "Platform connection is not established; connect first",
-                    "requires": ["connect_platform"],
+                    "error": "Pinterest rejected pin creation",
+                    "provider_status": publish_response.status_code,
                 }
+            provider_pin = publish_response.json()
+        except httpx.TimeoutException:
+            return {"success": False, "error": "Pinterest request timed out; check Pinterest before retrying"}
+        except httpx.HTTPError:
+            return {"success": False, "error": "Unable to reach Pinterest API"}
 
-        # URL validation.
-        url_valid, url_error = self._validate_url(link_url)
-        if not url_valid:
-            return {
-                "success": False,
-                "error": url_error,
-            }
-
-        # Sanitize content: strip sensitive keys using the canonical set.
-        sanitized_content = self._sanitize_content(content)
-
-        pin_id = str(uuid4())
-        approval_request_id = None
-        if idempotency_key and str(idempotency_key).startswith("p1-11:"):
-            approval_request_id = str(idempotency_key).removeprefix("p1-11:")
-        final_url = link_url
-        opportunity_id = sanitized_content.get("opportunity_id")
-        if opportunity_id:
-            sep = "&" if "?" in final_url else "?"
-            final_url = (
-                f"{final_url}{sep}utm_source=aea"
-                f"&utm_campaign=opportunity_{opportunity_id}"
-            )
+        pin_id = str(provider_pin.get("id") or "")
+        if not pin_id:
+            return {"success": False, "error": "Pinterest returned no pin ID"}
 
         result = {
             "success": True,
@@ -833,19 +877,20 @@ class PinterestConnector(BaseConnector):
             "pin_id": pin_id,
             "approval_request_id": approval_request_id,
             "platform": "pinterest",
+            "board_id": str(board_id),
             "board_name": board_name,
             "pin_text": pin_text,
             "link_url": final_url,
-            "image_url": sanitized_content.get("image_url"),
-            "title": sanitized_content.get("title"),
+            "image_url": image_url,
+            "title": title,
             "opportunity_id": opportunity_id,
             "published_at": datetime.now(timezone.utc).isoformat(),
             "operation_key": idempotency_key,
+            "provider_response": {"id": pin_id, "created_at": provider_pin.get("created_at")},
         }
 
-        # Persist via the store. The database UNIQUE(operation_key) is the
-        # authoritative idempotency boundary. When a conflict occurs the store
-        # returns created=False with the existing record.
+        # Persist the confirmed provider result. If persistence fails, surface
+        # the failure rather than pretending the local record is complete.
         if self._pin_store is not None and owner_id and idempotency_key:
             store_result = self._pin_store.create(
                 owner_id=owner_id,
@@ -862,15 +907,16 @@ class PinterestConnector(BaseConnector):
             if not store_result.get("success"):
                 return {
                     "success": False,
-                    "error": f"Pin persistence failed: {store_result.get('error', 'unknown')}",
+                    "error": "Pinterest created the pin, but AEA could not persist its record",
+                    "pin_id": pin_id,
                 }
             if not store_result.get("created"):
                 existing = store_result.get("pin", {})
                 return {
                     "success": True,
-                    "status": "duplicate",
+                    "status": "duplicate_record",
                     "pin_id": existing.get("pin_id") or pin_id,
-                    "message": "Pin already published for this operation key",
+                    "message": "Pinterest created a pin; the AEA operation record already existed",
                     "platform": "pinterest",
                     "operation_key": idempotency_key,
                 }
