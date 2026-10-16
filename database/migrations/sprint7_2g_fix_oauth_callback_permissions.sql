@@ -205,7 +205,7 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Server-side OAuth redirects have no user JWT; validate against persisted ownership.
+    -- Server-side OAuth redirects have no user JWT; validate persisted ownership.
     IF v_mission.owner_id IS DISTINCT FROM v_owner_id THEN
         RETURN QUERY SELECT false, 'owner_mismatch', NULL::TEXT, NULL::TEXT, 'Owner does not match the persisted mission owner';
         RETURN;
@@ -274,7 +274,6 @@ REVOKE ALL ON FUNCTION public.complete_oauth_callback(
     TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, TEXT[], TEXT
 ) FROM PUBLIC, anon, authenticated, service_role;
 
--- Only trusted backend service role may execute the callback transaction.
 GRANT EXECUTE ON FUNCTION public.complete_oauth_callback(
     TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, TEXT[], TEXT
 ) TO service_role;
