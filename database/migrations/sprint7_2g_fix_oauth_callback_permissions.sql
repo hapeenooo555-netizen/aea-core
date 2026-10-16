@@ -82,7 +82,7 @@ CREATE OR REPLACE FUNCTION public.complete_oauth_callback(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public, auth
-AS $
+AS $$
 DECLARE
     v_checkpoint public.human_intervention_checkpoints%ROWTYPE;
     v_workflow public.onboarding_workflows%ROWTYPE;
@@ -229,7 +229,7 @@ BEGIN
         gen_random_uuid(), p_owner_id, v_owner_id, 'pinterest', 'connected',
         p_external_account_id, p_display_name, p_scopes,
         p_token_reference,
-        v_now + make_interval(seconds := p_expires_in),
+        v_now + make_interval(secs => COALESCE(p_expires_in, 0)::double precision),
         v_now, v_now
     )
     ON CONFLICT (owner_id, platform) DO UPDATE SET
