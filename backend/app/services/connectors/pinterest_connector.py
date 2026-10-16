@@ -794,6 +794,20 @@ class PinterestConnector(BaseConnector):
                 "error": "content missing required field 'link_url'",
             }
 
+        # Validate the outbound destination and prepare sanitized metadata.
+        url_valid, url_error = self._validate_url(link_url)
+        if not url_valid:
+            return {"success": False, "error": url_error}
+        sanitized_content = self._sanitize_content(content)
+        approval_request_id = None
+        if idempotency_key and str(idempotency_key).startswith("p1-11:"):
+            approval_request_id = str(idempotency_key).removeprefix("p1-11:")
+        final_url = link_url
+        opportunity_id = sanitized_content.get("opportunity_id")
+        if opportunity_id:
+            sep = "&" if "?" in final_url else "?"
+            final_url = f"{final_url}{sep}utm_source=aea&utm_campaign=opportunity_{opportunity_id}"
+
         # A real Pinterest publish requires an image URL and a valid encrypted
         # token. Do not report success until Pinterest confirms the pin creation.
         image_url = content.get("image_url")
