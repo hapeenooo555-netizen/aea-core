@@ -60,6 +60,41 @@ async def create_mission(
 ) -> dict[str, Any]:
     """Create a mission for the current user."""
 
+    # Repair/register the selected worker before creating a mission. Existing
+    # workers may predate worker_registry and otherwise fail the missions FK.
+    if body.worker_id:
+        if not client:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase client unavailable")
+        try:
+            worker_response = (
+                client.table("workers")
+                .select("id,name,role,status,owner_id")
+                .eq("id", body.worker_id)
+                .eq("owner_id", current_user_id)
+                .limit(1)
+                .execute()
+            )
+            worker_rows = worker_response.data or []
+            if not worker_rows:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected worker was not found for this account")
+            worker = worker_rows[0]
+            registry_payload = {
+                "id": str(worker["id"]),
+                "name": worker.get("name") or "AEA Worker",
+                "worker_type": worker.get("role") or "assistant",
+                "platform": "pinterest",
+                "status": worker.get("status") or "active",
+                "capabilities": ["affiliate_marketing", "pinterest_onboarding"],
+            }
+            client.table("worker_registry").upsert(registry_payload, on_conflict="id").execute()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not register the selected worker before mission creation: " + str(exc),
+            ) from exc
+
     mission_engine = MissionEngine(client=client)
     result = mission_engine.create_mission(
         title=body.title,
