@@ -82,6 +82,31 @@ async def create_worker(
         }
         response = client.table("workers").insert(payload).execute()
         record = response.data[0] if response.data else None
+        if not record:
+            raise RuntimeError("Worker creation returned no record")
+
+        # Missions.assigned_worker references worker_registry.id, while the
+        # user-facing workers API persists records in workers. Keep the IDs
+        # aligned so a mission created for this worker satisfies the FK.
+        worker_id = str(record.get("id") or "")
+        if not worker_id:
+            raise RuntimeError("Created worker has no ID; cannot register it for missions")
+        registry_payload = {
+            "id": worker_id,
+            "name": record.get("name") or body.name,
+            "worker_type": record.get("role") or body.role or "assistant",
+            "platform": "pinterest",
+            "status": record.get("status") or body.status or "active",
+            "capabilities": ["affiliate_marketing", "pinterest_onboarding"],
+        }
+        try:
+            client.table("worker_registry").upsert(registry_payload, on_conflict="id").execute()
+        except Exception as registry_exc:
+            raise RuntimeError(
+                "Worker was created but could not be registered in worker_registry, "
+                "which is required before creating missions: " + str(registry_exc)
+            ) from registry_exc
+
         return {"success": True, "worker": record}
     except Exception as exc:  # pragma: no cover - defensive error path
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
