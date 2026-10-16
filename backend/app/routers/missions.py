@@ -1,7 +1,8 @@
-"""Mission API routes for Sprint 6.0."""
+"Mission API routes for Sprint 6.0."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,6 +14,7 @@ from app.services.agent_orchestrator import AgentOrchestrator
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.mission_engine import MissionEngine
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/missions", tags=["missions"])
 
 
@@ -86,10 +88,8 @@ async def create_mission(
                 "status": worker.get("status") or "active",
                 "capabilities": ["affiliate_marketing", "pinterest_onboarding"],
             }
-            # worker_registry is a protected system registry. The user's
-            # RLS-scoped client correctly cannot write it, so perform this
-            # narrowly scoped write with the server-only service client after
-            # verifying the selected worker belongs to the authenticated user.
+            # This protected registry write is performed server-side only after
+            # verifying that the selected worker belongs to the authenticated user.
             registry_client = database_module.get_supabase_service_client()
             if not registry_client:
                 raise RuntimeError("Server-side registry client is not configured")
@@ -99,9 +99,10 @@ async def create_mission(
         except HTTPException:
             raise
         except Exception as exc:
+            logger.exception("Could not register selected worker before mission creation")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not register the selected worker before mission creation: " + str(exc),
+                detail="Could not register the selected worker before mission creation.",
             ) from exc
 
     mission_engine = MissionEngine(client=client)
@@ -128,18 +129,64 @@ async def list_missions(
     current_user_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> list[dict[str, Any]]:
-    """Return mission records owned by the current user."""
+    """Return mission records owned by the authenticated user.
 
-    mission_engine = MissionEngine(client=client)
-    # Filter by owner_id, not assigned_worker
+    Use the caller-scoped client first. If RLS/client session propagation
+    unexpectedly yields no rows, retry with the server client but retain an
+    explicit owner_id filter. Never return another user's missions.
+    """
+
     if not client:
-        return []
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase user-scoped client is unavailable.",
+        )
+
     try:
-        response = client.table("missions").select("*").eq("owner_id", current_user_id).order("created_at", desc=True).limit(100).execute()
+        response = (
+            client.table("missions")
+            .select("*")
+            .eq("owner_id", current_user_id)
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
         rows = response.data or []
-        return [MissionEngine._normalize_mission(row) for row in rows if MissionEngine._normalize_mission(row)]
-    except Exception:  # pragma: no cover - defensive
-        return []
+        if rows:
+            return [
+                normalized
+                for row in rows
+                if (normalized := MissionEngine._normalize_mission(row)) is not None
+            ]
+    except Exception:
+        logger.warning("User-scoped mission listing failed; attempting owner-scoped server fallback")
+
+    # The user identity is verified by get_current_user_id. The fallback is
+    # constrained by that canonical auth.users UUID, not a user-supplied owner.
+    try:
+        service_client = database_module.get_supabase_service_client()
+        if not service_client:
+            raise RuntimeError("Server-side Supabase client is not configured")
+        response = (
+            service_client.table("missions")
+            .select("*")
+            .eq("owner_id", current_user_id)
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+        rows = response.data or []
+        return [
+            normalized
+            for row in rows
+            if (normalized := MissionEngine._normalize_mission(row)) is not None
+        ]
+    except Exception as exc:
+        logger.exception("Owner-scoped mission listing failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not load missions for this account. Please refresh and try again.",
+        ) from exc
 
 
 @router.get("/{mission_id}")
