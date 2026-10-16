@@ -86,7 +86,16 @@ async def create_mission(
                 "status": worker.get("status") or "active",
                 "capabilities": ["affiliate_marketing", "pinterest_onboarding"],
             }
-            client.table("worker_registry").upsert(registry_payload, on_conflict="id").execute()
+            # worker_registry is a protected system registry. The user's
+            # RLS-scoped client correctly cannot write it, so perform this
+            # narrowly scoped write with the server-only service client after
+            # verifying the selected worker belongs to the authenticated user.
+            registry_client = database_module.get_supabase_service_client()
+            if not registry_client:
+                raise RuntimeError("Server-side registry client is not configured")
+            registry_client.table("worker_registry").upsert(
+                registry_payload, on_conflict="id"
+            ).execute()
         except HTTPException:
             raise
         except Exception as exc:
