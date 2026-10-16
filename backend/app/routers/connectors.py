@@ -975,3 +975,81 @@ async def pinterest_oauth_callback(
         url="https://aea-affiliate-hub.lovable.app/?pinterest=connected",
         status_code=303,
     )
+
+@oauth_router.get("/pinterest/me")
+async def get_pinterest_account(
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Return the connected Pinterest account for the authenticated AEA user."""
+    from app.services.pinterest_token_vault import get_access_token
+
+    try:
+        stored = get_access_token(owner_id=current_user_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pinterest credential vault is unavailable",
+        ) from exc
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pinterest is not connected for this account",
+        )
+    if stored.get("expired"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pinterest access token has expired; reconnect Pinterest",
+        )
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(
+            "https://api.pinterest.com/v5/user_account",
+            headers={"Authorization": f"Bearer {stored['access_token']}"},
+        )
+    if response.status_code == 401:
+        raise HTTPException(status_code=409, detail="Pinterest rejected the token; reconnect Pinterest")
+    if response.is_error:
+        raise HTTPException(status_code=502, detail="Pinterest account lookup failed")
+    return {"success": True, "account": response.json()}
+
+
+@oauth_router.get("/pinterest/boards")
+async def get_pinterest_boards(
+    page_size: int = 50,
+    bookmark: str | None = None,
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """List boards belonging to the authenticated AEA user's Pinterest account."""
+    from app.services.pinterest_token_vault import get_access_token
+
+    page_size = max(1, min(page_size, 100))
+    try:
+        stored = get_access_token(owner_id=current_user_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pinterest credential vault is unavailable",
+        ) from exc
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pinterest is not connected for this account",
+        )
+    if stored.get("expired"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pinterest access token has expired; reconnect Pinterest",
+        )
+    params: dict[str, Any] = {"page_size": page_size}
+    if bookmark:
+        params["bookmark"] = bookmark
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(
+            "https://api.pinterest.com/v5/boards",
+            headers={"Authorization": f"Bearer {stored['access_token']}"},
+            params=params,
+        )
+    if response.status_code == 401:
+        raise HTTPException(status_code=409, detail="Pinterest rejected the token; reconnect Pinterest")
+    if response.is_error:
+        raise HTTPException(status_code=502, detail="Pinterest boards lookup failed")
+    return {"success": True, **response.json()}
