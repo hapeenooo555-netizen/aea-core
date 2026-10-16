@@ -7,7 +7,10 @@ intentionally not imported here; it is added by P1-1.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import database
 from app.routers import affiliate_jobs, approvals, atlas, chatplus, connectors, employee, hape_marketing, meta_webhooks, health, missions, workers
@@ -20,6 +23,28 @@ app = FastAPI(
     title="AEA Core",
     description="Autonomous Employee Agent Core Platform",
     version="1.0.0",
+)
+
+
+# Allow the published AEA Affiliate Hub to call the API from a browser.
+# Operators can override/extend this list through AEA_CORS_ORIGINS.
+_default_cors_origins = [
+    "https://aea-affiliate-hub.lovable.app",
+    "https://id-preview--15f25893-acd7-4e76-b02a-cce7d9dbc38d.lovable.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("AEA_CORS_ORIGINS", ",".join(_default_cors_origins)).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "apikey", "x-client-info"],
 )
 
 
