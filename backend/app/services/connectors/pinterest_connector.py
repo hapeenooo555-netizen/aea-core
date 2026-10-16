@@ -659,6 +659,28 @@ class PinterestConnector(BaseConnector):
         import hashlib
         token_reference = f"ref:{hashlib.sha256((access_token + refresh_token + str(expires_in)).encode()).hexdigest()[:32]}"
 
+        # Store the provider credential encrypted before marking the OAuth
+        # checkpoint complete. The vault is server-only and scoped to auth.users.
+        try:
+            from ..pinterest_token_vault import save_tokens
+
+            save_tokens(
+                owner_id=owner_id,
+                access_token=access_token,
+                refresh_token=refresh_token or None,
+                token_type=token_type,
+                expires_in=expires_in,
+                scopes=scopes,
+                external_account_id=external_account_id,
+                display_name=display_name,
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": "token_vault_save_failed",
+                "error_description": str(exc),
+            }
+
         # Call the atomic completion RPC.
         # The RPC verifies ownership using the persisted OAuth
         # state and checkpoint data.
