@@ -212,10 +212,10 @@ BEGIN
     END IF;
 
     -- Advance the persisted onboarding workflow.
-    UPDATE public.onboarding_workflows
+    UPDATE public.onboarding_workflows AS ow
         SET status = 'completed',
             updated_at = v_now
-        WHERE id = v_workflow.id;
+        WHERE ow.id = v_workflow.id;
 
     -- Create or upsert the platform connection (idempotent).
     -- The unique constraint on (owner_id, platform) ensures
@@ -245,24 +245,24 @@ BEGIN
 
     -- Transition the mission resolved from the persisted workflow.
     IF v_mission.status = 'waiting_human' THEN
-        UPDATE public.missions
+        UPDATE public.missions AS m
             SET status = 'pending',
                 updated_at = v_now
-            WHERE id = v_mission.id
-              AND status = 'waiting_human';
+            WHERE m.id = v_mission.id
+              AND m.status = 'waiting_human';
     END IF;
 
     -- Mark checkpoint completion and consume OAuth state only after all
     -- other durable completion operations have succeeded.
-    UPDATE public.human_intervention_checkpoints
+    UPDATE public.human_intervention_checkpoints AS c
         SET status = 'completed',
             completed_at = v_now,
             metadata = v_checkpoint.metadata || jsonb_build_object(
                 'oauth_state_consumed', true,
                 'oauth_state_consumed_at', v_now
             )
-        WHERE id = v_checkpoint.id
-          AND status = 'processing';
+        WHERE c.id = v_checkpoint.id
+          AND c.status = 'processing';
 
     -- Return success.
     RETURN QUERY SELECT true, 'connected', v_workflow_id, 'complete', 'Pinterest connection established successfully';
