@@ -748,8 +748,40 @@ async def pinterest_oauth_callback(
         checkpoint_metadata = checkpoint_metadata["metadata"]
     current_user_id = checkpoint_metadata.get("oauth_state_owner")
     workflow_binding = checkpoint_metadata.get("oauth_state_workflow")
+
+    # Backward-compatible recovery for checkpoints created before owner/workflow
+    # bindings were persisted. Resolve ownership from the checkpoint's mission
+    # using the server-only client; never accept an owner ID from query params.
     if not current_user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth state has no owner binding")
+        mission_id = checkpoint.get("mission_id")
+        service_client = database_module.get_supabase_service_client()
+        if mission_id and service_client:
+            try:
+                mission_response = (
+                    service_client.table("missions")
+                    .select("id,owner_id")
+                    .eq("id", mission_id)
+                    .limit(1)
+                    .execute()
+                )
+                mission_rows = mission_response.data or []
+                if mission_rows:
+                    current_user_id = mission_rows[0].get("owner_id")
+            except Exception:
+                current_user_id = None
+
+    if not current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state owner could not be securely resolved from its mission",
+        )
+    if not workflow_binding:
+        workflow_binding = checkpoint_metadata.get("workflow_id")
+    if not workflow_binding:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state has no workflow binding",
+        )
 
     if claim_status == "processing":
         return {
