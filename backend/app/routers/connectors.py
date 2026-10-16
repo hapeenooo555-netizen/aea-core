@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
 from app import database as database_module
@@ -792,12 +793,11 @@ async def pinterest_oauth_callback(
         }
 
     if claim_status == "completed":
-        return {
-            "success": True,
-            "status": "completed",
-            "checkpoint_id": checkpoint_id,
-            "message": "OAuth callback already completed",
-        }
+        # Safe browser redirect; never include OAuth codes, state, or tokens in the URL.
+        return RedirectResponse(
+            url="https://aea-affiliate-hub.lovable.app/?pinterest=connected",
+            status_code=303,
+        )
 
     if claim_status == "failed":
         return {
@@ -969,13 +969,9 @@ async def pinterest_oauth_callback(
             "error_description": completion_result.get("error_description", "Durable completion failed"),
         }
 
-    return {
-        "success": True,
-        "status": "connected",
-        "checkpoint_id": checkpoint_id,
-        "workflow_id": workflow_id,
-        "platform": "pinterest",
-        "connected": True,
-        "message": "Pinterest connection established successfully",
-        "next_step": completion_result.get("next_step", "complete"),
-    }
+    # Return the user to the AEA website after durable completion.
+    # Never place authorization codes, OAuth state, or tokens in the redirect URL.
+    return RedirectResponse(
+        url="https://aea-affiliate-hub.lovable.app/?pinterest=connected",
+        status_code=303,
+    )
