@@ -251,28 +251,45 @@ class HumanInterventionManager:
             return None
 
         if self._client:
-            try:
-                query = (
-                    self._client.table("human_intervention_checkpoints")
-                    .select("*")
-                    .eq("metadata->oauth_state", oauth_state)
-                )
-                # Also check legacy nested path
-                query = query.or_(
-                    "and(metadata->'metadata'->>'oauth_state',eq," + oauth_state + ")"
-                )
-                if status_filter:
-                    query = query.eq("status", status_filter)
-                if owner_id:
-                    query = query.or_(
-                        f"and(mission_id,in:(select id from missions where owner_id.eq.{owner_id}))"
+            # Query the flat JSONB path first. Using a separate query for the
+            # legacy nested shape avoids composing a malformed PostgREST OR
+            # expression that can select the wrong checkpoint or hide a match.
+            for metadata_filter in (
+                ("metadata->>oauth_state", oauth_state),
+                ("metadata->metadata->>oauth_state", oauth_state),
+            ):
+                try:
+                    query = (
+                        self._client.table("human_intervention_checkpoints")
+                        .select("*")
+                        .filter(metadata_filter[0], "eq", metadata_filter[1])
                     )
-                response = query.limit(1).execute()
-                rows = response.data or []
-                if rows:
-                    return self._normalize_checkpoint(rows[0])
-            except Exception:  # pragma: no cover - defensive fallback
-                pass
+                    if status_filter:
+                        query = query.eq("status", status_filter)
+                    response = query.limit(2).execute()
+                    rows = response.data or []
+                    # Never silently pick between multiple checkpoints for a
+                    # supposedly unique CSRF state.
+                    if len(rows) == 1:
+                        checkpoint = self._normalize_checkpoint(rows[0])
+                        if checkpoint and owner_id:
+                            mission_id = checkpoint.get("mission_id")
+                            mission_query = (
+                                self._client.table("missions")
+                                .select("id,owner_id")
+                                .eq("id", mission_id)
+                                .eq("owner_id", owner_id)
+                                .limit(1)
+                                .execute()
+                            )
+                            if not (mission_query.data or []):
+                                continue
+                        if checkpoint:
+                            return checkpoint
+                    elif len(rows) > 1:
+                        return None
+                except Exception:  # pragma: no cover - try the legacy path
+                    continue
 
         # In-memory fallback
         for checkpoint in self._memory_store.values():
