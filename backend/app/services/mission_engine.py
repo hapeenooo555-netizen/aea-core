@@ -174,18 +174,18 @@ class MissionEngine:
         except Exception as exc:  # pragma: no cover - defensive runtime handling
             return {"success": False, "error": str(exc)}
 
-    def complete_mission(self, mission_id: str, result: dict[str, Any], client: Any | None = None) -> dict[str, Any]:
-        """Mark a mission as completed and persist its execution result.
+    def complete_mission(
+        self,
+        mission_id: str,
+        result: dict[str, Any],
+        client: Any | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist completion, with an owner-scoped server fallback for RLS failures.
 
-        Args:
-            mission_id: The unique mission identifier.
-            result: A dictionary payload describing the completed mission output.
-            client: Optional Supabase client. When ``None``, uses the shared client.
-
-        Returns:
-            A structured dictionary describing the operation result.
+        The fallback is available only when the authenticated caller's canonical
+        owner_id is supplied. It never performs an unscoped service-role update.
         """
-
         db_client = client if client is not None else self._client
         if not db_client:
             return {"success": False, "error": "Supabase client is not available"}
@@ -197,11 +197,49 @@ class MissionEngine:
         }
 
         try:
-            response = db_client.table("missions").update(payload).eq("id", mission_id).execute()
-            record = self._normalize_mission(response.data[0]) if response.data else None
-            return {"success": True, "mission": record}
+            query = db_client.table("missions").update(payload).eq("id", mission_id)
+            if owner_id:
+                query = query.eq("owner_id", owner_id)
+            response = query.execute()
+            rows = response.data or []
+            if rows:
+                return {"success": True, "mission": self._normalize_mission(rows[0])}
+            # Some Supabase configurations return no representation for UPDATE.
+            # Verify the persisted status before claiming success.
+            verified = self.get_mission(mission_id, owner_id=owner_id, client=db_client)
+            if verified and verified.get("status") == "completed":
+                return {"success": True, "mission": verified}
+            primary_error = "Completion update returned no row and persisted status was not confirmed."
         except Exception as exc:  # pragma: no cover - defensive runtime handling
-            return {"success": False, "error": str(exc)}
+            primary_error = str(exc)
+
+        # A user-scoped update can be blocked by RLS even when the owner was
+        # already authenticated. Retry with the server client only with both
+        # mission_id and canonical owner_id filters.
+        if owner_id and database_module is not None:
+            try:
+                service_client = database_module.get_supabase_service_client()
+                if service_client:
+                    response = (
+                        service_client.table("missions")
+                        .update(payload)
+                        .eq("id", mission_id)
+                        .eq("owner_id", owner_id)
+                        .execute()
+                    )
+                    rows = response.data or []
+                    if rows:
+                        return {"success": True, "mission": self._normalize_mission(rows[0])}
+                    verified = self.get_mission(mission_id, owner_id=owner_id, client=service_client)
+                    if verified and verified.get("status") == "completed":
+                        return {"success": True, "mission": verified}
+            except Exception as fallback_exc:  # pragma: no cover - runtime DB failure
+                return {
+                    "success": False,
+                    "error": f"User-scoped completion update failed ({primary_error}); owner-scoped fallback failed ({fallback_exc})",
+                }
+
+        return {"success": False, "error": primary_error}
 
     def fail_mission(self, mission_id: str, error: str, client: Any | None = None) -> dict[str, Any]:
         """Mark a mission as failed and persist the error details.
