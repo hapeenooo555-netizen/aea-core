@@ -459,7 +459,37 @@ class ChatPlusService:
             error = execution.get("error") or (mission or {}).get("result", {}).get("error") or "The goal could not be completed"
             return f"Failed: {error}"
         if state_key == "completed":
-            return "Goal completed."
+            report = execution.get("report") or {}
+            results = report.get("results") or []
+            draft = next((item for item in results if isinstance(item, dict) and item.get("content_ideas")), None)
+            if draft:
+                ideas = draft.get("content_ideas") or []
+                sample = draft.get("sample_pin") or {}
+                lines = [
+                    f"Affiliate content draft prepared: {len(ideas)} content ideas and 1 sample Pinterest Pin.",
+                    "",
+                    "CONTENT IDEAS:",
+                ]
+                for index, idea in enumerate(ideas, start=1):
+                    lines.append(f"{index}. {idea.get('title', 'Untitled idea')}")
+                if sample:
+                    lines.extend([
+                        "",
+                        f"SAMPLE PIN: {sample.get('title', 'Untitled Pin')}",
+                        str(sample.get("description") or ""),
+                        "",
+                        "Keywords: " + ", ".join(sample.get("keywords") or []),
+                        "Visual concept: " + str(sample.get("visual_concept") or ""),
+                    ])
+                lines.extend([
+                    "",
+                    "Status: Draft only; nothing was published.",
+                    str(draft.get("research_note") or "Verify product details and affiliate terms before use."),
+                ])
+                return "\n".join(lines)
+            if not report.get("results") and not report.get("executed_actions"):
+                return "The mission was marked completed, but no execution results were recorded. Please inspect mission progress; this is not verified task completion."
+            return "Goal completed. Open View progress to inspect the recorded execution results."
         if state_key in {"working", "thinking"}:
             return "Working on your goal..."
         return "Ready for your next goal."
