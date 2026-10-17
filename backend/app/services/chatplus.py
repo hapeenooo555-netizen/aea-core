@@ -459,7 +459,10 @@ class ChatPlusService:
             error = execution.get("error") or (mission or {}).get("result", {}).get("error") or "The goal could not be completed"
             return f"Failed: {error}"
         if state_key == "completed":
-            report = execution.get("report") or {}
+            nested_execution = execution.get("execution") if isinstance(execution.get("execution"), dict) else {}
+            report = execution.get("report") or nested_execution.get("report") or {}
+            if not report and isinstance((mission or {}).get("result"), dict):
+                report = (mission or {}).get("result", {}).get("report") or {}
             results = report.get("results") or []
             draft = next((item for item in results if isinstance(item, dict) and item.get("content_ideas")), None)
             if draft:
