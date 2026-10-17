@@ -190,10 +190,12 @@ class MissionEngine:
         if not db_client:
             return {"success": False, "error": "Supabase client is not available"}
 
+        # The canonical missions schema does not define an error column.
+        # Keep execution output in the existing JSONB result field so lifecycle
+        # persistence works against the deployed schema without a manual migration.
         payload: dict[str, Any] = {
             "status": "completed",
             "result": result or {},
-            "error": None,
         }
 
         try:
@@ -257,10 +259,12 @@ class MissionEngine:
         if not db_client:
             return {"success": False, "error": "Supabase client is not available"}
 
+        # Persist the failure detail inside the existing JSONB column;
+        # missions.error is not part of the canonical database schema.
+        failure_message = error or "Mission failed"
         payload: dict[str, Any] = {
             "status": "failed",
-            "error": error or "Mission failed",
-            "result": {},
+            "result": {"error": failure_message},
         }
 
         try:
@@ -309,7 +313,7 @@ class MissionEngine:
             "priority": row.get("priority"),
             "owner_id": row.get("owner_id"),
             "result": row.get("result") or {},
-            "error": row.get("error"),
+            "error": row.get("error") or (row.get("result") or {}).get("error"),
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
         }
