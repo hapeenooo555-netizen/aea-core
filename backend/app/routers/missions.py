@@ -223,9 +223,39 @@ async def run_mission(
 ) -> dict[str, Any]:
     """Execute a mission owned by the current user."""
 
+    # Persist lifecycle transitions so the authenticated UI does not remain stuck
+    # on the previous "active" value after the run action returns.
+    mission_engine = MissionEngine(client=client)
+    started = mission_engine.update_status(mission_id, "active", client=client)
+    if not started.get("success"):
+        logger.error("Could not mark mission %s active before execution", mission_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not record mission start. Please refresh and try again.",
+        )
+
     orchestrator = AgentOrchestrator(owner_id=current_user_id, client=client)
     result = orchestrator.run_mission(mission_id)
     if not result.get("success"):
-        error = result.get("error") or "Mission execution failed"
-        raise HTTPException(status_code=_status_code_for_error(str(error)), detail=str(error))
-    return result
+        error = str(result.get("error") or "Mission execution failed")
+        failed = mission_engine.fail_mission(mission_id, error, client=client)
+        if not failed.get("success"):
+            logger.error("Mission %s failed and its failure status could not be persisted", mission_id)
+        raise HTTPException(status_code=_status_code_for_error(error), detail=error)
+
+    execution = result.get("execution") or {}
+    completed = mission_engine.complete_mission(mission_id, result, client=client)
+    if not completed.get("success"):
+        logger.error("Mission %s executed but completion state could not be persisted", mission_id)
+        return {
+            **result,
+            "lifecycle_persisted": False,
+            "warning": "Execution returned, but the mission status could not be saved. Refresh before retrying.",
+        }
+
+    return {
+        **result,
+        "mission": completed.get("mission") or mission,
+        "lifecycle_persisted": True,
+        "status": (completed.get("mission") or {}).get("status") or "completed",
+    }
