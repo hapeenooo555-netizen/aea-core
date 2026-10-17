@@ -244,9 +244,15 @@ async def run_mission(
         raise HTTPException(status_code=_status_code_for_error(error), detail=error)
 
     execution = result.get("execution") or {}
-    completed = mission_engine.complete_mission(mission_id, result, client=client)
+    completed = mission_engine.complete_mission(
+        mission_id, result, client=client, owner_id=current_user_id
+    )
     if not completed.get("success"):
-        logger.error("Mission %s executed but completion state could not be persisted", mission_id)
+        logger.error(
+            "Mission %s executed but completion state could not be persisted: %s",
+            mission_id,
+            completed.get("error") or "unknown persistence error",
+        )
         return {
             **result,
             "lifecycle_persisted": False,
