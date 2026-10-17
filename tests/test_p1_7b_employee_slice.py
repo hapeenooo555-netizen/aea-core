@@ -363,3 +363,25 @@ def test_publish_content_cross_user_cannot_resume():
     ).resume(approval_id, current_user_id="user-b")
     assert result["status"] == "approval_unauthorized"
     assert "authenticated user" in result["error"].lower()
+
+
+
+def test_affiliate_content_prompt_generates_real_draft_without_pinterest_gate():
+    employee = _slice()
+    result = employee.run(
+        "Start an affiliate marketing campaign for AI tools and digital marketing on Pinterest. "
+        "Prepare five content ideas and one sample Pin. Do not publish anything.",
+        mission_id="mission-affiliate-draft",
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "COMPLETE"
+    report = result["report"]
+    assert report["selected_tools"] == ["prepare_affiliate_content"]
+    draft = report["results"][0]
+    assert draft["success"] is True
+    assert len(draft["content_ideas"]) == 5
+    assert draft["sample_pin"]["title"]
+    assert draft["sample_pin"]["published"] is False
+    assert draft["published"] is False
+    assert draft["requires_human_approval_before_publishing"] is True
