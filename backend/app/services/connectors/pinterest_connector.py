@@ -182,15 +182,52 @@ class PinterestConnector(BaseConnector):
             persisted = self._connection_store.get(worker_id, "pinterest")
             if persisted:
                 status = persisted.get("status") or "not_started"
+                # OAuth callback stores credentials in the encrypted token vault
+                # under the authenticated AEA owner ID. Treat that vault as the
+                # source of truth for authorization, because a connection row can
+                # be missing/stale even after Pinterest OAuth completed.
+                try:
+                    from ..pinterest_token_vault import get_access_token
+
+                    vaulted = get_access_token(owner_id=worker_id)
+                except Exception:
+                    vaulted = None
+                if vaulted and not vaulted.get("expired"):
+                    status = "connected"
+                elif vaulted and vaulted.get("expired"):
+                    status = "needs_reconnect"
                 return {
                     "success": True,
                     "status": status,
                     "details": {
                         "connected": status == "connected",
                         "requires_action": status in {"onboarding", "needs_reconnect", "failed"},
-                        "external_account_id": persisted.get("external_account_id"),
-                        "display_name": persisted.get("display_name"),
-                        "scopes": persisted.get("scopes") or [],
+                        "external_account_id": (vaulted or {}).get("external_account_id") or persisted.get("external_account_id"),
+                        "display_name": (vaulted or {}).get("display_name") or persisted.get("display_name"),
+                        "scopes": (vaulted or {}).get("scopes") or persisted.get("scopes") or [],
+                    },
+                }
+
+            # The OAuth callback may have saved the credential successfully even
+            # if the platform_connections row is absent. Check the owner-scoped
+            # vault before telling ChatPlus that setup is required.
+            try:
+                from ..pinterest_token_vault import get_access_token
+
+                vaulted = get_access_token(owner_id=worker_id)
+            except Exception:
+                vaulted = None
+            if vaulted:
+                status = "needs_reconnect" if vaulted.get("expired") else "connected"
+                return {
+                    "success": True,
+                    "status": status,
+                    "details": {
+                        "connected": status == "connected",
+                        "requires_action": status == "needs_reconnect",
+                        "external_account_id": vaulted.get("external_account_id"),
+                        "display_name": vaulted.get("display_name"),
+                        "scopes": vaulted.get("scopes") or [],
                     },
                 }
 
