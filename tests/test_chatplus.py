@@ -638,3 +638,32 @@ _client_with_app = TestClient(build_app(authenticated=True))
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+def test_completed_chat_response_includes_actual_affiliate_draft_results():
+    from app.services.chatplus import ChatPlusService
+
+    execution = {
+        "report": {
+            "results": [{
+                "success": True,
+                "content_ideas": [{"title": "Idea One"}, {"title": "Idea Two"}],
+                "sample_pin": {
+                    "title": "Sample Pin",
+                    "description": "A sample description.",
+                    "keywords": ["AI tools", "digital marketing"],
+                    "visual_concept": "Checklist graphic",
+                    "published": False,
+                },
+                "research_note": "AI-generated ideas, not verified live market research.",
+            }]
+        }
+    }
+    state = {"state": "completed"}
+    message = ChatPlusService._assistant_text("affiliate campaign", {"status": "completed"}, execution, state, [])
+
+    assert "2 content ideas" in message
+    assert "Idea One" in message
+    assert "Sample Pin" in message
+    assert "nothing was published" in message
