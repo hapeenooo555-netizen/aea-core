@@ -168,6 +168,29 @@ class PinterestConnector(BaseConnector):
             Dictionary with account state.
         """
         if worker_id and not self._is_explicit_worker_id(worker_id):
+            # ChatPlus may pass the authenticated AEA owner UUID here, while
+            # worker IDs are a separate namespace. OAuth callback stores tokens
+            # by owner_id, so check that owner-scoped vault before rejecting this
+            # identifier as a non-worker. Never return token material to callers.
+            try:
+                from ..pinterest_token_vault import get_access_token
+
+                owner_token = get_access_token(owner_id=worker_id)
+            except Exception:
+                owner_token = None
+            if owner_token:
+                status = "needs_reconnect" if owner_token.get("expired") else "connected"
+                return {
+                    "success": True,
+                    "status": status,
+                    "details": {
+                        "connected": status == "connected",
+                        "requires_action": status == "needs_reconnect",
+                        "external_account_id": owner_token.get("external_account_id"),
+                        "display_name": owner_token.get("display_name"),
+                        "scopes": owner_token.get("scopes") or [],
+                    },
+                }
             return {
                 "success": True,
                 "status": "not_started",
