@@ -89,6 +89,22 @@ class EmployeeVerticalSlice:
             risk_level="READ_ONLY",
         ))
         self._tools.register_contract(ToolContract(
+            tool_name="prepare_affiliate_content",
+            description="Prepare a draft affiliate campaign and sample Pinterest content without publishing",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "niche": {"type": "string"},
+                    "markets": {"type": "string"},
+                    "platform": {"type": "string"},
+                },
+                "required": ["goal"],
+                "additionalProperties": False,
+            },
+            risk_level="READ_ONLY",
+        ))
+        self._tools.register_contract(ToolContract(
             tool_name="pinterest.get_account_status",
             description="Read the authenticated user's Pinterest connection status",
             input_schema={
@@ -598,18 +614,31 @@ class EmployeeVerticalSlice:
         platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
-        if is_pinterest or "board" in goal or "account" in goal:
-            affiliate_meta = {
-                k: v for k, v in required_payload.items()
-                if k not in {"platform"}
-            }
-            status_payload = {"platform": "pinterest", **required_payload}
+        is_content_planning = any(term in goal for term in (
+            "affiliate", "content ideas", "content plan", "campaign", "sample pin", "marketing",
+        )) and not any(term in goal for term in ("connect pinterest", "onboard", "authorize pinterest", "link pinterest"))
+        if is_content_planning:
+            steps.append({
+                "step_name": "prepare_affiliate_content",
+                "tool_name": "prepare_affiliate_content",
+                "input": {
+                    "goal": objective.goal,
+                    "niche": str(required_payload.get("niche") or "AI tools and digital marketing"),
+                    "markets": str(required_payload.get("markets") or "USA, UK, Canada, Australia"),
+                    "platform": str(required_payload.get("platform") or "Pinterest"),
+                },
+                "action_type": "prepare_affiliate_content",
+                "action_payload": {"goal": objective.goal, **required_payload},
+                "metadata": required_payload or None,
+            })
+        if is_pinterest and (any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")) or self._publish_intent(goal)):
+            affiliate_meta = {k: v for k, v in required_payload.items() if k not in {"platform"}}
             steps.append({
                 "step_name": "check_connection_status",
                 "tool_name": "pinterest.get_account_status",
                 "input": {"platform": "pinterest"},
                 "action_type": "pinterest.get_account_status",
-                "action_payload": status_payload,
+                "action_payload": {"platform": "pinterest", **required_payload},
                 "metadata": affiliate_meta,
             })
             if any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")):
@@ -671,6 +700,33 @@ class EmployeeVerticalSlice:
             prepared = self._tool_validator.validate_and_prepare(tool_name, payload)
         except ToolSafetyError as exc:
             return {"success": False, "error": str(exc), "reason": exc.reason}
+        if tool_name == "prepare_affiliate_content":
+            niche = str(payload.get("niche") or "AI tools and digital marketing")
+            markets = str(payload.get("markets") or "USA, UK, Canada, and Australia")
+            ideas = [
+                {"title": f"5 {niche.title()} Tools That Save Time", "keywords": [niche, "AI productivity tools", "digital tools"], "audience_problem": "Too much time spent on repetitive work", "call_to_action": "Compare the tools and choose one that fits your workflow.", "visual_concept": "A clean numbered list with five tool categories and simple icons."},
+                {"title": f"Beginner's Guide to Choosing {niche.title()} Tools", "keywords": [niche, "beginner guide", "tools for beginners"], "audience_problem": "Beginners feel overwhelmed by too many options", "call_to_action": "Save this guide before choosing a tool.", "visual_concept": "A three-step checklist with a clear beginner-friendly layout."},
+                {"title": f"Free vs Paid {niche.title()} Tools: What to Check", "keywords": [niche, "free vs paid", "software comparison"], "audience_problem": "Uncertainty about whether a paid plan is worth it", "call_to_action": "Check features, limits, and pricing on the official site.", "visual_concept": "A balanced two-column comparison checklist."},
+                {"title": f"A Simple {niche.title()} Workflow for Small Businesses", "keywords": [niche, "small business workflow", "digital marketing tips"], "audience_problem": "Small businesses need a manageable workflow", "call_to_action": "Save this workflow and adapt it to your business.", "visual_concept": "A five-step workflow diagram with short labels."},
+                {"title": f"How to Evaluate {niche.title()} Tools Before Buying", "keywords": [niche, "tool review checklist", "buying guide"], "audience_problem": "Risk of buying a tool that does not fit their needs", "call_to_action": "Use the checklist and verify current terms before purchasing.", "visual_concept": "A buyer's checklist with pricing, features, privacy, and support."},
+            ]
+            return {
+                "success": True,
+                "status": "draft_prepared",
+                "research_note": "These are AI-generated content ideas, not verified live market research. Confirm product claims, current prices, and affiliate-program terms before use.",
+                "target_markets": markets,
+                "content_ideas": ideas,
+                "sample_pin": {
+                    "title": f"A Beginner-Friendly Guide to {niche.title()} Tools",
+                    "description": f"Explore practical ways to evaluate {niche} tools for your workflow. Compare features, pricing, free-plan limits, privacy, and support before choosing. Save this guide for your next tool review. If you use an affiliate link, clearly disclose that you may earn a commission at no extra cost to the buyer.",
+                    "keywords": [niche, "AI tools", "digital marketing", "productivity", "beginner guide"],
+                    "visual_concept": "Vertical Pinterest graphic with a bold headline, three evaluation tips, and a simple checklist.",
+                    "affiliate_link": None,
+                    "published": False,
+                },
+                "published": False,
+                "requires_human_approval_before_publishing": True,
+            }
         if tool_name == "pinterest.get_account_status":
             connector = self._connectors.get("pinterest")
             if connector is None:
