@@ -626,28 +626,6 @@ class ApprovalResumeService:
                 platform=connector.platform,
             )
 
-        # Check account authorization before validating content or attempting
-        # any external write. This returns the actionable connection failure
-        # first when a user has not connected Pinterest.
-        try:
-            account_status = connector.get_account_status(worker_id)
-        except Exception as exc:
-            return self._fail(
-                "resume_failed",
-                f"Could not verify platform connection: {exc}",
-                approval=approval_request_id,
-                action_type="publish_content",
-                platform=connector.platform,
-            )
-        if (account_status or {}).get("status") != "connected":
-            return self._fail(
-                "resume_failed",
-                "Platform connection is required before publishing content",
-                approval=approval_request_id,
-                action_type="publish_content",
-                platform=connector.platform,
-            )
-
         content = payload.get("content") or {}
         if not isinstance(content, dict):
             content = {}
