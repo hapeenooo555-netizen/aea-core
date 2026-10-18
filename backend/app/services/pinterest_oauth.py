@@ -39,6 +39,8 @@ PINTEREST_AUTH_BASE_URL = "https://www.pinterest.com/oauth/"
 DEFAULT_SCOPES = [
     "user_accounts:read",
     "boards:read",
+    "boards:write",
+    "pins:read",
     "pins:write",
 ]
 
