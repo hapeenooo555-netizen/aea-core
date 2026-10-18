@@ -691,3 +691,23 @@ def test_completed_chat_response_includes_actual_affiliate_draft_results():
     assert "Idea One" in message
     assert "Sample Pin" in message
     assert "nothing was published" in message
+
+
+def test_completed_pinterest_publish_message_includes_canonical_pin_url():
+    """Only a provider-confirmed Pin ID is reported as published, with a direct URL."""
+    message = ChatPlusService._assistant_text(
+        "publish this Pinterest pin",
+        {"status": "completed"},
+        {"report": {"results": [{
+            "success": True,
+            "platform": "pinterest",
+            "pin_id": "123456789",
+            "pin_url": "https://www.pinterest.com/pin/123456789/",
+            "board_name": "My Board",
+        }]}},
+        {"state": "completed"},
+        [],
+    )
+    assert "Pinterest confirmed the Pin was published" in message
+    assert "https://www.pinterest.com/pin/123456789/" in message
+    assert "Pin ID: 123456789" in message

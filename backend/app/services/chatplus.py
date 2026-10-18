@@ -506,10 +506,12 @@ class ChatPlusService:
             )
             publish_intent = "publish" in goal.lower() or ("create" in goal.lower() and "pin" in goal.lower())
             if publish_result and publish_result.get("success") and publish_result.get("pin_id"):
+                pin_url = publish_result.get("pin_url") or f"https://www.pinterest.com/pin/{publish_result['pin_id']}/"
                 return (
                     "Pinterest confirmed the Pin was published. "
                     f"Pin ID: {publish_result['pin_id']}. "
-                    f"Board: {publish_result.get('board_name') or publish_result.get('board_id') or 'connected Pinterest board'}."
+                    f"Board: {publish_result.get('board_name') or publish_result.get('board_id') or 'connected Pinterest board'}. "
+                    f"Open Pin: {pin_url}"
                 )
             if publish_intent:
                 reason = ""
@@ -540,11 +542,24 @@ class ChatPlusService:
         mission = self.orchestration.get_mission(mission_id)
         if not mission or (mission.get("metadata") or {}).get("source") != "chatplus":
             return
+        outcome_status = str(outcome.get("status") or "").lower()
+        # A successful, approved Pinterest publish is returned as "resumed" by
+        # ApprovalResumeService. Treat it as completed only when the connector
+        # explicitly confirms success and supplies the provider Pin ID.
+        resume_result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+        confirmed_publish = (
+            outcome_status in {"resumed", "completed"}
+            and outcome.get("action_type") == "publish_content"
+            and resume_result.get("success") is True
+            and bool(resume_result.get("pin_id"))
+        )
         target = {
             "completed": "completed",
             "awaiting_human_intervention": "waiting_human",
             "approval_rejected": "failed",
-        }.get(str(outcome.get("status") or "").lower())
+        }.get(outcome_status)
+        if confirmed_publish:
+            target = "completed"
         if target:
             self.orchestration.transition(mission_id, target, result=sanitize_payload(outcome))
 
