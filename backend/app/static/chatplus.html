@@ -1097,8 +1097,14 @@ evaluate: "Evaluating the next step",
       if (pinterestContentPromptButton && messageInput) {
         pinterestContentPromptButton.addEventListener("click", () => {
           messageInput.value = "Help me create a Pinterest Pin. First verify my connected Pinterest account and available boards, then prepare a Pin title, description, destination link, and image. Show me the complete preview and wait for my explicit approval before publishing. Do not publish automatically.";
-          messageInput.focus();
           messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+          // Submit the prepared goal immediately so users are not stranded with a filled composer.
+          // Publishing remains blocked by the existing human-approval workflow.
+          if (typeof composer.requestSubmit === "function") {
+            composer.requestSubmit();
+          } else {
+            composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          }
         });
       }
       const sendButton = document.getElementById("sendButton");
