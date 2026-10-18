@@ -902,6 +902,33 @@ class PinterestConnector(BaseConnector):
         if stored_token.get("expired"):
             return {"success": False, "error": "Pinterest access token expired; reconnect Pinterest"}
 
+        # Check the operation ledger BEFORE calling Pinterest. If a prior
+        # request succeeded but its HTTP response was lost, retrying the same
+        # approval-derived key must not create a duplicate Pin.
+        if not idempotency_key:
+            return {"success": False, "error": "An approval-derived idempotency key is required"}
+        try:
+            existing_pin = self._pin_store.get_by_operation_key(owner_id, str(idempotency_key))
+        except Exception:
+            return {"success": False, "error": "Unable to verify Pinterest publish idempotency"}
+        if existing_pin:
+            existing_pin_id = existing_pin.get("pin_id")
+            if not existing_pin_id:
+                return {
+                    "success": False,
+                    "error": "A prior Pinterest publish record exists without a confirmed Pin ID; manual reconciliation is required",
+                }
+            return {
+                "success": True,
+                "status": "duplicate_record",
+                "pin_id": existing_pin_id,
+                "approval_request_id": existing_pin.get("approval_request_id") or approval_request_id,
+                "platform": "pinterest",
+                "board_name": existing_pin.get("board_name") or board_name,
+                "message": "This approved operation was already published; no duplicate Pin was created.",
+                "operation_key": idempotency_key,
+            }
+
         # Resolve board name to the provider's real board ID unless an explicit
         # board_id was supplied by the authenticated boards endpoint.
         board_id = content.get("board_id")
