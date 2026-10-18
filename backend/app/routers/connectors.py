@@ -202,8 +202,13 @@ async def start_onboarding(
                 )
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            # Fail closed: if ownership cannot be verified, do not start OAuth
+            # or create a workflow for an unverified worker.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not verify worker ownership",
+            ) from exc
 
     if platform == "pinterest":
         connector = _get_user_scoped_pinterest_connector(
