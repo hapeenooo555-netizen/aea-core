@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 from uuid import uuid4
 
 from ..stores.onboarding_workflow_store import OnboardingWorkflowStore
