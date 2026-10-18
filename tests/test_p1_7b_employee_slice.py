@@ -241,7 +241,7 @@ def test_publish_content_plan_created_when_intent_and_inputs_complete():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-pub",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert result["success"] is False
     assert result["status"] == "WAIT_FOR_APPROVAL"
@@ -283,7 +283,7 @@ def test_publish_content_not_planned_when_disconnected():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-disconnected",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     plan_tools = [s["tool_name"] for s in result["report"]["plan"]]
     assert "publish_content" not in plan_tools
@@ -295,7 +295,7 @@ def test_employee_publish_creates_approval():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-approval",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert result["status"] == "WAIT_FOR_APPROVAL"
     approval_id = result["report"]["resume_information"]["approval_request_id"]
@@ -311,7 +311,7 @@ def test_publish_content_resume():
     pending = employee.run(
         "Publish my pin",
         mission_id="mission-publish-resume",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert pending["status"] == "WAIT_FOR_APPROVAL"
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
@@ -332,7 +332,7 @@ def test_publish_content_idempotency_duplicate():
     pending = employee.run(
         "Publish my pin",
         mission_id="mission-idempotent",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     employee._approvals.approve_request(approval_id, approved_by="user-a")
@@ -353,7 +353,7 @@ def test_publish_content_cross_user_cannot_resume():
     pending = employee_a.run(
         "Publish my pin",
         mission_id="mission-cross",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     employee_a._approvals.approve_request(approval_id, approved_by="user-a")
