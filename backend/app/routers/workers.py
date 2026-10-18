@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,6 +13,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client, verify
 from app.services.agent_orchestrator import AgentOrchestrator
 from app.services.worker_runtime import WorkerRuntime
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workers", tags=["workers"])
 
 
