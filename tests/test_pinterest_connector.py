@@ -268,6 +268,7 @@ def test_pinterest_publish_content_success(supabase_disabled):
     assert result["success"]
     assert result["status"] == "published"
     assert result["platform"] == "pinterest"
+    assert result["pin_url"] == f"https://www.pinterest.com/pin/{result['pin_id']}/"
     assert result["board_name"] == "My Board"
     assert result["pin_text"] == "Check this out!"
     assert result["pin_id"]
