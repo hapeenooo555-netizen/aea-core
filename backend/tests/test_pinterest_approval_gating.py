@@ -38,10 +38,16 @@ class FakeApprovalGateway:
     ],
 )
 def test_publishing_resume_is_blocked_without_approved_status(
-    approval_status, expected_status
+    approval_status, expected_status, monkeypatch
 ):
     service = ApprovalResumeService(
         approval_gateway=FakeApprovalGateway(approval_status)
+    )
+    dispatch_calls = []
+    monkeypatch.setattr(
+        service,
+        "_resume_connector_action",
+        lambda **kwargs: dispatch_calls.append(kwargs),
     )
 
     result = service.resume(
@@ -50,11 +56,18 @@ def test_publishing_resume_is_blocked_without_approved_status(
     )
 
     assert result["status"] == expected_status
+    assert dispatch_calls == [], "Unapproved Pinterest content must never dispatch"
 
 
-def test_publishing_resume_rejects_wrong_owner_before_dispatch():
+def test_publishing_resume_rejects_wrong_owner_before_dispatch(monkeypatch):
     service = ApprovalResumeService(
         approval_gateway=FakeApprovalGateway("approved")
+    )
+    dispatch_calls = []
+    monkeypatch.setattr(
+        service,
+        "_resume_connector_action",
+        lambda **kwargs: dispatch_calls.append(kwargs),
     )
 
     result = service.resume(
@@ -63,3 +76,4 @@ def test_publishing_resume_rejects_wrong_owner_before_dispatch():
     )
 
     assert result["status"] == "approval_unauthorized"
+    assert dispatch_calls == [], "A different owner must never dispatch Pinterest publishing"
