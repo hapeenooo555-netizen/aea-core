@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,6 +13,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client, verify
 from app.services.agent_orchestrator import AgentOrchestrator
 from app.services.worker_runtime import WorkerRuntime
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workers", tags=["workers"])
 
 
@@ -51,14 +53,22 @@ async def list_workers(
     """Return workers owned by the current user."""
 
     if not client:
-        return MOCK_WORKERS
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase user-scoped client is unavailable. Workers were not loaded.",
+        )
 
     try:
         response = client.table("workers").select("*").eq("owner_id", current_user_id).execute()
         rows = response.data or []
         return [dict(row) for row in rows]
-    except Exception:  # pragma: no cover - defensive error path
-        return MOCK_WORKERS
+    except Exception as exc:  # pragma: no cover - defensive error path
+        # Never disguise a database/ownership failure as a successful mock response.
+        logger.exception("Could not load workers for authenticated owner %s", current_user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not load workers for this account. Please refresh and try again.",
+        ) from exc
 
 
 @router.post("")
