@@ -17,9 +17,10 @@ Security model:
   - State never appears in logs — it is only stored in checkpoint metadata
     and transmitted as a URL query parameter.
 
-Phase 2 (future) will exchange the authorization code at:
+The connectors router performs the authorization-code exchange at:
     POST https://api.pinterest.com/v5/oauth/token
-using HTTP Basic Authentication with the client credentials.
+using HTTP Basic Authentication with the client credentials. This helper is
+responsible for authorization URL construction and CSRF state lifecycle only.
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ PINTEREST_AUTH_BASE_URL = "https://www.pinterest.com/oauth/"
 DEFAULT_SCOPES = [
     "user_accounts:read",
     "boards:read",
+    "boards:write",
+    "pins:read",
     "pins:write",
 ]
 
