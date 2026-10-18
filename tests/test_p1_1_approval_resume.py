@@ -26,7 +26,7 @@ from app.services.stores.pin_publish_store import PinPublishStore  # noqa: E402
 
 def _mock_pinterest_publish(monkeypatch):
     """Keep publish tests deterministic without contacting the real Pinterest API."""
-    from app.services.connectors import pinterest_connector
+    import httpx
 
     class Response:
         def __init__(self, status_code, payload):
@@ -55,7 +55,7 @@ def _mock_pinterest_publish(monkeypatch):
         def post(self, url, **kwargs):
             return Response(201, {"id": "test-pin-123", "created_at": "2026-10-18T00:00:00Z"})
 
-    monkeypatch.setattr(pinterest_connector.httpx, "Client", FakeClient)
+    monkeypatch.setattr(httpx, "Client", FakeClient)
     monkeypatch.setattr(
         "app.services.pinterest_token_vault.get_access_token",
         lambda *, owner_id: {
