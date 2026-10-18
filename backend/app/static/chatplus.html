@@ -830,7 +830,6 @@
 
     /* Initial workspace: hide all non-composer elements until a goal is submitted */
     #chatView.workspace-empty .status-row,
-    #chatView.workspace-empty .hero-card,
     #chatView.workspace-empty .panel,
     #chatView.workspace-empty .card-actions,
     #chatView.workspace-empty .task-card,
@@ -903,6 +902,12 @@
 
     <div class="viewport">
       <section id="workspace" class="workspace" aria-live="polite">
+        <article class="hero-card" id="welcomeCard">
+          <div class="eyebrow">AEA WORKSPACE · HUMAN APPROVAL REQUIRED</div>
+          <h2>Create Pinterest content with AEA</h2>
+          <p class="task-body">Tell AEA what you want to promote. It will prepare a draft, show you the title, description, destination link, image, and board, then wait for your explicit approval before publishing.</p>
+          <div class="job-meta"><span class="job-state">Pinterest workflow</span><span>Draft → Preview → Your approval → Publish</span></div>
+        </article>
         <article class="hero-card">
           <div id="currentJobLabel" class="eyebrow">Current job</div>
           <h2 id="jobTitle">Current job</h2>
@@ -963,8 +968,12 @@ Connect Pinterest
 
     <form id="composer" class="composer">
       <div style="grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; margin-left: 2px;">What should we work on?</div>
-      <button id="pinterestContentPromptButton" class="secondary-button" type="button" style="grid-column: 1 / -1; width: 100%; min-height: 44px; white-space: normal;">Continue to Pinterest content creation</button>
-      <textarea id="messageInput" rows="1" maxlength="4000" placeholder="What would you like AEA Employee to do?" required></textarea>
+      <div class="composer-hint" style="grid-column:1/-1; color:var(--muted); font-size:12px;">Start with a goal below, or write your own. AEA will prepare a preview and ask before publishing.</div>
+      <div class="prompt-chips" style="grid-column:1/-1; display:flex; flex-wrap:wrap; gap:8px;">
+        <button class="secondary-button prompt-chip" type="button" data-prompt="Create a Pinterest affiliate Pin for a product I describe. Ask me for any missing product details, then prepare the title, description, destination URL, image guidance, and board. Show a complete preview and wait for my explicit approval before publishing.">Create an affiliate Pin</button>
+        <button class="secondary-button prompt-chip" type="button" data-prompt="Help me plan 5 Pinterest content ideas for my affiliate niche. Give each idea a hook, Pin title, description, and suggested visual. Do not publish anything.">Plan content ideas</button>
+      </div>
+      <textarea id="messageInput" rows="2" maxlength="4000" placeholder="Example: Create a Pinterest Pin for a product about home organization…" required></textarea>
       <button id="sendButton" class="send-button" type="submit" aria-label="Submit goal">Send</button>
     </form>
   </main>
@@ -1107,6 +1116,15 @@ evaluate: "Evaluating the next step",
           }
         });
       }
+      document.querySelectorAll("[data-prompt]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const prompt = button.getAttribute("data-prompt");
+          if (!prompt || !messageInput || messageInput.disabled) return;
+          messageInput.value = prompt;
+          messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+          messageInput.focus();
+        });
+      });
       const sendButton = document.getElementById("sendButton");
       const statusPill = document.getElementById("statusPill");
       const statusLabel = document.getElementById("statusLabel");
