@@ -21,6 +21,46 @@ from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStor
 from app.services.stores.platform_connection_store import PlatformConnectionStore
 
 
+def _mock_pinterest_publish(monkeypatch):
+    """Use deterministic provider responses; unit tests must not call Pinterest."""
+    from app.services.connectors import pinterest_connector
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            return Response(200, {"items": [{"id": "board-b", "name": "B"}]})
+
+        def post(self, url, **kwargs):
+            return Response(201, {"id": "test-pin-123", "created_at": "2026-10-18T00:00:00Z"})
+
+    monkeypatch.setattr(pinterest_connector.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.pinterest_token_vault.get_access_token",
+        lambda *, owner_id: {
+            "access_token": "test-access-token",
+            "expired": False,
+            "external_account_id": "test-account",
+            "scopes": ["pins:write", "boards:read"],
+        },
+    )
+
+
 @pytest.fixture(autouse=True)
 def _disable_supabase(monkeypatch):
     monkeypatch.setattr(database_module, "supabase_client", None, raising=False)
@@ -305,7 +345,8 @@ def test_employee_publish_creates_approval():
     assert approval["payload"]["operation_key"].startswith("p1-7d:")
 
 
-def test_publish_content_resume():
+def test_publish_content_resume(monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     employee = _slice()
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
     pending = employee.run(
@@ -326,7 +367,8 @@ def test_publish_content_resume():
     assert durable["status"] == "published"
 
 
-def test_publish_content_idempotency_duplicate():
+def test_publish_content_idempotency_duplicate(monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     employee = _slice()
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
     pending = employee.run(
