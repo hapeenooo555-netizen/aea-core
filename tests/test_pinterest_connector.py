@@ -199,6 +199,24 @@ def test_pinterest_connect_account_missing_oauth():
     assert "authorization code" in result["error"].lower()
 
 
+def test_pinterest_publish_content_requires_approval_idempotency_key(supabase_disabled):
+    """Publishing is blocked unless the durable human-approval path supplies its key."""
+    connector = PinterestConnector()
+    result = connector.publish_content(
+        "worker-123",
+        {
+            "board_name": "board",
+            "pin_text": "text",
+            "link_url": "https://a.co",
+            "image_url": "https://example.com/image.jpg",
+        },
+        owner_id="user-uuid-123",
+    )
+    assert result["success"] is False
+    assert result["requires"] == ["explicit_human_approval"]
+    assert "approval-derived idempotency key" in result["error"]
+
+
 def test_pinterest_publish_content_requires_connection(supabase_disabled):
     """publish_content fails when the platform connection is not established."""
     connector = PinterestConnector()
