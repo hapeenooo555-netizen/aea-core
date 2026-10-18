@@ -657,7 +657,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"goal": objective.goal, **required_payload},
                 "metadata": required_payload or None,
             })
-        if is_pinterest and (connection_intent or status_check_intent or self._publish_intent(goal)):
+        if is_pinterest and not is_content_planning and (connection_intent or status_check_intent or self._publish_intent(goal)):
             affiliate_meta = {k: v for k, v in required_payload.items() if k not in {"platform"}}
             steps.append({
                 "step_name": "check_connection_status",
