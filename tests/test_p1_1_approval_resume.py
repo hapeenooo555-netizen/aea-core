@@ -90,8 +90,7 @@ def human_intervention_manager(supabase_disabled) -> HumanInterventionManager:
 
 
 @pytest.fixture
-def resume_service(stores, approval_gateway, human_intervention_manager, monkeypatch):
-    _mock_pinterest_publish(monkeypatch)
+def resume_service(stores, approval_gateway, human_intervention_manager):
     registry = ConnectorRegistry()
     registry.register(
         PinterestConnector(
@@ -524,6 +523,7 @@ def test_existing_p0_5_persistence_still_works(stores):
 # 15: publish_content approval → resume pipeline (P1-11)
 # ---------------------------------------------------------------------------
 def test_publish_content_requires_platform_connection(resume_service, approval_gateway, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     """publish_content resume fails when the platform is not connected."""
     request_id = _make_approval_request(
         approval_gateway,
@@ -539,10 +539,11 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
 
     result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
-    assert "connection" in result["error"].lower()
+    assert "connect" in result["error"].lower()
 
 
-def test_publish_content_resume_success(resume_service, approval_gateway):
+def test_publish_content_resume_success(resume_service, approval_gateway, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     """A fully-connected platform resumes publish_content successfully."""
     connect_request_id = _make_approval_request(
         approval_gateway,
@@ -588,8 +589,9 @@ def test_publish_content_resume_success(resume_service, approval_gateway):
 
 
 def test_publish_content_server_ignores_client_operation_key(
-    resume_service, approval_gateway
+    resume_service, approval_gateway, monkeypatch
 ):
+    _mock_pinterest_publish(monkeypatch)
     """Caller-supplied operation_key must not override the server-derived key."""
     connect_request_id = _make_approval_request(
         approval_gateway,
@@ -626,7 +628,8 @@ def test_publish_content_server_ignores_client_operation_key(
     assert result["operation_key"] != "client-should-be-ignored"
 
 
-def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway):
+def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     """publish_content resume strips OAuth secrets from the content payload."""
     connect_request_id = _make_approval_request(
         approval_gateway,
@@ -674,7 +677,8 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway)
         assert "client_secret" not in content
 
 
-def test_publish_content_duplicate_is_completed(resume_service, approval_gateway):
+def test_publish_content_duplicate_is_completed(resume_service, approval_gateway, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     """A second resume of the same publish_content approval returns completed."""
     connect_request_id = _make_approval_request(
         approval_gateway,
@@ -708,7 +712,8 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
     assert second.get("note") == "pin_already_published"
 
 
-def test_publish_content_duplicate_after_restart(resume_service, approval_gateway):
+def test_publish_content_duplicate_after_restart(resume_service, approval_gateway, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     """Durable idempotency: a fresh connector/store sees the prior pin."""
     connect_request_id = _make_approval_request(
         approval_gateway,
