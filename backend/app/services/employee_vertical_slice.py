@@ -622,8 +622,17 @@ class EmployeeVerticalSlice:
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
         is_content_planning = any(term in goal for term in (
-            "affiliate", "content ideas", "content plan", "campaign", "sample pin", "marketing",
-        )) and not any(term in goal for term in ("connect pinterest", "onboard", "authorize pinterest", "link pinterest"))
+            "content ideas", "content plan", "campaign", "sample pin", "marketing tips",
+            "prepare content", "draft only", "do not publish", "don't publish",
+        )) and not any(term in goal for term in (
+            "connect pinterest", "onboard", "authorize pinterest", "link pinterest",
+        ))
+        connection_intent = any(word in goal for word in (
+            "connect", "onboard", "authorize", "link", "enroll", "start",
+        )) and not is_content_planning
+        status_check_intent = any(term in goal for term in (
+            "check", "status", "connected", "connection",
+        ))
         if is_content_planning:
             steps.append({
                 "step_name": "prepare_affiliate_content",
@@ -638,7 +647,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"goal": objective.goal, **required_payload},
                 "metadata": required_payload or None,
             })
-        if is_pinterest and (any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")) or self._publish_intent(goal)):
+        if is_pinterest and (connection_intent or status_check_intent or self._publish_intent(goal)):
             affiliate_meta = {k: v for k, v in required_payload.items() if k not in {"platform"}}
             steps.append({
                 "step_name": "check_connection_status",
@@ -648,7 +657,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"platform": "pinterest", **required_payload},
                 "metadata": affiliate_meta,
             })
-            if any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")):
+            if connection_intent or status_check_intent:
                 steps.append({
                     "step_name": "start_onboarding",
                     "tool_name": "start_platform_onboarding",
