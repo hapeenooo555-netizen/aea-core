@@ -621,18 +621,22 @@ class EmployeeVerticalSlice:
         platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
-        is_content_planning = any(term in goal for term in (
-            "content ideas", "content plan", "campaign", "sample pin", "marketing tips",
-            "prepare content", "draft only", "do not publish", "don't publish",
-        )) and not any(term in goal for term in (
-            "connect pinterest", "onboard", "authorize pinterest", "link pinterest",
+        explicit_draft_only = any(term in goal for term in (
+            "do not publish", "don't publish", "dont publish", "without publishing",
+            "draft only", "prepare five content ideas", "content ideas", "content plan",
+            "sample pin", "marketing tips", "prepare content",
         ))
-        connection_intent = any(word in goal for word in (
-            "connect", "onboard", "authorize", "link", "enroll", "start",
-        )) and not is_content_planning
+        explicit_connection = any(term in goal for term in (
+            "connect", "onboard", "authorize", "link pinterest", "enroll",
+            "start affiliate marketing", "start an affiliate", "kuanza affiliate",
+            "kuunganisha pinterest",
+        ))
+        is_content_planning = explicit_draft_only and not explicit_connection
+        connection_intent = explicit_connection and not is_content_planning
         status_check_intent = any(term in goal for term in (
-            "check", "status", "connected", "connection",
-        ))
+            "check my pinterest", "pinterest account status", "pinterest connection status",
+            "check pinterest status", "is pinterest connected", "hali ya pinterest",
+        )) and not is_content_planning
         if is_content_planning:
             steps.append({
                 "step_name": "prepare_affiliate_content",
@@ -657,7 +661,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"platform": "pinterest", **required_payload},
                 "metadata": affiliate_meta,
             })
-            if connection_intent or status_check_intent:
+            if connection_intent:
                 steps.append({
                     "step_name": "start_onboarding",
                     "tool_name": "start_platform_onboarding",
