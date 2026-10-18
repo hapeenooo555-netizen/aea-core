@@ -836,6 +836,15 @@ class PinterestConnector(BaseConnector):
                 "requires": ["connect_platform"],
             }
 
+        # Publishing must only be invoked by the durable approval-resume path.
+        # Requiring the server-generated key prevents direct/unapproved connector calls.
+        if not idempotency_key or not str(idempotency_key).startswith("p1-11:") or not str(idempotency_key).removeprefix("p1-11:").strip():
+            return {
+                "success": False,
+                "error": "A valid approval-derived idempotency key is required to publish to Pinterest",
+                "requires": ["explicit_human_approval"],
+            }
+
         board_name = content.get("board_name")
         pin_text = content.get("pin_text")
         link_url = content.get("link_url")
