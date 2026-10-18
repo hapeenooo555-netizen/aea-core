@@ -721,7 +721,7 @@ async def pinterest_oauth_callback(
         if not valid:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
         manager.fail_oauth_callback(state, owner_id=current_user_id, reason="User denied Pinterest authorization")
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing authorization code")
@@ -785,17 +785,17 @@ async def pinterest_oauth_callback(
         )
 
     if claim_status == "processing":
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     if claim_status == "completed":
         # Safe browser redirect; never include OAuth codes, state, or tokens in the URL.
         return RedirectResponse(
-            url="https://aea-affiliate-hub.lovable.app/?pinterest=connected",
+            url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=connected",
             status_code=303,
         )
 
     if claim_status == "failed":
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     if claim_status == "unknown":
         raise HTTPException(
@@ -852,12 +852,12 @@ async def pinterest_oauth_callback(
         if token_response.status_code != 200:
             # Definitive OAuth rejection: processing -> failed
             manager.fail_oauth_callback(state, owner_id=current_user_id, reason=f"Pinterest returned {token_response.status_code}")
-            return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+            return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
         token_data = token_response.json()
     except Exception:  # pragma: no cover - network errors
         # Retryable failure: processing -> awaiting_human
         manager.reconcile_oauth_callback(state, owner_id=current_user_id)
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
@@ -867,7 +867,7 @@ async def pinterest_oauth_callback(
     if not access_token:
         # Definitive OAuth rejection: processing -> failed
         manager.fail_oauth_callback(state, owner_id=current_user_id, reason="Missing access token from Pinterest")
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     # Normalize scopes from Pinterest token response (space-separated string).
     token_scopes = token_data.get("scope") or token_data.get("scopes")
@@ -893,7 +893,7 @@ async def pinterest_oauth_callback(
     if not workflow_id:
         # Definitive failure: cannot complete without workflow_id
         manager.fail_oauth_callback(state, owner_id=current_user_id, reason="Missing workflow_id in checkpoint metadata")
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     try:
         # Call the atomic completion RPC via the connector
@@ -917,17 +917,17 @@ async def pinterest_oauth_callback(
         # Successful token exchange but completion DB/process failure:
         # KEEP processing. Do NOT reopen to awaiting_human.
         manager.reconcile_oauth_callback(state, owner_id=current_user_id)
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     if not completion_result.get("success"):
         # Completion failed but token exchange succeeded
         manager.reconcile_oauth_callback(state, owner_id=current_user_id)
-        return RedirectResponse(url="https://aea-affiliate-hub.lovable.app/?pinterest=error", status_code=303)
+        return RedirectResponse(url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=error", status_code=303)
 
     # Return the user to the AEA website after durable completion.
     # Never place authorization codes, OAuth state, or tokens in the redirect URL.
     return RedirectResponse(
-        url="https://aea-affiliate-hub.lovable.app/?pinterest=connected",
+        url="https://aea-affiliate-hub-production.up.railway.app/?pinterest=connected",
         status_code=303,
     )
 
