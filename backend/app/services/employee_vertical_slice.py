@@ -631,7 +631,7 @@ class EmployeeVerticalSlice:
             "start affiliate marketing", "start an affiliate", "kuanza affiliate",
             "kuunganisha pinterest",
         ))
-        is_content_planning = explicit_draft_only and not explicit_connection
+        is_content_planning = explicit_draft_only
         connection_intent = explicit_connection and not is_content_planning
         status_check_intent = any(term in goal for term in (
             "check my pinterest", "pinterest account status", "pinterest connection status",
