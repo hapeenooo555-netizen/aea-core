@@ -597,7 +597,7 @@ class EmployeeVerticalSlice:
 
     def _publish_inputs_complete(self, payload: dict[str, Any]) -> bool:
         """Require complete content inputs before creating a publish approval."""
-        return all(payload.get(field) for field in ("board_name", "pin_text", "link_url"))
+        return all(payload.get(field) for field in ("board_name", "pin_text", "link_url", "image_url"))
 
     def _publish_step(self, required_payload: dict[str, Any], affiliate_meta: dict[str, Any]) -> dict[str, Any]:
         """Build a validated publish_content plan step."""
