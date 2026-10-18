@@ -490,6 +490,42 @@ class ChatPlusService:
                     str(draft.get("research_note") or "Verify product details and affiliate terms before use."),
                 ])
                 return "\n".join(lines)
+            # A completed mission is not proof that Pinterest published a Pin.
+            # Only a provider-confirmed pin_id may be presented as a successful publish.
+            publish_result = next(
+                (
+                    item for item in results
+                    if isinstance(item, dict)
+                    and (
+                        item.get("pin_id")
+                        or item.get("status") == "published"
+                        or item.get("platform") == "pinterest"
+                    )
+                ),
+                None,
+            )
+            publish_intent = "publish" in goal.lower() or ("create" in goal.lower() and "pin" in goal.lower())
+            if publish_result and publish_result.get("success") and publish_result.get("pin_id"):
+                return (
+                    "Pinterest confirmed the Pin was published. "
+                    f"Pin ID: {publish_result['pin_id']}. "
+                    f"Board: {publish_result.get('board_name') or publish_result.get('board_id') or 'connected Pinterest board'}."
+                )
+            if publish_intent:
+                reason = ""
+                if publish_result:
+                    reason = str(
+                        publish_result.get("error")
+                        or publish_result.get("message")
+                        or publish_result.get("status")
+                        or ""
+                    ).strip()
+                detail = f" Details: {reason}." if reason else ""
+                return (
+                    "Pinterest publishing is NOT confirmed. No provider-confirmed Pin ID was returned, "
+                    "so AEA will not report this as published. Open View progress to inspect the mission "
+                    f"and resolve any missing inputs or connection issues.{detail}"
+                )
             if not report.get("results") and not report.get("executed_actions"):
                 return "The mission was marked completed, but no execution results were recorded. Please inspect mission progress; this is not verified task completion."
             return "Goal completed. Open View progress to inspect the recorded execution results."
