@@ -810,7 +810,7 @@ class PinterestConnector(BaseConnector):
                   identifier. When supplied, an affiliate tracking parameter
                   ``utm_source=aea&utm_campaign=opportunity_<id>`` is appended
                   to the link (preserving any existing query string).
-                - ``image_url`` (str | None): Optional image URL for the pin.
+                - ``image_url`` (str): Required public image URL for the pin.
                 - ``title`` (str | None): Optional pin title.
             idempotency_key: Server-derived operation_key used for durable
                 idempotency. Must be supplied by the caller (the
