@@ -180,13 +180,20 @@ class EmployeeVerticalSlice:
         )
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for explicit publishing intent."""
-        normalized = goal.replace("pinterest", "")
-        return (
-            "publish" in normalized
-            or ("create" in normalized and "pin" in normalized)
-            or "affiliate content" in normalized
+        """Return True only for an affirmative request to publish content."""
+        normalized = " ".join(goal.lower().replace("pinterest", "").split())
+        # A content-planning request that explicitly says not to publish must
+        # never enter the publishing/connection flow.
+        negated = (
+            "do not publish" in normalized
+            or "don't publish" in normalized
+            or "dont publish" in normalized
+            or "without publishing" in normalized
+            or "not publish anything" in normalized
         )
+        if negated:
+            return False
+        return "publish" in normalized or ("create" in normalized and "pin" in normalized)
 
     def run(
         self,
