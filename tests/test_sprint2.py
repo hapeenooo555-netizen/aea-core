@@ -61,12 +61,10 @@ def test_health_endpoint() -> None:
     assert "supabase_connected" in payload
 
 
-def test_workers_endpoint_returns_mock_data_when_supabase_is_unavailable() -> None:
+def test_workers_endpoint_reports_unavailable_supabase_instead_of_mock_data() -> None:
     response = client.get("/workers", headers={"Authorization": "Bearer test-token"})
-    assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload, list)
-    assert payload[0]["name"] == "Atlas"
+    assert response.status_code == 503
+    assert "Workers were not loaded" in response.json()["detail"]
 
 
 def test_create_worker_reports_supabase_errors(monkeypatch) -> None:
