@@ -487,7 +487,7 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
         payload={
             "platform": "pinterest",
             "worker_id": "worker-1",
-            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"},
         },
     )
     approval_gateway.approve_request(request_id)
@@ -521,7 +521,7 @@ def test_publish_content_resume_success(resume_service, approval_gateway):
                 "board_name": "My Board",
                 "pin_text": "Check this out!",
                 "link_url": "https://example.com/product",
-                    "image_url": "https://example.com/image.jpg",
+                "image_url": "https://example.com/image.jpg",
                 "opportunity_id": "opp-42",
             },
         },
@@ -569,6 +569,7 @@ def test_publish_content_server_ignores_client_operation_key(
                 "board_name": "B",
                 "pin_text": "T",
                 "link_url": "https://a.co",
+                "image_url": "https://example.com/image.jpg",
             },
         },
     )
@@ -604,6 +605,7 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway)
                 "board_name": "B",
                 "pin_text": "T",
                 "link_url": "https://a.co",
+                "image_url": "https://example.com/image.jpg",
                 "access_token": "SECRET-TOK",
                 "oauth_code": "SECRET-CODE",
                 "client_secret": "SECRET-SECRET",
@@ -647,7 +649,7 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
         payload={
             "platform": "pinterest",
             "worker_id": "dup-worker",
-            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"},
         },
     )
     approval_gateway.approve_request(publish_request_id)
@@ -681,7 +683,7 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
         payload={
             "platform": "pinterest",
             "worker_id": "restart-dup-worker",
-            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"},
         },
     )
     approval_gateway.approve_request(publish_request_id)
@@ -727,7 +729,7 @@ def test_publish_content_resume_rejects_request_owner_fallback_when_user_identit
         payload={
             "platform": "pinterest",
             "worker_id": "owner-hardening-worker",
-            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"},
         },
         owner_id="user-b",
     )["request"]["id"]
@@ -749,7 +751,7 @@ def test_publish_content_missing_worker_id_fails(resume_service, approval_gatewa
         payload={
             "platform": "pinterest",
             # no worker_id
-            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"},
+            "content": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"},
         },
     )
     approval_gateway.approve_request(request_id)
@@ -797,6 +799,7 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
                 "board_name": "B",
                 "pin_text": "T",
                 "link_url": "javascript:alert(1)",
+                "image_url": "https://example.com/image.jpg",
             },
         },
     )
