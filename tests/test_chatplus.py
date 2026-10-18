@@ -137,6 +137,30 @@ class TestChatPlusMessageFlow:
         assert resume["resume"] is not None
 
 
+class TestPinterestPublishConfirmation:
+    def test_chatplus_only_confirms_publish_with_provider_pin_id(self):
+        text = ChatPlusService._assistant_text(
+            goal="Publish this Pinterest pin",
+            mission={"status": "completed", "result": {}},
+            execution={"report": {"results": [{"success": True, "status": "published", "platform": "pinterest", "pin_id": "pin-123", "board_name": "Affiliate products"}]}},
+            state={"state": "completed"},
+            approvals=[],
+        )
+        assert "Pinterest confirmed the Pin was published" in text
+        assert "pin-123" in text
+
+    def test_chatplus_does_not_claim_publish_without_pin_id(self):
+        text = ChatPlusService._assistant_text(
+            goal="Publish this Pinterest pin",
+            mission={"status": "completed", "result": {}},
+            execution={"report": {"results": [{"success": True, "status": "completed", "platform": "pinterest"}]}},
+            state={"state": "completed"},
+            approvals=[],
+        )
+        assert "NOT confirmed" in text
+        assert "No provider-confirmed Pin ID" in text
+
+
 class TestChatPlusRoutes:
     def test_frontend_workspace_visibility_is_session_aware(self):
         html = (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
