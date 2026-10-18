@@ -920,7 +920,7 @@ class PinterestConnector(BaseConnector):
                 }
             return {
                 "success": True,
-                "status": "already_published",
+                "status": "duplicate_record",
                 "pin_id": existing_pin_id,
                 "approval_request_id": existing_pin.get("approval_request_id") or approval_request_id,
                 "platform": "pinterest",
