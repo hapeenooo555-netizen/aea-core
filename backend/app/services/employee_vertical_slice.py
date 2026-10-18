@@ -628,15 +628,21 @@ class EmployeeVerticalSlice:
         ))
         explicit_connection = any(term in goal for term in (
             "connect", "onboard", "authorize", "link pinterest", "enroll",
-            "start affiliate marketing", "start an affiliate", "kuanza affiliate",
             "kuunganisha pinterest",
+        ))
+        campaign_start = any(term in goal for term in (
+            "start affiliate marketing", "start an affiliate", "start affiliate",
+            "kuanza affiliate",
         ))
         is_content_planning = explicit_draft_only
         connection_intent = explicit_connection and not is_content_planning
-        status_check_intent = any(term in goal for term in (
-            "check my pinterest", "pinterest account status", "pinterest connection status",
-            "check pinterest status", "is pinterest connected", "hali ya pinterest",
-        )) and not is_content_planning
+        status_check_intent = (
+            any(term in goal for term in (
+                "check my pinterest", "pinterest account status", "pinterest connection status",
+                "check pinterest status", "is pinterest connected", "hali ya pinterest",
+            ))
+            or campaign_start
+        ) and not is_content_planning
         if is_content_planning:
             steps.append({
                 "step_name": "prepare_affiliate_content",
