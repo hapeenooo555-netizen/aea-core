@@ -23,7 +23,7 @@ from app.services.stores.platform_connection_store import PlatformConnectionStor
 
 def _mock_pinterest_publish(monkeypatch):
     """Use deterministic provider responses; unit tests must not call Pinterest."""
-    from app.services.connectors import pinterest_connector
+    import httpx
 
     class Response:
         def __init__(self, status_code, payload):
@@ -49,7 +49,7 @@ def _mock_pinterest_publish(monkeypatch):
         def post(self, url, **kwargs):
             return Response(201, {"id": "test-pin-123", "created_at": "2026-10-18T00:00:00Z"})
 
-    monkeypatch.setattr(pinterest_connector.httpx, "Client", FakeClient)
+    monkeypatch.setattr(httpx, "Client", FakeClient)
     monkeypatch.setattr(
         "app.services.pinterest_token_vault.get_access_token",
         lambda *, owner_id: {
