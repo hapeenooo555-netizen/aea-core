@@ -1093,6 +1093,14 @@ evaluate: "Evaluating the next step",
       const approvalsView = document.getElementById("approvals");
       const composer = document.getElementById("composer");
       const messageInput = document.getElementById("messageInput");
+      const pinterestContentPromptButton = document.getElementById("pinterestContentPromptButton");
+      if (pinterestContentPromptButton && messageInput) {
+        pinterestContentPromptButton.addEventListener("click", () => {
+          messageInput.value = "Help me create a Pinterest Pin. First verify my connected Pinterest account and available boards, then prepare a Pin title, description, destination link, and image. Show me the complete preview and wait for my explicit approval before publishing. Do not publish automatically.";
+          messageInput.focus();
+          messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
       const sendButton = document.getElementById("sendButton");
       const statusPill = document.getElementById("statusPill");
       const statusLabel = document.getElementById("statusLabel");
