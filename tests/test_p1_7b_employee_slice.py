@@ -21,6 +21,46 @@ from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStor
 from app.services.stores.platform_connection_store import PlatformConnectionStore
 
 
+def _mock_pinterest_publish(monkeypatch):
+    """Use deterministic provider responses; unit tests must not call Pinterest."""
+    import httpx
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            return Response(200, {"items": [{"id": "board-b", "name": "B"}]})
+
+        def post(self, url, **kwargs):
+            return Response(201, {"id": "test-pin-123", "created_at": "2026-10-18T00:00:00Z"})
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.pinterest_token_vault.get_access_token",
+        lambda *, owner_id: {
+            "access_token": "test-access-token",
+            "expired": False,
+            "external_account_id": "test-account",
+            "scopes": ["pins:write", "boards:read"],
+        },
+    )
+
+
 @pytest.fixture(autouse=True)
 def _disable_supabase(monkeypatch):
     monkeypatch.setattr(database_module, "supabase_client", None, raising=False)
@@ -241,7 +281,7 @@ def test_publish_content_plan_created_when_intent_and_inputs_complete():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-pub",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert result["success"] is False
     assert result["status"] == "WAIT_FOR_APPROVAL"
@@ -283,7 +323,7 @@ def test_publish_content_not_planned_when_disconnected():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-disconnected",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     plan_tools = [s["tool_name"] for s in result["report"]["plan"]]
     assert "publish_content" not in plan_tools
@@ -295,7 +335,7 @@ def test_employee_publish_creates_approval():
     result = employee.run(
         "Publish my pin",
         mission_id="mission-approval",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert result["status"] == "WAIT_FOR_APPROVAL"
     approval_id = result["report"]["resume_information"]["approval_request_id"]
@@ -305,13 +345,14 @@ def test_employee_publish_creates_approval():
     assert approval["payload"]["operation_key"].startswith("p1-7d:")
 
 
-def test_publish_content_resume():
+def test_publish_content_resume(monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     employee = _slice()
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
     pending = employee.run(
         "Publish my pin",
         mission_id="mission-publish-resume",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     assert pending["status"] == "WAIT_FOR_APPROVAL"
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
@@ -326,13 +367,14 @@ def test_publish_content_resume():
     assert durable["status"] == "published"
 
 
-def test_publish_content_idempotency_duplicate():
+def test_publish_content_idempotency_duplicate(monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     employee = _slice()
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
     pending = employee.run(
         "Publish my pin",
         mission_id="mission-idempotent",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     employee._approvals.approve_request(approval_id, approved_by="user-a")
@@ -353,7 +395,7 @@ def test_publish_content_cross_user_cannot_resume():
     pending = employee_a.run(
         "Publish my pin",
         mission_id="mission-cross",
-        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co"}},
+        metadata={"platform": "pinterest", "content_inputs": {"board_name": "B", "pin_text": "T", "link_url": "https://a.co", "image_url": "https://example.com/image.jpg"}},
     )
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     employee_a._approvals.approve_request(approval_id, approved_by="user-a")

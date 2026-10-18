@@ -180,13 +180,20 @@ class EmployeeVerticalSlice:
         )
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for explicit publishing intent."""
-        normalized = goal.replace("pinterest", "")
-        return (
-            "publish" in normalized
-            or ("create" in normalized and "pin" in normalized)
-            or "affiliate content" in normalized
+        """Return True only for an affirmative request to publish content."""
+        normalized = " ".join(goal.lower().replace("pinterest", "").split())
+        # A content-planning request that explicitly says not to publish must
+        # never enter the publishing/connection flow.
+        negated = (
+            "do not publish" in normalized
+            or "don't publish" in normalized
+            or "dont publish" in normalized
+            or "without publishing" in normalized
+            or "not publish anything" in normalized
         )
+        if negated:
+            return False
+        return "publish" in normalized or ("create" in normalized and "pin" in normalized)
 
     def run(
         self,
@@ -590,7 +597,7 @@ class EmployeeVerticalSlice:
 
     def _publish_inputs_complete(self, payload: dict[str, Any]) -> bool:
         """Require complete content inputs before creating a publish approval."""
-        return all(payload.get(field) for field in ("board_name", "pin_text", "link_url"))
+        return all(payload.get(field) for field in ("board_name", "pin_text", "link_url", "image_url"))
 
     def _publish_step(self, required_payload: dict[str, Any], affiliate_meta: dict[str, Any]) -> dict[str, Any]:
         """Build a validated publish_content plan step."""
@@ -614,9 +621,28 @@ class EmployeeVerticalSlice:
         platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
-        is_content_planning = any(term in goal for term in (
-            "affiliate", "content ideas", "content plan", "campaign", "sample pin", "marketing",
-        )) and not any(term in goal for term in ("connect pinterest", "onboard", "authorize pinterest", "link pinterest"))
+        explicit_draft_only = any(term in goal for term in (
+            "do not publish", "don't publish", "dont publish", "without publishing",
+            "draft only", "prepare five content ideas", "content ideas", "content plan",
+            "sample pin", "marketing tips", "prepare content",
+        ))
+        explicit_connection = any(term in goal for term in (
+            "connect", "onboard", "authorize", "link pinterest", "enroll",
+            "kuunganisha pinterest",
+        ))
+        campaign_start = any(term in goal for term in (
+            "start affiliate marketing", "start an affiliate", "start affiliate",
+            "kuanza affiliate",
+        ))
+        is_content_planning = explicit_draft_only
+        connection_intent = explicit_connection and not is_content_planning
+        status_check_intent = (
+            any(term in goal for term in (
+                "check my pinterest", "pinterest account status", "pinterest connection status",
+                "check pinterest status", "is pinterest connected", "hali ya pinterest",
+            ))
+            or campaign_start
+        ) and not is_content_planning
         if is_content_planning:
             steps.append({
                 "step_name": "prepare_affiliate_content",
@@ -631,7 +657,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"goal": objective.goal, **required_payload},
                 "metadata": required_payload or None,
             })
-        if is_pinterest and (any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")) or self._publish_intent(goal)):
+        if is_pinterest and not is_content_planning and (connection_intent or status_check_intent or self._publish_intent(goal)):
             affiliate_meta = {k: v for k, v in required_payload.items() if k not in {"platform"}}
             steps.append({
                 "step_name": "check_connection_status",
@@ -641,7 +667,7 @@ class EmployeeVerticalSlice:
                 "action_payload": {"platform": "pinterest", **required_payload},
                 "metadata": affiliate_meta,
             })
-            if any(word in goal for word in ("connect", "onboard", "authorize", "link", "enroll")):
+            if connection_intent:
                 steps.append({
                     "step_name": "start_onboarding",
                     "tool_name": "start_platform_onboarding",
