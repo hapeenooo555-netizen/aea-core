@@ -521,7 +521,7 @@ class TestChatPlusFrontend:
             state={"state": "completed"},
             approvals=[],
         )
-        assert text == "Goal completed."
+        assert "not verified task completion" in text
 
         # Test failed
         text = ChatPlusService._assistant_text(
