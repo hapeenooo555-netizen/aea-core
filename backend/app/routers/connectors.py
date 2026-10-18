@@ -23,6 +23,7 @@ from app.services.human_intervention import HumanInterventionManager
 from app.services.pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
 from app.services.stores.onboarding_workflow_store import OnboardingWorkflowStore
 from app.services.stores.platform_connection_store import PlatformConnectionStore
+from app.services.stores.pin_publish_store import PinPublishStore
 from app.services.worker_runtime import WorkerRuntime
 
 router = APIRouter(
@@ -89,9 +90,14 @@ def _get_user_scoped_pinterest_connector(
         client=client,
         owner_id_uuid=owner_id_uuid,
     )
+    # Publishing must use the same user-scoped database client and fail closed
+    # if durable idempotency persistence is unavailable. An in-memory fallback
+    # is suitable for isolated tests only, never for a production publish path.
+    pin_store = PinPublishStore(client=client, durable_required=True)
     return PinterestConnector(
         workflow_store=workflow_store,
         connection_store=connection_store,
+        pin_store=pin_store,
     )
 
 
