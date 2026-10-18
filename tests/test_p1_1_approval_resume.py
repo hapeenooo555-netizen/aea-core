@@ -24,6 +24,49 @@ from app.services.stores.platform_connection_store import PlatformConnectionStor
 from app.services.stores.pin_publish_store import PinPublishStore  # noqa: E402
 
 
+def _mock_pinterest_publish(monkeypatch):
+    """Keep publish tests deterministic without contacting the real Pinterest API."""
+    from app.services.connectors import pinterest_connector
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            return Response(200, {"items": [
+                {"id": "board-b", "name": "B"},
+                {"id": "board-my", "name": "My Board"},
+            ]})
+
+        def post(self, url, **kwargs):
+            return Response(201, {"id": "test-pin-123", "created_at": "2026-10-18T00:00:00Z"})
+
+    monkeypatch.setattr(pinterest_connector.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.pinterest_token_vault.get_access_token",
+        lambda *, owner_id: {
+            "access_token": "test-access-token",
+            "expired": False,
+            "external_account_id": "test-account",
+            "scopes": ["pins:write", "boards:read"],
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -47,7 +90,8 @@ def human_intervention_manager(supabase_disabled) -> HumanInterventionManager:
 
 
 @pytest.fixture
-def resume_service(stores, approval_gateway, human_intervention_manager):
+def resume_service(stores, approval_gateway, human_intervention_manager, monkeypatch):
+    _mock_pinterest_publish(monkeypatch)
     registry = ConnectorRegistry()
     registry.register(
         PinterestConnector(
@@ -479,7 +523,7 @@ def test_existing_p0_5_persistence_still_works(stores):
 # ---------------------------------------------------------------------------
 # 15: publish_content approval → resume pipeline (P1-11)
 # ---------------------------------------------------------------------------
-def test_publish_content_requires_platform_connection(resume_service, approval_gateway):
+def test_publish_content_requires_platform_connection(resume_service, approval_gateway, monkeypatch):
     """publish_content resume fails when the platform is not connected."""
     request_id = _make_approval_request(
         approval_gateway,
@@ -491,6 +535,7 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
         },
     )
     approval_gateway.approve_request(request_id)
+    monkeypatch.setattr("app.services.pinterest_token_vault.get_access_token", lambda *, owner_id: None)
 
     result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
