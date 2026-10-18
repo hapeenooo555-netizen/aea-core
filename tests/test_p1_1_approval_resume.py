@@ -521,6 +521,7 @@ def test_publish_content_resume_success(resume_service, approval_gateway):
                 "board_name": "My Board",
                 "pin_text": "Check this out!",
                 "link_url": "https://example.com/product",
+                    "image_url": "https://example.com/image.jpg",
                 "opportunity_id": "opp-42",
             },
         },
