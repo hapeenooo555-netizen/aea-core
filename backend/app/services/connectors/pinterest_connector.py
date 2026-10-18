@@ -983,10 +983,15 @@ class PinterestConnector(BaseConnector):
         if not pin_id:
             return {"success": False, "error": "Pinterest returned no pin ID"}
 
+        # Pinterest's create response provides the canonical Pin ID. Build the
+        # public Pin URL from that provider-confirmed ID; keep link_url as the
+        # destination URL embedded in the Pin, not the Pin's own URL.
+        pin_url = f"https://www.pinterest.com/pin/{pin_id}/"
         result = {
             "success": True,
             "status": "published",
             "pin_id": pin_id,
+            "pin_url": pin_url,
             "approval_request_id": approval_request_id,
             "platform": "pinterest",
             "board_id": str(board_id),
