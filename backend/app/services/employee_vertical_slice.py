@@ -368,6 +368,20 @@ class EmployeeVerticalSlice:
                 index,
                 goal=report.get("user_goal", ""),
             )
+            # Do not mark a Pin-intent mission complete after only generating
+            # generic affiliate content. Pause and collect the missing inputs
+            # before a publish approval can ever be created.
+            if (
+                result.get("success")
+                and step.get("tool_name") == "prepare_affiliate_content"
+                and self._publish_intent(report.get("user_goal", ""))
+                and not any(s.get("tool_name") == "publish_content" for s in plan)
+            ):
+                decision = "WAIT_FOR_HUMAN_INPUT"
+                result["message"] = (
+                    "Review the draft, then provide the Pinterest board name, "
+                    "destination/affiliate URL, and image URL. Nothing has been published."
+                )
             report["decision"] = decision
             next_step = self._next_step_name(decision, plan, index)
             report["learning"] = [
@@ -740,10 +754,27 @@ class EmployeeVerticalSlice:
                     "requires_approval": True,
                     "metadata": affiliate_meta,
                 })
-            if self._publish_intent(goal) and self._publish_inputs_complete(required_payload):
+            if self._publish_intent(goal):
                 discovered_tools = {tool.get("tool_name") for tool in discovered.get("tools", [])}
-                if "publish_content" in discovered_tools:
-                    steps.append(self._publish_step(required_payload, affiliate_meta))
+                if self._publish_inputs_complete(required_payload):
+                    if "publish_content" in discovered_tools:
+                        steps.append(self._publish_step(required_payload, affiliate_meta))
+                elif "prepare_affiliate_content" in discovered_tools:
+                    # A Pin request without a board, destination URL, and image
+                    # must create a draft first, then pause for those inputs.
+                    steps.append({
+                        "step_name": "prepare_pinterest_pin_draft",
+                        "tool_name": "prepare_affiliate_content",
+                        "input": {
+                            "goal": objective.goal,
+                            "niche": str(required_payload.get("niche") or "AI tools and digital marketing"),
+                            "markets": str(required_payload.get("markets") or "USA, UK, Canada, Australia"),
+                            "platform": "Pinterest",
+                        },
+                        "action_type": "prepare_affiliate_content",
+                        "action_payload": {"goal": objective.goal, **required_payload},
+                        "metadata": affiliate_meta or None,
+                    })
         if not steps:
             steps.append({
                 "step_name": "record_goal",
