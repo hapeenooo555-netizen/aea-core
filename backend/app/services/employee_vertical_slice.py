@@ -192,6 +192,11 @@ class EmployeeVerticalSlice:
             "wait for my explicit approval before publishing",
             "wait for approval before publishing",
         ))
+        # Explicit "do not publish anything" is a hard draft-only instruction.
+        # Evaluate it before generic positive intent terms like "Pin".
+        if "do not publish anything" in normalized or "don't publish anything" in normalized or "dont publish anything" in normalized:
+            if not approval_gated:
+                return False
         negated = (
             "do not publish" in normalized
             or "don't publish" in normalized
