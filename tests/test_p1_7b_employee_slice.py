@@ -501,4 +501,4 @@ def test_pinterest_pin_with_complete_inputs_still_requires_explicit_approval():
     approval_id = result["report"]["resume_information"]["approval_request_id"]
     approval = employee._approvals.get_request(approval_id)
     assert approval["action_type"] == "publish_content"
-    assert approval["payload"]["image_url"] == "https://example.com/pin.jpg"
+    assert approval["payload"]["content"]["image_url"] == "https://example.com/pin.jpg"
