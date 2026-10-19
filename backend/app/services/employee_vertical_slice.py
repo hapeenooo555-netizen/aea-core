@@ -199,6 +199,15 @@ class EmployeeVerticalSlice:
             or "without publishing" in normalized
             or "not publish anything" in normalized
         )
+        draft_only = any(phrase in normalized for phrase in (
+            "do not publish anything",
+            "don't publish anything",
+            "dont publish anything",
+            "prepare five content ideas and one sample pin",
+            "draft only",
+        ))
+        if draft_only and not approval_gated:
+            return False
         if negated and not approval_gated:
             return False
         return "publish" in normalized or ("create" in normalized and "pin" in normalized)
