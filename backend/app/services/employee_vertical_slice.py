@@ -609,13 +609,43 @@ class EmployeeVerticalSlice:
         return None
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for explicit publishing intent."""
-        normalized = goal.replace("pinterest", "")
-        return (
-            "publish" in normalized
-            or ("create" in normalized and "pin" in normalized)
-            or "affiliate content" in normalized
-        )
+        """Return True for Pin publishing intent, except genuinely draft-only requests."""
+        normalized = " ".join(goal.lower().replace("pinterest", "").split())
+        approval_gated = any(phrase in normalized for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
+        # A request that explicitly says not to publish anything is draft-only,
+        # even if it mentions Pins or content ideas.
+        hard_draft_only = any(phrase in normalized for phrase in (
+            "do not publish anything",
+            "don't publish anything",
+            "dont publish anything",
+        ))
+        if hard_draft_only:
+            return False
+        draft_only = any(phrase in normalized for phrase in (
+            "prepare five content ideas and one sample pin",
+            "draft only",
+            "content ideas",
+            "content plan",
+            "prepare content",
+        ))
+        if draft_only and not approval_gated:
+            return False
+        negated = any(phrase in normalized for phrase in (
+            "do not publish",
+            "don't publish",
+            "dont publish",
+            "without publishing",
+            "not publish anything",
+        ))
+        if negated and not approval_gated:
+            return False
+        return "publish" in normalized or ("create" in normalized and "pin" in normalized) or "affiliate content" in normalized
 
     def _publish_inputs_complete(self, payload: dict[str, Any]) -> bool:
         """Require complete content inputs before creating a publish approval."""
