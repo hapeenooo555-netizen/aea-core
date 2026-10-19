@@ -442,3 +442,63 @@ def test_approval_gated_pinterest_pin_request_is_not_misclassified_as_draft_only
     assert employee._publish_intent(
         "Prepare five content ideas and one sample Pin. Do not publish anything."
     ) is False
+
+
+def test_approval_gated_pinterest_pin_request_routes_to_draft_then_human_input():
+    employee = _slice()
+    employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
+
+    result = employee.run(
+        "Help me create a Pinterest Pin. First verify my connected Pinterest account "
+        "and available boards, then prepare a Pin title, description, destination "
+        "link, and image. Show me the complete preview and wait for my explicit "
+        "approval before publishing. Do not publish automatically.",
+        mission_id="mission-approval-gated-pin",
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
+    report = result["report"]
+    assert report["selected_tools"] == [
+        "pinterest.get_account_status",
+        "prepare_affiliate_content",
+    ]
+    assert report["results"][0]["status"] == "connected"
+    draft = report["results"][1]
+    assert draft["success"] is True
+    assert draft["published"] is False
+    assert draft["sample_pin"]["title"]
+    assert report["required_user_action"]
+    assert "destination/affiliate URL" in report["required_user_action"]
+    assert "publish_content" not in report["selected_tools"]
+    assert not any(a["action_type"] == "publish_content" for a in employee._approvals.list_requests())
+
+
+def test_pinterest_pin_with_complete_inputs_still_requires_explicit_approval():
+    employee = _slice()
+    employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
+
+    result = employee.run(
+        "Create a Pinterest Pin and wait for my explicit approval before publishing.",
+        mission_id="mission-complete-pin-inputs",
+        metadata={
+            "platform": "pinterest",
+            "content_inputs": {
+                "board_name": "B",
+                "pin_text": "A useful AI tools guide",
+                "link_url": "https://example.com/affiliate",
+                "image_url": "https://example.com/pin.jpg",
+                "title": "AI Tools Guide",
+            },
+        },
+    )
+
+    assert result["status"] == "WAIT_FOR_APPROVAL"
+    assert result["report"]["selected_tools"] == [
+        "pinterest.get_account_status",
+        "publish_content",
+    ]
+    approval_id = result["report"]["resume_information"]["approval_request_id"]
+    approval = employee._approvals.get_request(approval_id)
+    assert approval["action_type"] == "publish_content"
+    assert approval["payload"]["image_url"] == "https://example.com/pin.jpg"
