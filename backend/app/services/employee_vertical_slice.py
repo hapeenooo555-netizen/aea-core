@@ -182,8 +182,16 @@ class EmployeeVerticalSlice:
     def _publish_intent(self, goal: str) -> bool:
         """Return True only for an affirmative request to publish content."""
         normalized = " ".join(goal.lower().replace("pinterest", "").split())
-        # A content-planning request that explicitly says not to publish must
-        # never enter the publishing/connection flow.
+        # "Do not publish automatically" means require human approval, not
+        # "do not prepare a Pin". Only genuinely draft-only requests should
+        # suppress the Pinterest connection/publish-intent path.
+        approval_gated = any(phrase in normalized for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
         negated = (
             "do not publish" in normalized
             or "don't publish" in normalized
@@ -191,7 +199,7 @@ class EmployeeVerticalSlice:
             or "without publishing" in normalized
             or "not publish anything" in normalized
         )
-        if negated:
+        if negated and not approval_gated:
             return False
         return "publish" in normalized or ("create" in normalized and "pin" in normalized)
 
