@@ -180,19 +180,41 @@ class EmployeeVerticalSlice:
         )
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for an affirmative request to publish content."""
+        """Return True for a Pin creation/publishing request unless it is draft-only."""
         normalized = " ".join(goal.lower().replace("pinterest", "").split())
-        # A content-planning request that explicitly says not to publish must
-        # never enter the publishing/connection flow.
-        negated = (
-            "do not publish" in normalized
-            or "don't publish" in normalized
-            or "dont publish" in normalized
-            or "without publishing" in normalized
-            or "not publish anything" in normalized
-        )
-        if negated:
+
+        # Hard negative requests must be evaluated before generic words such as
+        # "publish", "create", or "Pin" can make the request look affirmative.
+        approval_gated = any(phrase in normalized for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
+        draft_only = any(phrase in normalized for phrase in (
+            "do not publish anything",
+            "don't publish anything",
+            "dont publish anything",
+            "prepare five content ideas and one sample pin",
+            "draft only",
+            "content ideas",
+            "content plan",
+            "prepare content",
+        ))
+        if draft_only and not approval_gated:
             return False
+
+        negated = any(phrase in normalized for phrase in (
+            "do not publish",
+            "don't publish",
+            "dont publish",
+            "without publishing",
+            "not publish anything",
+        ))
+        if negated and not approval_gated:
+            return False
+
         return "publish" in normalized or ("create" in normalized and "pin" in normalized)
 
     def run(
@@ -587,13 +609,43 @@ class EmployeeVerticalSlice:
         return None
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for explicit publishing intent."""
-        normalized = goal.replace("pinterest", "")
-        return (
-            "publish" in normalized
-            or ("create" in normalized and "pin" in normalized)
-            or "affiliate content" in normalized
-        )
+        """Return True for Pin publishing intent, except genuinely draft-only requests."""
+        normalized = " ".join(goal.lower().replace("pinterest", "").split())
+        approval_gated = any(phrase in normalized for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
+        # A request that explicitly says not to publish anything is draft-only,
+        # even if it mentions Pins or content ideas.
+        hard_draft_only = any(phrase in normalized for phrase in (
+            "do not publish anything",
+            "don't publish anything",
+            "dont publish anything",
+        ))
+        if hard_draft_only:
+            return False
+        draft_only = any(phrase in normalized for phrase in (
+            "prepare five content ideas and one sample pin",
+            "draft only",
+            "content ideas",
+            "content plan",
+            "prepare content",
+        ))
+        if draft_only and not approval_gated:
+            return False
+        negated = any(phrase in normalized for phrase in (
+            "do not publish",
+            "don't publish",
+            "dont publish",
+            "without publishing",
+            "not publish anything",
+        ))
+        if negated and not approval_gated:
+            return False
+        return "publish" in normalized or ("create" in normalized and "pin" in normalized) or "affiliate content" in normalized
 
     def _publish_inputs_complete(self, payload: dict[str, Any]) -> bool:
         """Require complete content inputs before creating a publish approval."""
@@ -621,11 +673,22 @@ class EmployeeVerticalSlice:
         platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
+        # "Do not publish automatically" is an approval constraint, not a
+        # request to stop at a generic affiliate-content draft. Keep explicit
+        # draft-only requests separate from a Pinterest Pin request that must
+        # be previewed and approved before publishing.
+        approval_gated_publish = any(phrase in goal for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
         explicit_draft_only = any(term in goal for term in (
             "do not publish", "don't publish", "dont publish", "without publishing",
             "draft only", "prepare five content ideas", "content ideas", "content plan",
             "sample pin", "marketing tips", "prepare content",
-        ))
+        )) and not approval_gated_publish
         explicit_connection = any(term in goal for term in (
             "connect", "onboard", "authorize", "link pinterest", "enroll",
             "kuunganisha pinterest",

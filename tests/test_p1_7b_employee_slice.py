@@ -427,3 +427,18 @@ def test_affiliate_content_prompt_generates_real_draft_without_pinterest_gate():
     assert draft["sample_pin"]["published"] is False
     assert draft["published"] is False
     assert draft["requires_human_approval_before_publishing"] is True
+
+
+def test_approval_gated_pinterest_pin_request_is_not_misclassified_as_draft_only():
+    employee = _slice()
+    goal = (
+        "Help me create a Pinterest Pin. First verify my connected Pinterest account "
+        "and available boards, then prepare a Pin title, description, destination link, "
+        "and image. Show me the complete preview and wait for my explicit approval "
+        "before publishing. Do not publish automatically."
+    )
+
+    assert employee._publish_intent(goal) is True
+    assert employee._publish_intent(
+        "Prepare five content ideas and one sample Pin. Do not publish anything."
+    ) is False
