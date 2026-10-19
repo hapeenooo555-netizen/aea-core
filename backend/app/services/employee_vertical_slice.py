@@ -180,11 +180,11 @@ class EmployeeVerticalSlice:
         )
 
     def _publish_intent(self, goal: str) -> bool:
-        """Return True only for an affirmative request to publish content."""
+        """Return True for a Pin creation/publishing request unless it is draft-only."""
         normalized = " ".join(goal.lower().replace("pinterest", "").split())
-        # "Do not publish automatically" means require human approval, not
-        # "do not prepare a Pin". Only genuinely draft-only requests should
-        # suppress the Pinterest connection/publish-intent path.
+
+        # Hard negative requests must be evaluated before generic words such as
+        # "publish", "create", or "Pin" can make the request look affirmative.
         approval_gated = any(phrase in normalized for phrase in (
             "do not publish automatically",
             "don't publish automatically",
@@ -192,29 +192,29 @@ class EmployeeVerticalSlice:
             "wait for my explicit approval before publishing",
             "wait for approval before publishing",
         ))
-        # Explicit "do not publish anything" is a hard draft-only instruction.
-        # Evaluate it before generic positive intent terms like "Pin".
-        if "do not publish anything" in normalized or "don't publish anything" in normalized or "dont publish anything" in normalized:
-            if not approval_gated:
-                return False
-        negated = (
-            "do not publish" in normalized
-            or "don't publish" in normalized
-            or "dont publish" in normalized
-            or "without publishing" in normalized
-            or "not publish anything" in normalized
-        )
         draft_only = any(phrase in normalized for phrase in (
             "do not publish anything",
             "don't publish anything",
             "dont publish anything",
             "prepare five content ideas and one sample pin",
             "draft only",
+            "content ideas",
+            "content plan",
+            "prepare content",
         ))
         if draft_only and not approval_gated:
             return False
+
+        negated = any(phrase in normalized for phrase in (
+            "do not publish",
+            "don't publish",
+            "dont publish",
+            "without publishing",
+            "not publish anything",
+        ))
         if negated and not approval_gated:
             return False
+
         return "publish" in normalized or ("create" in normalized and "pin" in normalized)
 
     def run(
