@@ -374,7 +374,9 @@ class EmployeeVerticalSlice:
             if (
                 result.get("success")
                 and step.get("tool_name") == "prepare_affiliate_content"
-                and self._publish_intent(report.get("user_goal", ""))
+                and self._publish_intent(
+                    (step.get("input") or {}).get("goal") or report.get("user_goal", "")
+                )
                 and not any(s.get("tool_name") == "publish_content" for s in plan)
             ):
                 decision = "WAIT_FOR_HUMAN_INPUT"
