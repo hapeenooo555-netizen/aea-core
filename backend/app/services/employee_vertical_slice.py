@@ -621,11 +621,22 @@ class EmployeeVerticalSlice:
         platform_constraints = list(getattr(objective, "platform_constraints", []) or [])
         steps: list[dict[str, Any]] = []
         is_pinterest = "pinterest" in goal or "pinterest" in platform_constraints or required_payload.get("platform") == "pinterest"
+        # "Do not publish automatically" is an approval constraint, not a
+        # request to stop at a generic affiliate-content draft. Keep explicit
+        # draft-only requests separate from a Pinterest Pin request that must
+        # be previewed and approved before publishing.
+        approval_gated_publish = any(phrase in goal for phrase in (
+            "do not publish automatically",
+            "don't publish automatically",
+            "dont publish automatically",
+            "wait for my explicit approval before publishing",
+            "wait for approval before publishing",
+        ))
         explicit_draft_only = any(term in goal for term in (
             "do not publish", "don't publish", "dont publish", "without publishing",
             "draft only", "prepare five content ideas", "content ideas", "content plan",
             "sample pin", "marketing tips", "prepare content",
-        ))
+        )) and not approval_gated_publish
         explicit_connection = any(term in goal for term in (
             "connect", "onboard", "authorize", "link pinterest", "enroll",
             "kuunganisha pinterest",
