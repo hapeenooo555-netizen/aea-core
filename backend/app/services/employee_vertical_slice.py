@@ -968,7 +968,15 @@ class EmployeeVerticalSlice:
         )
         # A successful generic draft is not the end of an approval-gated Pin
         # mission: collect the missing board/link/image details before approval.
-        if step_name == "prepare_affiliate_content" and approval_gated_pin_request:
+        # The plan step can be named prepare_pinterest_pin_draft while its tool
+        # is prepare_affiliate_content, so check both to preserve the approval gate.
+        current_step = plan[index] if 0 <= index < len(plan) else {}
+        current_tool = str(current_step.get("tool_name", ""))
+        is_pin_draft_step = (
+            step_name in {"prepare_affiliate_content", "prepare_pinterest_pin_draft"}
+            or current_tool == "prepare_affiliate_content"
+        )
+        if is_pin_draft_step and approval_gated_pin_request:
             return "WAIT_FOR_HUMAN_INPUT"
         if result.get("success"):
             if result.get("status") in {"not_started", "needs_reconnect", "failed", "onboarding"} and index + 1 < len(plan):
