@@ -416,8 +416,13 @@ class EmployeeVerticalSlice:
             )
             if (
                 result.get("success")
-                and step.get("tool_name") == "prepare_affiliate_content"
                 and approval_gated_pin_request
+                and (
+                    bool(result.get("sample_pin"))
+                    or "prepare_affiliate_content" in str(step.get("tool_name", ""))
+                    or ("content" in str(step.get("tool_name", "")).lower()
+                        and "prepare" in str(step.get("tool_name", "")).lower())
+                )
                 and not self._has_complete_pinterest_pin_inputs(metadata)
             ):
                 decision = "WAIT_FOR_HUMAN_INPUT"
