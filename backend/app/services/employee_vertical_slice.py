@@ -7,6 +7,7 @@ MissionExecutionService and external side effects go through ApprovalGateway.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -179,6 +180,15 @@ class EmployeeVerticalSlice:
             lambda owner, platform: self._connections.get(owner, platform),
         )
 
+    @staticmethod
+    def _has_complete_pinterest_pin_inputs(metadata: dict[str, Any] | None) -> bool:
+        """Only allow a planned Pinterest publish step when its required content is present."""
+        inputs = (metadata or {}).get("content_inputs") or {}
+        return all(
+            isinstance(inputs.get(key), str) and bool(inputs.get(key, "").strip())
+            for key in ("board_name", "pin_text", "link_url", "image_url", "title")
+        )
+
     def _publish_intent(self, goal: str) -> bool:
         """Return True for a Pin creation/publishing request unless it is draft-only."""
         normalized = " ".join(goal.lower().replace("pinterest", "").split())
@@ -230,15 +240,70 @@ class EmployeeVerticalSlice:
             return {"success": False, "status": "FAIL", "error": mission_result.get("error", "Mission unavailable")}
         mission_id = mission_result["mission"]["id"]
         objective = ObjectiveParser().parse(goal, metadata)
+        # The parsed objective is immutable and may summarize away the explicit
+        # Pinterest Pin intent/approval wording. Preserve the original request
+        # for this narrow routing case without mutating the frozen dataclass.
+        raw_goal = goal.lower()
+        if (
+            "pinterest" in raw_goal
+            and ("pin" in raw_goal or "publish" in raw_goal)
+            and any(phrase in raw_goal for phrase in (
+                "do not publish automatically",
+                "don't publish automatically",
+                "wait for my explicit approval before publishing",
+                "wait for approval before publishing",
+            ))
+        ):
+            objective = replace(objective, goal=goal)
         discovered = self.discover_capabilities()
         plan = self._build_plan(objective, discovered)
+        # Force a deterministic two-step plan for approval-gated Pin requests
+        # when required publish inputs are absent. Do not inherit a generic
+        # content-planning plan that can complete successfully without a draft.
+        raw_goal = " ".join(goal.lower().split())
+        gated_pin = (
+            "pinterest" in raw_goal
+            and ("pin" in raw_goal or "publish" in raw_goal)
+            and any(phrase in raw_goal for phrase in (
+                "do not publish automatically",
+                "don't publish automatically",
+                "dont publish automatically",
+                "wait for my explicit approval before publishing",
+                "wait for approval before publishing",
+            ))
+        )
+        if gated_pin and not self._has_complete_pinterest_pin_inputs(metadata):
+            plan = [
+                {
+                    "step_name": "check_connection_status",
+                    "tool_name": "pinterest.get_account_status",
+                    "input": {"platform": "pinterest"},
+                    "action_type": "pinterest.get_account_status",
+                    "action_payload": {"platform": "pinterest"},
+                    "metadata": None,
+                },
+                {
+                    "step_name": "prepare_pinterest_pin_draft",
+                    "tool_name": "prepare_affiliate_content",
+                    "input": {
+                        "goal": goal,
+                        "niche": "AI tools and digital marketing",
+                        "markets": "USA, UK, Canada, Australia",
+                        "platform": "Pinterest",
+                    },
+                    "action_type": "prepare_affiliate_content",
+                    "action_payload": {"goal": goal},
+                    "metadata": None,
+                },
+            ]
         validation = self._validator.validate(
             plan,
             owner_id=self.owner_id,
             discovered=discovered,
         )
         report: dict[str, Any] = {
-            "user_goal": objective.goal,
+            "user_goal": goal,
+            "original_user_goal": goal,
             "understood_objective": objective.to_dict(),
             "discovered_capabilities": discovered,
             "plan": plan,
@@ -368,6 +433,42 @@ class EmployeeVerticalSlice:
                 index,
                 goal=report.get("user_goal", ""),
             )
+            # Do not mark a Pin-intent mission complete after only generating
+            # generic affiliate content. Pause and collect the missing inputs
+            # before a publish approval can ever be created.
+            original_goal = str(
+                report.get("original_user_goal")
+                or (step.get("input") or {}).get("goal")
+                or report.get("user_goal", "")
+            )
+            normalized_goal = " ".join(original_goal.lower().split())
+            approval_gated_pin_request = (
+                "pinterest" in normalized_goal
+                and ("pin" in normalized_goal or "publish" in normalized_goal)
+                and any(phrase in normalized_goal for phrase in (
+                    "do not publish automatically",
+                    "don't publish automatically",
+                    "dont publish automatically",
+                    "wait for my explicit approval before publishing",
+                    "wait for approval before publishing",
+                ))
+            )
+            if (
+                result.get("success")
+                and approval_gated_pin_request
+                and (
+                    bool(result.get("sample_pin"))
+                    or "prepare_affiliate_content" in str(step.get("tool_name", ""))
+                    or ("content" in str(step.get("tool_name", "")).lower()
+                        and "prepare" in str(step.get("tool_name", "")).lower())
+                )
+                and not self._has_complete_pinterest_pin_inputs(metadata)
+            ):
+                decision = "WAIT_FOR_HUMAN_INPUT"
+                result["message"] = (
+                    "Review the draft, then provide the Pinterest board name, "
+                    "destination/affiliate URL, and image URL. Nothing has been published."
+                )
             report["decision"] = decision
             next_step = self._next_step_name(decision, plan, index)
             report["learning"] = [
@@ -740,10 +841,27 @@ class EmployeeVerticalSlice:
                     "requires_approval": True,
                     "metadata": affiliate_meta,
                 })
-            if self._publish_intent(goal) and self._publish_inputs_complete(required_payload):
+            if self._publish_intent(goal):
                 discovered_tools = {tool.get("tool_name") for tool in discovered.get("tools", [])}
-                if "publish_content" in discovered_tools:
-                    steps.append(self._publish_step(required_payload, affiliate_meta))
+                if self._publish_inputs_complete(required_payload):
+                    if "publish_content" in discovered_tools:
+                        steps.append(self._publish_step(required_payload, affiliate_meta))
+                elif "prepare_affiliate_content" in discovered_tools:
+                    # A Pin request without a board, destination URL, and image
+                    # must create a draft first, then pause for those inputs.
+                    steps.append({
+                        "step_name": "prepare_pinterest_pin_draft",
+                        "tool_name": "prepare_affiliate_content",
+                        "input": {
+                            "goal": objective.goal,
+                            "niche": str(required_payload.get("niche") or "AI tools and digital marketing"),
+                            "markets": str(required_payload.get("markets") or "USA, UK, Canada, Australia"),
+                            "platform": "Pinterest",
+                        },
+                        "action_type": "prepare_affiliate_content",
+                        "action_payload": {"goal": objective.goal, **required_payload},
+                        "metadata": affiliate_meta or None,
+                    })
         if not steps:
             steps.append({
                 "step_name": "record_goal",
@@ -874,6 +992,30 @@ class EmployeeVerticalSlice:
         if result.get("pending_approval"):
             return "WAIT_FOR_APPROVAL"
         if result.get("awaiting_human_intervention") or result.get("waiting_input"):
+            return "WAIT_FOR_HUMAN_INPUT"
+        normalized_goal = " ".join(goal.lower().split())
+        approval_gated_pin_request = (
+            "pinterest" in normalized_goal
+            and ("pin" in normalized_goal or "publish" in normalized_goal)
+            and any(phrase in normalized_goal for phrase in (
+                "do not publish automatically",
+                "don't publish automatically",
+                "dont publish automatically",
+                "wait for my explicit approval before publishing",
+                "wait for approval before publishing",
+            ))
+        )
+        # A successful generic draft is not the end of an approval-gated Pin
+        # mission: collect the missing board/link/image details before approval.
+        # The plan step can be named prepare_pinterest_pin_draft while its tool
+        # is prepare_affiliate_content, so check both to preserve the approval gate.
+        current_step = plan[index] if 0 <= index < len(plan) else {}
+        current_tool = str(current_step.get("tool_name", ""))
+        is_pin_draft_step = (
+            step_name in {"prepare_affiliate_content", "prepare_pinterest_pin_draft"}
+            or current_tool == "prepare_affiliate_content"
+        )
+        if is_pin_draft_step and approval_gated_pin_request:
             return "WAIT_FOR_HUMAN_INPUT"
         if result.get("success"):
             if result.get("status") in {"not_started", "needs_reconnect", "failed", "onboarding"} and index + 1 < len(plan):
