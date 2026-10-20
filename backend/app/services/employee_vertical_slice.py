@@ -949,6 +949,22 @@ class EmployeeVerticalSlice:
             return "WAIT_FOR_APPROVAL"
         if result.get("awaiting_human_intervention") or result.get("waiting_input"):
             return "WAIT_FOR_HUMAN_INPUT"
+        normalized_goal = " ".join(goal.lower().split())
+        approval_gated_pin_request = (
+            "pinterest" in normalized_goal
+            and ("pin" in normalized_goal or "publish" in normalized_goal)
+            and any(phrase in normalized_goal for phrase in (
+                "do not publish automatically",
+                "don't publish automatically",
+                "dont publish automatically",
+                "wait for my explicit approval before publishing",
+                "wait for approval before publishing",
+            ))
+        )
+        # A successful generic draft is not the end of an approval-gated Pin
+        # mission: collect the missing board/link/image details before approval.
+        if step_name == "prepare_affiliate_content" and approval_gated_pin_request:
+            return "WAIT_FOR_HUMAN_INPUT"
         if result.get("success"):
             if result.get("status") in {"not_started", "needs_reconnect", "failed", "onboarding"} and index + 1 < len(plan):
                 return "FOLLOW_UP"
