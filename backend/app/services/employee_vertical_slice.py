@@ -230,22 +230,6 @@ class EmployeeVerticalSlice:
             return {"success": False, "status": "FAIL", "error": mission_result.get("error", "Mission unavailable")}
         mission_id = mission_result["mission"]["id"]
         objective = ObjectiveParser().parse(goal, metadata)
-        # Preserve the literal approval-gated Pinterest Pin request for routing.
-        # ObjectiveParser may normalize the goal into a summary that drops the
-        # user's explicit "wait for approval" constraint; routing must use the
-        # original request so it cannot accidentally fall through to COMPLETE.
-        raw_goal_lower = goal.lower()
-        if (
-            "pinterest" in raw_goal_lower
-            and ("pin" in raw_goal_lower or "publish" in raw_goal_lower)
-            and any(phrase in raw_goal_lower for phrase in (
-                "do not publish automatically",
-                "don't publish automatically",
-                "wait for my explicit approval before publishing",
-                "wait for approval before publishing",
-            ))
-        ):
-            objective.goal = goal
         discovered = self.discover_capabilities()
         plan = self._build_plan(objective, discovered)
         validation = self._validator.validate(
