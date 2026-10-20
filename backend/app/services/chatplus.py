@@ -206,7 +206,7 @@ class ChatPlusService:
         )
         assistant_message = assistant_record.get("message") or self._normalize_message(assistant_record)
         return {
-            "success": bool(mission and mission.get("status") == "completed") or state["state"] == "waiting_for_approval",
+            "success": state["state"] in {"completed", "working", "thinking", "waiting_for_approval", "waiting_for_human"},
             "conversation_id": conversation_id,
             "message": assistant_message,
             "mission": sanitize_payload(mission or {}),
