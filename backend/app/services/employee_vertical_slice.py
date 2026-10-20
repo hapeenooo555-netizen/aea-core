@@ -257,6 +257,29 @@ class EmployeeVerticalSlice:
             objective = replace(objective, goal=goal)
         discovered = self.discover_capabilities()
         plan = self._build_plan(objective, discovered)
+        # Safety invariant: an approval-gated Pin request without complete inputs
+        # must not complete after account-status verification alone.
+        raw_goal = " ".join(goal.lower().split())
+        gated_pin = (
+            "pinterest" in raw_goal
+            and ("pin" in raw_goal or "publish" in raw_goal)
+            and "do not publish automatically" in raw_goal
+        )
+        if gated_pin and not self._has_complete_pinterest_pin_inputs(metadata):
+            if not any(s.get("tool_name") == "prepare_affiliate_content" for s in plan):
+                plan.append({
+                    "step_name": "prepare_pinterest_pin_draft",
+                    "tool_name": "prepare_affiliate_content",
+                    "input": {
+                        "goal": goal,
+                        "niche": "AI tools and digital marketing",
+                        "markets": "USA, UK, Canada, Australia",
+                        "platform": "Pinterest",
+                    },
+                    "action_type": "prepare_affiliate_content",
+                    "action_payload": {"goal": goal},
+                    "metadata": None,
+                })
         validation = self._validator.validate(
             plan,
             owner_id=self.owner_id,
