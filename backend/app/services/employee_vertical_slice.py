@@ -397,14 +397,27 @@ class EmployeeVerticalSlice:
             # Do not mark a Pin-intent mission complete after only generating
             # generic affiliate content. Pause and collect the missing inputs
             # before a publish approval can ever be created.
+            original_goal = str(
+                report.get("original_user_goal")
+                or (step.get("input") or {}).get("goal")
+                or report.get("user_goal", "")
+            )
+            normalized_goal = " ".join(original_goal.lower().split())
+            approval_gated_pin_request = (
+                "pinterest" in normalized_goal
+                and ("pin" in normalized_goal or "publish" in normalized_goal)
+                and any(phrase in normalized_goal for phrase in (
+                    "do not publish automatically",
+                    "don't publish automatically",
+                    "dont publish automatically",
+                    "wait for my explicit approval before publishing",
+                    "wait for approval before publishing",
+                ))
+            )
             if (
                 result.get("success")
                 and step.get("tool_name") == "prepare_affiliate_content"
-                and self._publish_intent(
-                    report.get("original_user_goal")
-                    or (step.get("input") or {}).get("goal")
-                    or report.get("user_goal", "")
-                )
+                and approval_gated_pin_request
                 and not self._has_complete_pinterest_pin_inputs(metadata)
             ):
                 decision = "WAIT_FOR_HUMAN_INPUT"
