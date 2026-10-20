@@ -180,6 +180,15 @@ class EmployeeVerticalSlice:
             lambda owner, platform: self._connections.get(owner, platform),
         )
 
+    @staticmethod
+    def _has_complete_pinterest_pin_inputs(metadata: dict[str, Any] | None) -> bool:
+        """Only allow a planned Pinterest publish step when its required content is present."""
+        inputs = (metadata or {}).get("content_inputs") or {}
+        return all(
+            isinstance(inputs.get(key), str) and bool(inputs.get(key, "").strip())
+            for key in ("board_name", "pin_text", "link_url", "image_url", "title")
+        )
+
     def _publish_intent(self, goal: str) -> bool:
         """Return True for a Pin creation/publishing request unless it is draft-only."""
         normalized = " ".join(goal.lower().replace("pinterest", "").split())
@@ -396,7 +405,7 @@ class EmployeeVerticalSlice:
                     or (step.get("input") or {}).get("goal")
                     or report.get("user_goal", "")
                 )
-                and not any(s.get("tool_name") == "publish_content" for s in plan)
+                and not self._has_complete_pinterest_pin_inputs(metadata)
             ):
                 decision = "WAIT_FOR_HUMAN_INPUT"
                 result["message"] = (
