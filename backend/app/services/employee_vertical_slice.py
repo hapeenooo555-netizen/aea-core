@@ -254,7 +254,8 @@ class EmployeeVerticalSlice:
             discovered=discovered,
         )
         report: dict[str, Any] = {
-            "user_goal": objective.goal,
+            "user_goal": goal,
+            "original_user_goal": goal,
             "understood_objective": objective.to_dict(),
             "discovered_capabilities": discovered,
             "plan": plan,
@@ -391,7 +392,9 @@ class EmployeeVerticalSlice:
                 result.get("success")
                 and step.get("tool_name") == "prepare_affiliate_content"
                 and self._publish_intent(
-                    (step.get("input") or {}).get("goal") or report.get("user_goal", "")
+                    report.get("original_user_goal")
+                    or (step.get("input") or {}).get("goal")
+                    or report.get("user_goal", "")
                 )
                 and not any(s.get("tool_name") == "publish_content" for s in plan)
             ):
