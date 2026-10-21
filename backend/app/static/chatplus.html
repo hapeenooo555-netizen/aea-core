@@ -934,6 +934,45 @@ Connect Pinterest
           <div id="assistantResponse" class="assistant-response" hidden></div>
         </article>
 
+        <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest Pin draft preview">
+          <div class="card-header">Pinterest · Live board &amp; Pin draft preview</div>
+          <p class="muted">Fetch boards from the connected Pinterest account, then validate a draft. This tool never publishes a Pin.</p>
+          <button id="pinterestLoadBoards" class="secondary-button" type="button">Load verified Pinterest boards</button>
+          <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Sign in, then load your current Pinterest account and boards.</p>
+          <div id="pinterestDraftForm" hidden>
+            <div class="field">
+              <label for="pinterestDraftBoard">Verified Pinterest board</label>
+              <select id="pinterestDraftBoard" required><option value="">Load boards first</option></select>
+            </div>
+            <div class="field">
+              <label for="pinterestDraftTitle">Pin title</label>
+              <input id="pinterestDraftTitle" maxlength="100" required>
+            </div>
+            <div class="field">
+              <label for="pinterestDraftDescription">Pin description</label>
+              <textarea id="pinterestDraftDescription" maxlength="800" rows="4" required></textarea>
+            </div>
+            <div class="field">
+              <label for="pinterestDraftDestination">Destination URL (HTTP/HTTPS)</label>
+              <input id="pinterestDraftDestination" type="url" inputmode="url" placeholder="https://example.com/page" required>
+            </div>
+            <div class="field">
+              <label for="pinterestDraftImage">Image URL (HTTP/HTTPS)</label>
+              <input id="pinterestDraftImage" type="url" inputmode="url" placeholder="https://example.com/image.jpg" required>
+            </div>
+            <button id="pinterestValidateDraft" class="primary-button" type="button">Validate and show preview</button>
+          </div>
+          <article id="pinterestDraftPreview" class="task-card" hidden aria-label="Pinterest Pin preview">
+            <h3 id="pinterestPreviewTitle"></h3>
+            <p id="pinterestPreviewDescription"></p>
+            <p><strong>Destination:</strong> <a id="pinterestPreviewDestination" rel="noopener noreferrer" target="_blank"></a></p>
+            <img id="pinterestPreviewImage" alt="Pinterest Pin draft image preview" style="max-width:100%;height:auto;border-radius:12px" hidden>
+            <p id="pinterestPreviewBoard"></p>
+            <p id="pinterestPreviewAccount"></p>
+            <p><strong>Approval:</strong> Pending — no Pin has been published.</p>
+          </article>
+        </section>
+
         <section id="leadDashboard" class="panel" aria-label="HAPE BROTHERS leads" hidden>
           <div class="card-header">HAPE BROTHERS LEADS</div>
           <div id="leadDashboardSummary" class="lead-dashboard-summary">Loading lead pipeline...</div>
@@ -1674,6 +1713,94 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   signInForm.addEventListener("submit", signIn);
   composer.addEventListener("submit", sendMessage);
   approvalsView.addEventListener("click", handleApproval);
+
+  // Live, owner-authenticated Pinterest board lookup and read-only Pin preview.
+  const pinterestLoadBoardsButton = document.getElementById("pinterestLoadBoards");
+  const pinterestDraftStatus = document.getElementById("pinterestDraftStatus");
+  const pinterestDraftForm = document.getElementById("pinterestDraftForm");
+  const pinterestDraftBoard = document.getElementById("pinterestDraftBoard");
+  const pinterestValidateDraftButton = document.getElementById("pinterestValidateDraft");
+  const pinterestDraftPreview = document.getElementById("pinterestDraftPreview");
+  let verifiedPinterestAccount = null;
+
+  pinterestLoadBoardsButton.addEventListener("click", async () => {
+    pinterestLoadBoardsButton.disabled = true;
+    pinterestDraftStatus.textContent = "Checking the connected Pinterest account and retrieving live boards…";
+    pinterestDraftForm.hidden = true;
+    pinterestDraftPreview.hidden = true;
+    try {
+      const result = await api("/pinterest/verification");
+      if (result.success !== true || !result.account || !Array.isArray(result.boards)) {
+        throw new Error("Pinterest verification returned an incomplete account or board response.");
+      }
+      verifiedPinterestAccount = result.account;
+      pinterestDraftBoard.replaceChildren();
+      result.boards.forEach((board) => {
+        if (!board || typeof board.id !== "string" || typeof board.name !== "string") return;
+        const option = document.createElement("option");
+        option.value = board.id;
+        option.textContent = board.name + " · ID " + board.id;
+        pinterestDraftBoard.append(option);
+      });
+      const accountName = [result.account.username, result.account.business_name, result.account.name]
+        .find((value) => typeof value === "string" && value.trim()) || "Verified Pinterest account";
+      if (!pinterestDraftBoard.options.length) {
+        pinterestDraftStatus.textContent = accountName + " verified, but Pinterest returned no boards. Create a board in Pinterest and retry.";
+        return;
+      }
+      pinterestDraftForm.hidden = false;
+      pinterestDraftStatus.textContent = accountName + " verified. Retrieved " + pinterestDraftBoard.options.length + " live board(s). Select a board and complete the draft fields.";
+    } catch (error) {
+      pinterestDraftStatus.textContent = "Could not verify Pinterest or load boards: " + (error instanceof Error ? error.message : String(error));
+    } finally {
+      pinterestLoadBoardsButton.disabled = false;
+    }
+  });
+
+  pinterestValidateDraftButton.addEventListener("click", async () => {
+    const title = document.getElementById("pinterestDraftTitle").value.trim();
+    const description = document.getElementById("pinterestDraftDescription").value.trim();
+    const destination_url = document.getElementById("pinterestDraftDestination").value.trim();
+    const image_url = document.getElementById("pinterestDraftImage").value.trim();
+    const board_id = pinterestDraftBoard.value;
+    if (!title || !description || !destination_url || !image_url || !board_id) {
+      pinterestDraftStatus.textContent = "Complete the title, description, destination URL, image URL, and board selection before previewing.";
+      return;
+    }
+    pinterestValidateDraftButton.disabled = true;
+    pinterestDraftPreview.hidden = true;
+    pinterestDraftStatus.textContent = "Validating this draft against your live Pinterest account and selected board…";
+    try {
+      const result = await api("/pinterest/draft-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, description, destination_url, image_url, board_id }),
+      });
+      if (result.success !== true || !result.preview || result.published !== false || result.requires_explicit_approval !== true) {
+        throw new Error("The API did not return a safe, pending-approval preview. Do not publish.");
+      }
+      const preview = result.preview;
+      document.getElementById("pinterestPreviewTitle").textContent = String(preview.title || "");
+      document.getElementById("pinterestPreviewDescription").textContent = String(preview.description || "");
+      const destination = document.getElementById("pinterestPreviewDestination");
+      destination.textContent = String(preview.destination_url || "");
+      destination.href = String(preview.destination_url || "");
+      const image = document.getElementById("pinterestPreviewImage");
+      image.src = String(preview.image_url || "");
+      image.hidden = !preview.image_url;
+      image.onerror = () => { image.hidden = true; };
+      const board = preview.board || {};
+      document.getElementById("pinterestPreviewBoard").textContent = "Board: " + String(board.name || "") + " · ID " + String(board.id || "");
+      const account = preview.account || verifiedPinterestAccount || {};
+      document.getElementById("pinterestPreviewAccount").textContent = "Account: " + String(account.username || account.business_name || account.name || "Verified Pinterest account");
+      pinterestDraftPreview.hidden = false;
+      pinterestDraftStatus.textContent = "Preview validated. Approval is still pending; nothing was published. This preview does not submit a Pin.";
+    } catch (error) {
+      pinterestDraftStatus.textContent = "Draft preview failed: " + (error instanceof Error ? error.message : String(error));
+    } finally {
+      pinterestValidateDraftButton.disabled = false;
+    }
+  });
   document.getElementById("historyButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
   document.getElementById("viewHistoryButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
   document.getElementById("completionHistoryButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
