@@ -35,11 +35,17 @@ _default_cors_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
-_cors_origins = [
+# Keep the known production origins enabled even when operators supply
+# additional origins through the environment. Treat AEA_CORS_ORIGINS as an
+# extension list, not a replacement list; otherwise a deployment-specific
+# value can silently remove the published Affiliate Hub and break browser
+# preflight requests with a generic "Failed to fetch".
+_configured_cors_origins = os.getenv("AEA_CORS_ORIGINS", "")
+_cors_origins = list(dict.fromkeys(
     origin.strip().rstrip("/")
-    for origin in os.getenv("AEA_CORS_ORIGINS", ",".join(_default_cors_origins)).split(",")
+    for origin in [*_default_cors_origins, *_configured_cors_origins.split(",")]
     if origin.strip()
-]
+))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
