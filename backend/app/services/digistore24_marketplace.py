@@ -108,8 +108,14 @@ class Digistore24MarketplaceClient:
         if sort_by:
             params["sortBy"] = sort_by
         payload = self._call("listMarketplaceEntries", params)
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        entries = data.get("entries", []) if isinstance(data, dict) else []
+        # Digistore24's listMarketplaceEntries response exposes `entries`
+        # alongside `result` at the top level. Accept a nested `data.entries`
+        # envelope as a compatibility fallback, but never silently treat a
+        # successful response with an unknown shape as an empty catalog.
+        entries = payload.get("entries")
+        if entries is None:
+            data = payload.get("data")
+            entries = data.get("entries") if isinstance(data, dict) else None
         if not isinstance(entries, list):
             raise Digistore24MarketplaceError("Digistore24 marketplace response had an unexpected entries format.")
         return [entry for entry in entries[:limit] if isinstance(entry, dict)]
