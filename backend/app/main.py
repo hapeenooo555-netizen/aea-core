@@ -30,6 +30,7 @@ app = FastAPI(
 # Operators can override/extend this list through AEA_CORS_ORIGINS.
 _default_cors_origins = [
     "https://aea-affiliate-hub.lovable.app",
+    "https://aea-affiliate-hub-web.onrender.com",
     "https://aea-affiliate-hub-production.up.railway.app",
     "https://id-preview--15f25893-acd7-4e76-b02a-cce7d9dbc38d.lovable.app",
     "http://localhost:5173",
