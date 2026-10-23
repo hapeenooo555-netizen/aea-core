@@ -1190,13 +1190,37 @@ evaluate: "Evaluating the next step",
       }
 
       async function api(path, options = {}) {
-        const headers = bearerHeaders(options.headers || {});
-        let response = await fetch(apiPath(path), { ...options, headers });
-        if (response.status === 401 && await refreshSession()) {
-          response = await fetch(apiPath(path), { ...options, headers: bearerHeaders(options.headers || {}) });
+        // Recover a missing access token from the stored refresh token before
+        // making an authenticated request. This avoids sending "Bearer "
+        // after a tab restore or an interrupted sign-in.
+        if (!localStorage.getItem(TOKEN_KEY) && localStorage.getItem(REFRESH_KEY)) {
+          await refreshSession();
+        }
+        let response = await fetch(apiPath(path), {
+          ...options,
+          headers: bearerHeaders(options.headers || {}),
+        });
+        // Access tokens can expire while ChatPlus is open. Refresh once, then
+        // retry with the new token; never loop indefinitely on 401 responses.
+        if (response.status === 401) {
+          const refreshed = await refreshSession();
+          if (refreshed) {
+            response = await fetch(apiPath(path), {
+              ...options,
+              headers: bearerHeaders(options.headers || {}),
+            });
+          } else {
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(REFRESH_KEY);
+          }
         }
         const data = await jsonOrEmpty(response);
-        if (!response.ok) throw new Error(data.detail || data.error || "Ombi halikufaulu");
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error("401 Session expired. Please sign in again.");
+          }
+          throw new Error(data.detail || data.error || "Ombi halikufaulu");
+        }
         return data;
       }
 
