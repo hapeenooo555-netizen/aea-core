@@ -1862,7 +1862,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     const description = document.getElementById("pinterestPreviewDescription").textContent.trim();
     const destination = document.getElementById("pinterestPreviewDestination").href;
     const image = document.getElementById("pinterestPreviewImage").src;
-    const board = document.getElementById("pinterestDraftBoard").selectedOptions[0]?.textContent || "";
+    const boardSelect = document.getElementById("pinterestDraftBoard");
+    const board = boardSelect.selectedOptions[0]?.textContent || "";
+    const boardId = boardSelect.value || "";
+    const account = document.getElementById("pinterestPreviewAccount").textContent.trim();
     const product = document.getElementById("pinterestPreviewProduct").textContent.replace(/^Digistore24 product:\s*/, "").trim();
     if (!title || !description || !destination || !image || !board) {
       pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
@@ -1876,7 +1879,9 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       "Description: " + description,
       "Destination URL: " + destination,
       "Image URL: " + image,
-      "Pinterest board: " + board,
+      "Pinterest board name: " + board,
+      "Pinterest board ID from the verified boards list: " + boardId,
+      "Verified Pinterest account from the live account check: " + account,
       "Digistore24 product: " + product,
       "After creating the mission, show the approval controls and wait for explicit approval. Never claim published without a real Pinterest pin_id and URL."
     ].join("\n");
