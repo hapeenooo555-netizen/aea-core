@@ -934,41 +934,36 @@ Connect Pinterest
           <div id="assistantResponse" class="assistant-response" hidden></div>
         </article>
 
-        <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest Pin draft preview">
-          <div class="card-header">Pinterest · Live board &amp; Pin draft preview</div>
-          <p class="muted">Fetch boards from the connected Pinterest account, then validate a draft. This tool never publishes a Pin.</p>
-          <button id="pinterestLoadBoards" class="secondary-button" type="button">Load verified Pinterest boards</button>
-          <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Sign in, then load your current Pinterest account and boards.</p>
+        <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest AI affiliate autopilot">
+          <div class="card-header">Pinterest · AI Affiliate Autopilot</div>
+          <p class="muted">AEA itachagua bidhaa kutoka Digistore24, itengeneze affiliate Pin title na description, itafute picha, na ichague board yako iliyothibitishwa. Hakuna kuingiza URL au copy kwa mkono. Pin haitachapishwa bila idhini yako.</p>
+          <div class="field">
+            <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
+            <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
+          </div>
+          <div class="field">
+            <label for="pinterestAutoLanguage">Lugha ya Pin</label>
+            <select id="pinterestAutoLanguage"><option value="English" selected>English</option><option value="Swahili">Swahili</option></select>
+          </div>
+          <button id="pinterestLoadBoards" class="secondary-button" type="button">Thibitisha Pinterest na boards</button>
+          <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Ingia kwanza, kisha thibitisha akaunti yako ya Pinterest.</p>
+          <button id="pinterestAutoGenerate" class="primary-button" type="button" disabled>Tengeneza affiliate Pin moja kwa moja</button>
           <div id="pinterestDraftForm" hidden>
-            <div class="field">
-              <label for="pinterestDraftBoard">Verified Pinterest board</label>
-              <select id="pinterestDraftBoard" required><option value="">Load boards first</option></select>
-            </div>
-            <div class="field">
-              <label for="pinterestDraftTitle">Pin title</label>
-              <input id="pinterestDraftTitle" maxlength="100" required>
-            </div>
-            <div class="field">
-              <label for="pinterestDraftDescription">Pin description</label>
-              <textarea id="pinterestDraftDescription" maxlength="800" rows="4" required></textarea>
-            </div>
-            <div class="field">
-              <label for="pinterestDraftDestination">Destination URL (HTTP/HTTPS)</label>
-              <input id="pinterestDraftDestination" type="url" inputmode="url" placeholder="https://example.com/page" required>
-            </div>
-            <div class="field">
-              <label for="pinterestDraftImage">Image URL (HTTP/HTTPS)</label>
-              <input id="pinterestDraftImage" type="url" inputmode="url" placeholder="https://example.com/image.jpg" required>
-            </div>
-            <button id="pinterestValidateDraft" class="primary-button" type="button">Validate and show preview</button>
+            <select id="pinterestDraftBoard" aria-label="Verified Pinterest board" required></select>
+            <input id="pinterestDraftTitle" maxlength="100" type="hidden">
+            <textarea id="pinterestDraftDescription" maxlength="800" hidden></textarea>
+            <input id="pinterestDraftDestination" type="hidden">
+            <input id="pinterestDraftImage" type="hidden">
+            <button id="pinterestValidateDraft" class="primary-button" type="button" hidden>Validate and show preview</button>
           </div>
           <article id="pinterestDraftPreview" class="task-card" hidden aria-label="Pinterest Pin preview">
             <h3 id="pinterestPreviewTitle"></h3>
             <p id="pinterestPreviewDescription"></p>
-            <p><strong>Destination:</strong> <a id="pinterestPreviewDestination" rel="noopener noreferrer" target="_blank"></a></p>
-            <img id="pinterestPreviewImage" alt="Pinterest Pin draft image preview" style="max-width:100%;height:auto;border-radius:12px" hidden>
+            <p><strong>Affiliate destination:</strong> <a id="pinterestPreviewDestination" rel="noopener noreferrer" target="_blank"></a></p>
+            <img id="pinterestPreviewImage" alt="AI-generated affiliate Pin image preview" style="max-width:100%;height:auto;border-radius:12px" hidden>
             <p id="pinterestPreviewBoard"></p>
             <p id="pinterestPreviewAccount"></p>
+            <p id="pinterestPreviewProduct"></p>
             <p><strong>Approval:</strong> Pending — no Pin has been published.</p>
           </article>
         </section>
@@ -1738,72 +1733,97 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   composer.addEventListener("submit", sendMessage);
   approvalsView.addEventListener("click", handleApproval);
 
-  // Live, owner-authenticated Pinterest board lookup and read-only Pin preview.
+  // AI affiliate autopilot: fetch verified boards, then generate all product/link/copy/image fields server-side.
   const pinterestLoadBoardsButton = document.getElementById("pinterestLoadBoards");
   const pinterestDraftStatus = document.getElementById("pinterestDraftStatus");
   const pinterestDraftForm = document.getElementById("pinterestDraftForm");
   const pinterestDraftBoard = document.getElementById("pinterestDraftBoard");
-  const pinterestValidateDraftButton = document.getElementById("pinterestValidateDraft");
+  const pinterestAutoGenerate = document.getElementById("pinterestAutoGenerate");
   const pinterestDraftPreview = document.getElementById("pinterestDraftPreview");
   let verifiedPinterestAccount = null;
+  let verifiedPinterestBoards = [];
 
   pinterestLoadBoardsButton.addEventListener("click", async () => {
     pinterestLoadBoardsButton.disabled = true;
-    pinterestDraftStatus.textContent = "Checking the connected Pinterest account and retrieving live boards…";
-    pinterestDraftForm.hidden = true;
+    pinterestAutoGenerate.disabled = true;
+    pinterestDraftStatus.textContent = "Inathibitisha akaunti ya Pinterest na kusoma boards...";
     pinterestDraftPreview.hidden = true;
     try {
       const result = await api("/pinterest/verification");
       if (result.success !== true || !result.account || !Array.isArray(result.boards)) {
-        throw new Error("Pinterest verification returned an incomplete account or board response.");
+        throw new Error("Pinterest verification returned an incomplete response.");
       }
       verifiedPinterestAccount = result.account;
+      verifiedPinterestBoards = result.boards.filter((board) => board && typeof board.id === "string" && typeof board.name === "string");
       pinterestDraftBoard.replaceChildren();
-      result.boards.forEach((board) => {
-        if (!board || typeof board.id !== "string" || typeof board.name !== "string") return;
+      verifiedPinterestBoards.forEach((board) => {
         const option = document.createElement("option");
         option.value = board.id;
-        option.textContent = board.name + " · ID " + board.id;
+        option.textContent = board.name;
         pinterestDraftBoard.append(option);
       });
       const accountName = [result.account.username, result.account.business_name, result.account.name]
         .find((value) => typeof value === "string" && value.trim()) || "Verified Pinterest account";
-      if (!pinterestDraftBoard.options.length) {
-        pinterestDraftStatus.textContent = accountName + " verified, but Pinterest returned no boards. Create a board in Pinterest and retry.";
+      if (!verifiedPinterestBoards.length) {
+        pinterestDraftStatus.textContent = accountName + " imethibitishwa lakini haina boards. Tengeneza board kwenye Pinterest kisha ujaribu tena.";
         return;
       }
       pinterestDraftForm.hidden = false;
-      pinterestDraftStatus.textContent = accountName + " verified. Retrieved " + pinterestDraftBoard.options.length + " live board(s). Select a board and complete the draft fields.";
+      pinterestAutoGenerate.disabled = false;
+      pinterestDraftStatus.textContent = accountName + " imethibitishwa. Boards " + verifiedPinterestBoards.length + " zimepatikana. Bonyeza kutengeneza Pin kiotomatiki.";
     } catch (error) {
-      pinterestDraftStatus.textContent = "Could not verify Pinterest or load boards: " + (error instanceof Error ? error.message : String(error));
+      pinterestDraftStatus.textContent = "Pinterest haikuweza kuthibitishwa: " + (error instanceof Error ? error.message : String(error));
     } finally {
       pinterestLoadBoardsButton.disabled = false;
     }
   });
 
-  pinterestValidateDraftButton.addEventListener("click", async () => {
-    const title = document.getElementById("pinterestDraftTitle").value.trim();
-    const description = document.getElementById("pinterestDraftDescription").value.trim();
-    const destination_url = document.getElementById("pinterestDraftDestination").value.trim();
-    const image_url = document.getElementById("pinterestDraftImage").value.trim();
-    const board_id = pinterestDraftBoard.value;
-    if (!title || !description || !destination_url || !image_url || !board_id) {
-      pinterestDraftStatus.textContent = "Complete the title, description, destination URL, image URL, and board selection before previewing.";
+  pinterestAutoGenerate.addEventListener("click", async () => {
+    if (!verifiedPinterestAccount || !verifiedPinterestBoards.length) {
+      pinterestDraftStatus.textContent = "Thibitisha akaunti ya Pinterest na boards kwanza.";
       return;
     }
-    pinterestValidateDraftButton.disabled = true;
+    pinterestAutoGenerate.disabled = true;
     pinterestDraftPreview.hidden = true;
-    pinterestDraftStatus.textContent = "Validating this draft against your live Pinterest account and selected board…";
+    pinterestDraftStatus.textContent = "AEA inatafuta bidhaa halisi Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
     try {
-      const result = await api("/pinterest/draft-preview", {
+      const generated = await api("/../affiliate/automation/digistore24/pinterest-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, destination_url, image_url, board_id }),
+        body: JSON.stringify({
+          niche: document.getElementById("pinterestAutoNiche").value.trim() || "AI tools and digital marketing",
+          language: document.getElementById("pinterestAutoLanguage").value || "English"
+        })
       });
-      if (result.success !== true || !result.preview || result.published !== false || result.requires_explicit_approval !== true) {
-        throw new Error("The API did not return a safe, pending-approval preview. Do not publish.");
+      if (generated.success !== true || !generated.draft || generated.published !== false) {
+        throw new Error("AEA haikurudisha draft kamili salama.");
       }
-      const preview = result.preview;
+      const draft = generated.draft;
+      const board = verifiedPinterestBoards.find((item) => item.id === pinterestDraftBoard.value) || verifiedPinterestBoards[0];
+      if (!board) throw new Error("Hakuna verified Pinterest board iliyopatikana.");
+      pinterestDraftBoard.value = board.id;
+      document.getElementById("pinterestDraftTitle").value = draft.title || "";
+      document.getElementById("pinterestDraftDescription").value = draft.description || "";
+      document.getElementById("pinterestDraftDestination").value = draft.destination_url || "";
+      document.getElementById("pinterestDraftImage").value = draft.image_url || "";
+      if (!draft.title || !draft.description || !draft.destination_url || !draft.image_url) {
+        throw new Error("Draft haijakamilika. Hakuna kitu kilichochapishwa.");
+      }
+      const previewResult = await api("/pinterest/draft-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title,
+          description: draft.description,
+          destination_url: draft.destination_url,
+          image_url: draft.image_url,
+          board_id: board.id
+        })
+      });
+      if (previewResult.success !== true || !previewResult.preview || previewResult.published !== false || previewResult.requires_explicit_approval !== true) {
+        throw new Error("Pinterest haikuthibitisha preview. Usichapishe.");
+      }
+      const preview = previewResult.preview;
       document.getElementById("pinterestPreviewTitle").textContent = String(preview.title || "");
       document.getElementById("pinterestPreviewDescription").textContent = String(preview.description || "");
       const destination = document.getElementById("pinterestPreviewDestination");
@@ -1811,20 +1831,21 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       destination.href = String(preview.destination_url || "");
       const image = document.getElementById("pinterestPreviewImage");
       image.src = String(preview.image_url || "");
-      image.hidden = !preview.image_url;
+      image.hidden = false;
       image.onerror = () => { image.hidden = true; };
-      const board = preview.board || {};
-      document.getElementById("pinterestPreviewBoard").textContent = "Board: " + String(board.name || "") + " · ID " + String(board.id || "");
+      document.getElementById("pinterestPreviewBoard").textContent = "Board: " + String((preview.board || {}).name || board.name);
       const account = preview.account || verifiedPinterestAccount || {};
       document.getElementById("pinterestPreviewAccount").textContent = "Account: " + String(account.username || account.business_name || account.name || "Verified Pinterest account");
+      document.getElementById("pinterestPreviewProduct").textContent = "Digistore24 product: " + String((generated.product || {}).name || "Verified marketplace product");
       pinterestDraftPreview.hidden = false;
-      pinterestDraftStatus.textContent = "Preview validated. Approval is still pending; nothing was published. This preview does not submit a Pin.";
+      pinterestDraftStatus.textContent = "Pin draft imeandaliwa na AI na kuthibitishwa kwa board yako. Inasubiri idhini yako; hakuna Pin iliyochapishwa.";
     } catch (error) {
-      pinterestDraftStatus.textContent = "Draft preview failed: " + (error instanceof Error ? error.message : String(error));
+      pinterestDraftStatus.textContent = "Auto-generation imeshindwa: " + (error instanceof Error ? error.message : String(error));
     } finally {
-      pinterestValidateDraftButton.disabled = false;
+      pinterestAutoGenerate.disabled = false;
     }
   });
+
   document.getElementById("historyButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
   document.getElementById("viewHistoryButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
   document.getElementById("completionHistoryButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
