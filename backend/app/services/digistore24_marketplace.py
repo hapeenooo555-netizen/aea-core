@@ -40,6 +40,7 @@ def _first(data: dict[str, Any], *keys: str) -> Any:
 def normalize_marketplace_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Convert documented Digistore24 marketplace fields to scoring inputs."""
     entry_id = _first(entry, "id", "entry_id", "marketplace_entry_id")
+    product_id = _first(entry, "main_product_id", "mainProductId", "product_id", "productId")
     name = _first(entry, "headline", "name", "title")
     # Only use a URL actually supplied by the API record. Do not invent a deep link.
     source_url = _first(entry, "url", "marketplace_url", "sales_page_url", "product_url")
@@ -52,7 +53,9 @@ def normalize_marketplace_entry(entry: dict[str, Any]) -> dict[str, Any]:
     # The authenticated marketplace API is the verification source. Eligibility still
     # requires complete performance metrics and a real URL in the record.
     return {
-        "product_id": str(entry_id) if entry_id is not None else None,
+        # Marketplace entry ID and actual Digistore24 product ID are distinct.
+        "product_id": str(product_id) if product_id is not None else None,
+        "marketplace_entry_id": str(entry_id) if entry_id is not None else None,
         "name": str(name or "").strip(),
         "source_url": source_url,
         "verified": bool(entry_id and name),
@@ -119,6 +122,19 @@ class Digistore24MarketplaceClient:
         if not isinstance(entries, list):
             raise Digistore24MarketplaceError("Digistore24 marketplace response had an unexpected entries format.")
         return [entry for entry in entries[:limit] if isinstance(entry, dict)]
+
+    def get_entry(self, entry_id: str | int) -> dict[str, Any]:
+        """Fetch one marketplace entry by its marketplace entry ID."""
+        value = str(entry_id).strip()
+        if not value or len(value) > 64:
+            raise ValueError("entry_id must be a non-empty marketplace entry ID")
+        payload = self._call("getMarketplaceEntry", {"entryId": value})
+        record: Any = payload.get("entry") or payload.get("data") or payload
+        if isinstance(record, dict) and isinstance(record.get("entry"), dict):
+            record = record["entry"]
+        if not isinstance(record, dict):
+            raise Digistore24MarketplaceError("Digistore24 marketplace detail response had an unexpected format.")
+        return record
 
     def research(self, *, target_niches: tuple[str, ...] = ("AI tools", "digital marketing", "software"), limit: int = 10) -> dict[str, Any]:
         entries = self.list_entries(limit=250, sort_by="stats_affiliate_profit_visitor")
