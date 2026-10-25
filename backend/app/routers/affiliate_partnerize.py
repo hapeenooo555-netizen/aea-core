@@ -4,12 +4,20 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id
 from app.services.partnerize import PartnerizeClient, PartnerizeError
 
-router = APIRouter(prefix="/affiliate/partnerize", tags=["affiliate-partnerize"])
+# Expose the Bearer auth scheme in OpenAPI/Swagger UI. The existing
+# get_current_user dependency still verifies the token against Supabase.
+_partnerize_bearer = HTTPBearer(auto_error=False)
+router = APIRouter(
+    prefix="/affiliate/partnerize",
+    tags=["affiliate-partnerize"],
+    dependencies=[Depends(_partnerize_bearer)],
+)
 
 
 class CampaignRequestItem(BaseModel):
