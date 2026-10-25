@@ -110,7 +110,17 @@ def build_digistore24_pinterest_draft(
         if value.strip()
     }
     for entry in entries:
-        product_id = _first(entry, "main_product_id", "mainProductId", "product_id", "productId")
+        # IDs in Digistore24 responses are often integers, while _first intentionally
+        # handles non-empty strings for copy/URL fields. Preserve numeric product IDs.
+        raw_product_id = next(
+            (
+                entry.get(key)
+                for key in ("main_product_id", "mainProductId", "main_product", "product_id", "productId")
+                if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()
+            ),
+            None,
+        )
+        product_id = str(raw_product_id).strip() if raw_product_id is not None else None
         # A marketplace-entry ID is not necessarily the underlying product ID.
         # Do not build a promolink from entry.id unless the API explicitly identifies it as a product ID.
         name = _first(entry, "headline", "name", "title")
