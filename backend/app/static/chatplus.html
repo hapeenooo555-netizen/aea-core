@@ -936,7 +936,7 @@ Connect Pinterest
 
         <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest AI affiliate autopilot">
           <div class="card-header">Pinterest · AI Affiliate Autopilot</div>
-          <p class="muted">AEA itachagua bidhaa kutoka Digistore24, itengeneze affiliate Pin title na description, itafute picha, na ichague board yako iliyothibitishwa. Hakuna kuingiza URL au copy kwa mkono. Pin haitachapishwa bila idhini yako.</p>
+          <p class="muted">AEA itachagua bidhaa inayofaa kutoka Digistore24 na itatumia AI kutengeneza title na description mpya kila draft inapozalishwa, kulingana na bidhaa, niche na lugha uliyochagua. Itatafuta picha na kuandaa destination URL kiotomatiki. Mifano ni ya kuelekeza tu; haitanakili title/description moja kila mara. Pin haitachapishwa bila idhini yako.</p>
           <div class="field">
             <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
             <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
@@ -1831,11 +1831,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         throw new Error("Pinterest haikuthibitisha preview. Usichapishe.");
       }
       const preview = previewResult.preview;
-      // Use the user's requested Pin copy; product destination and image still come from verified integrations.
-      preview.title = "5 AI Tools That Can Save You Time in Digital Marketing";
-      preview.description = "Want to improve your digital marketing workflow? Discover 5 AI tools that can help with content creation, productivity, research, and marketing tasks. Learn how to compare features, pricing, and free-plan limits before choosing the right tools for your business.\\n\\nSave this guide for later! If you purchase through an affiliate link, I may earn a commission at no extra cost to you.";
-      document.getElementById("pinterestDraftTitle").value = preview.title;
-      document.getElementById("pinterestDraftDescription").value = preview.description;
+      // Keep the fresh AI-generated copy returned by the draft/preview services.
+      // The example title/description must never override the AI's creative output.
+      document.getElementById("pinterestDraftTitle").value = String(preview.title || draft.title || "");
+      document.getElementById("pinterestDraftDescription").value = String(preview.description || draft.description || "");
       document.getElementById("pinterestPreviewTitle").textContent = String(preview.title || "");
       document.getElementById("pinterestPreviewDescription").textContent = String(preview.description || "");
       const destination = document.getElementById("pinterestPreviewDestination");
