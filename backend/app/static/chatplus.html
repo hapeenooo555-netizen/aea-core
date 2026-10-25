@@ -1148,6 +1148,8 @@ evaluate: "Evaluating the next step",
       const toast = document.getElementById("toast");
 
       function apiPath(path) {
+        // Affiliate automation is mounted at the API root, not below /chatplus.
+        if (path.startsWith("/affiliate/automation/")) return path;
         return `/chatplus${path}`;
       }
 
