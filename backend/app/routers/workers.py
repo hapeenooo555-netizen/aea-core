@@ -45,7 +45,7 @@ MOCK_WORKERS = [
 
 
 @router.get("")
-async def list_workers(
+def list_workers(
     request: Request,
     current_user_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
