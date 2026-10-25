@@ -1,8 +1,8 @@
 """Main application module for AEA Core (BASELINE).
 
 This baseline version mounts the routers that exist at baseline time
-(atlas, connectors, health, missions, workers). The approvals router is
-intentionally not imported here; it is added by P1-1.
+(atlas, connectors, health, missions, workers). The approvals router
+is included as part of the current application.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import database
-from app.routers import affiliate_automation, affiliate_jobs, affiliate_research, approvals, atlas, chatplus, chatplus_pinterest, connectors, employee, hape_marketing, meta_webhooks, health, missions, workers
+from app.routers import affiliate_automation, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, chatplus, chatplus_pinterest, connectors, employee, hape_marketing, meta_webhooks, health, missions, workers
 
 # Import supabase_client for test compatibility
 supabase_client = database.supabase_client
@@ -37,10 +37,8 @@ _default_cors_origins = [
     "http://127.0.0.1:5173",
 ]
 # Keep the known production origins enabled even when operators supply
-# additional origins through the environment. Treat AEA_CORS_ORIGINS as an
-# extension list, not a replacement list; otherwise a deployment-specific
-# value can silently remove the published Affiliate Hub and break browser
-# preflight requests with a generic "Failed to fetch".
+# additional origins through the environment. Treat AEA_CORS_ORIGINS as
+# an extension list, not a replacement list.
 _configured_cors_origins = os.getenv("AEA_CORS_ORIGINS", "")
 _cors_origins = list(dict.fromkeys(
     origin.strip().rstrip("/")
@@ -56,7 +54,6 @@ app.add_middleware(
 )
 
 
-# Root endpoint
 @app.get("/")
 def root() -> dict[str, str]:
     """Return a simple health check message."""
@@ -74,6 +71,7 @@ app.include_router(approvals.router, tags=["approvals"])
 app.include_router(employee.router, tags=["employee"])
 app.include_router(affiliate_jobs.router, tags=["affiliate"])
 app.include_router(affiliate_research.router, tags=["affiliate-research"])
+app.include_router(affiliate_partnerize.router, tags=["affiliate-partnerize"])
 app.include_router(affiliate_automation.router, tags=["affiliate-automation"])
 app.include_router(chatplus.router, tags=["chatplus"])
 app.include_router(chatplus_pinterest.router, tags=["chatplus"])
