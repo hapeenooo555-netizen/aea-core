@@ -1789,7 +1789,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     pinterestDraftPreview.hidden = true;
     pinterestDraftStatus.textContent = "AEA inatafuta bidhaa halisi Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
     try {
-      const generated = await api("/../affiliate/automation/digistore24/pinterest-draft", {
+      const generated = await api("/affiliate/automation/digistore24/pinterest-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
