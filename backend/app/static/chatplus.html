@@ -1863,7 +1863,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     const destination = document.getElementById("pinterestPreviewDestination").href;
     const image = document.getElementById("pinterestPreviewImage").src;
     const board = document.getElementById("pinterestDraftBoard").selectedOptions[0]?.textContent || "";
-    const product = document.getElementById("pinterestPreviewProduct").textContent.replace(/^Digistore24 product:\\s*/, "").trim();
+    const product = document.getElementById("pinterestPreviewProduct").textContent.replace(/^Digistore24 product:\s*/, "").trim();
     if (!title || !description || !destination || !image || !board) {
       pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
       return;
@@ -1879,7 +1879,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       "Pinterest board: " + board,
       "Digistore24 product: " + product,
       "After creating the mission, show the approval controls and wait for explicit approval. Never claim published without a real Pinterest pin_id and URL."
-    ].join("\\n");
+    ].join("\n");
     const input = document.getElementById("messageInput");
     input.value = prompt;
     input.dispatchEvent(new Event("input", { bubbles: true }));
