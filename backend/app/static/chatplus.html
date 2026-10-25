@@ -1857,7 +1857,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     }
   });
 
-  document.getElementById("pinterestContinueToApproval").addEventListener("click", () => {
+  document.getElementById("pinterestContinueToApproval").addEventListener("click", async () => {
     const title = document.getElementById("pinterestPreviewTitle").textContent.trim();
     const description = document.getElementById("pinterestPreviewDescription").textContent.trim();
     const destination = document.getElementById("pinterestPreviewDestination").href;
@@ -1865,31 +1865,37 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     const boardSelect = document.getElementById("pinterestDraftBoard");
     const board = boardSelect.selectedOptions[0]?.textContent || "";
     const boardId = boardSelect.value || "";
-    const account = document.getElementById("pinterestPreviewAccount").textContent.trim();
-    const product = document.getElementById("pinterestPreviewProduct").textContent.replace(/^Digistore24 product:\s*/, "").trim();
-    if (!title || !description || !destination || !image || !board) {
+    if (!title || !description || !destination || !image || !board || !boardId) {
       pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
       return;
     }
-    const prompt = [
-      "Continue the Pinterest affiliate Pin workflow using the reviewed draft below.",
-      "Create or resume the authenticated owner's Pinterest publish mission and stop at the human approval gate before publishing.",
-      "Do not change the supplied copy or URLs. If the destination URL is not a verified working affiliate URL, stop and report the problem instead of publishing.",
-      "Title: " + title,
-      "Description: " + description,
-      "Destination URL: " + destination,
-      "Image URL: " + image,
-      "Pinterest board name: " + board,
-      "Pinterest board ID from the verified boards list: " + boardId,
-      "Verified Pinterest account from the live account check: " + account,
-      "Digistore24 product: " + product,
-      "After creating the mission, show the approval controls and wait for explicit approval. Never claim published without a real Pinterest pin_id and URL."
-    ].join("\n");
-    const input = document.getElementById("messageInput");
-    input.value = prompt;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    document.getElementById("composer").requestSubmit();
-    pinterestDraftStatus.textContent = "Taarifa zimetumwa kwa ChatPlus. Subiri approval request; bado haijathibitishwa kuwa Pin imechapishwa.";
+    const button = document.getElementById("pinterestContinueToApproval");
+    button.disabled = true;
+    pinterestDraftStatus.textContent = "Inathibitisha tena akaunti/board na kuhifadhi approval request...";
+    try {
+      const result = await api("/pinterest/draft-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description,
+          destination_url: destination,
+          image_url: image,
+          board_id: boardId
+        })
+      });
+      if (result.success !== true || !result.approval || result.published !== false) {
+        throw new Error("Approval request haikuthibitishwa kuwa imehifadhiwa.");
+      }
+      const approvalId = String(result.approval.id || result.approval.request_id || "");
+      pinterestDraftStatus.textContent = (result.idempotent ? "Approval request hii tayari ipo. " : "Approval request imehifadhiwa. ")
+        + (approvalId ? "ID: " + approvalId + ". " : "")
+        + "Fungua sehemu ya Approvals, kagua preview, kisha idhinisha kwa uwazi. Hakuna Pin iliyochapishwa.";
+    } catch (error) {
+      pinterestDraftStatus.textContent = "Imeshindikana kuhifadhi approval request: " + (error instanceof Error ? error.message : String(error));
+    } finally {
+      button.disabled = false;
+    }
   });
   document.getElementById("pinterestRegenerateDraft").addEventListener("click", () => {
     pinterestDraftPreview.hidden = true;
