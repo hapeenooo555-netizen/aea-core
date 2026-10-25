@@ -101,18 +101,14 @@ def build_digistore24_pinterest_draft(
     entries = client.list_entries(limit=250, sort_by="stats_affiliate_profit_visitor")
     candidates: list[dict[str, Any]] = []
     affiliate_id = os.getenv("DIGISTORE24_AFFILIATE_ID", "").strip()
-    # Only products whose vendor partnership is already approved may use the
-    # documented promolink format as a fallback. Never guess approval from the
-    # mere presence of a marketplace listing.
+    # This allowlist is an operator assertion that vendor partnerships are approved.
+    # It must never be populated from marketplace listings alone.
     approved_ids = {
         value.strip()
         for value in os.getenv("DIGISTORE24_APPROVED_PRODUCT_IDS", "").split(",")
         if value.strip()
     }
     for entry in entries:
-        # Marketplace entry IDs are distinct from product IDs. The API's
-        # getMarketplaceEntry response exposes mainProductId; resolve it when the
-        # listing record does not contain a product ID.
         raw_product_id = next(
             (
                 entry.get(key)
@@ -143,14 +139,11 @@ def build_digistore24_pinterest_draft(
                         None,
                     )
                     if raw_product_id is not None:
-                        # Detail response is authoritative for product-specific fields.
                         entry = {**entry, **detail}
                 except Digistore24MarketplaceError:
-                    # Skip this candidate rather than confusing its entry ID for a product ID.
                     raw_product_id = None
         product_id = str(raw_product_id).strip() if raw_product_id is not None else None
-        explicit_affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
-        # Keep an entry ID for display only when Digistore24 supplied a real tracking URL.
+        explicit_affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url", "promolink", "promoLink")
         if product_id is None and _public_http_url(explicit_affiliate_url):
             display_id = next((entry.get(key) for key in ("id", "entry_id", "marketplace_entry_id") if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()), None)
             product_id = str(display_id).strip() if display_id is not None else None
@@ -158,10 +151,9 @@ def build_digistore24_pinterest_draft(
         affiliate_url = explicit_affiliate_url
         image_url = _first(entry, "image_url", "image", "product_image_url", "thumbnail_url", "cover_image_url")
 
-        # Digistore24 documents the form /redir/PRODUCT-ID/AFFILIATE/CAMPAIGNKEY.
-        # Use it only when the operator explicitly allowlists an approved product
-        # and configures the affiliate ID. The URL is never invented from a
-        # marketplace entry ID alone.
+        # The documented URL shape does not itself prove partnership approval.
+        # Only use the fallback when the operator has explicitly allowlisted an
+        # approved product ID and configured their Digistore24 affiliate ID.
         if (
             not _public_http_url(affiliate_url)
             and affiliate_id
@@ -186,14 +178,26 @@ def build_digistore24_pinterest_draft(
                 "source": "Digistore24 authenticated marketplace API",
             })
     if not candidates:
+        if not affiliate_id:
+            next_step = "Configure DIGISTORE24_AFFILIATE_ID with your Digistore24 affiliate ID in the Render service environment."
+        elif not approved_ids:
+            next_step = (
+                "No approved product IDs are configured. In Digistore24 Affiliate View, open Marketplace and select "
+                "a product, then choose Promote now. Wait until the partnership status is Approved (not Pending), "
+                "then add that numeric product ID to DIGISTORE24_APPROVED_PRODUCT_IDS in Render and redeploy. "
+                "Separate multiple IDs with commas. Do not add products that are merely listed or still pending."
+            )
+        else:
+            next_step = (
+                "Check that DIGISTORE24_APPROVED_PRODUCT_IDS contains the numeric product ID (not the marketplace "
+                "entry ID), and that the vendor partnership is approved. If the API returns a promolink, AEA will use it."
+            )
         raise RuntimeError(
-            "Digistore24 returned marketplace products but none contained a verified affiliate/tracking URL. AEA will not fabricate an affiliate link. "
-            "Set DIGISTORE24_AFFILIATE_ID to your Digistore24 affiliate ID and "
-            "DIGISTORE24_APPROVED_PRODUCT_IDS to comma-separated numeric product IDs "
-            "whose affiliate partnerships are already approved, or ensure the API returns a promolink. "
-            "Marketplace listings alone do not prove approval; AEA will not fabricate links for unapproved products."
+            "AEA fetched Digistore24 marketplace listings, but none had an API-provided affiliate URL or a configured "
+            "approved-product fallback. Digistore24 marketplace visibility does not grant affiliate permission. "
+            + next_step
+            + " AEA will not request or assume partnership approval unless Digistore24 exposes a documented API operation for it."
         )
-    # Prefer a matching niche, then retain stable API order rather than guessing performance.
     terms = [term.strip().casefold() for term in niche.split() if len(term.strip()) > 2]
     product = max(candidates, key=lambda item: sum(term in (item["name"] + " " + item["category"] + " " + item["description"]).casefold() for term in terms))
     image_url = product["image_url"] or _pexels_image(product["name"] + " " + niche)
