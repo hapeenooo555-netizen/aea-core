@@ -110,9 +110,52 @@ def build_digistore24_pinterest_draft(
         if value.strip()
     }
     for entry in entries:
-        product_id = _first(entry, "product_id", "productId", "id", "entry_id", "marketplace_entry_id")
+        # Marketplace entry IDs are distinct from product IDs. The API's
+        # getMarketplaceEntry response exposes mainProductId; resolve it when the
+        # listing record does not contain a product ID.
+        raw_product_id = next(
+            (
+                entry.get(key)
+                for key in ("main_product_id", "mainProductId", "main_product", "product_id", "productId")
+                if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()
+            ),
+            None,
+        )
+        if raw_product_id is None:
+            entry_id = next(
+                (
+                    entry.get(key)
+                    for key in ("id", "entry_id", "marketplace_entry_id")
+                    if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()
+                ),
+                None,
+            )
+            detail_getter = getattr(client, "get_entry", None)
+            if entry_id is not None and callable(detail_getter):
+                try:
+                    detail = detail_getter(entry_id)
+                    raw_product_id = next(
+                        (
+                            detail.get(key)
+                            for key in ("mainProductId", "main_product_id", "productId", "product_id")
+                            if isinstance(detail.get(key), (str, int)) and not isinstance(detail.get(key), bool) and str(detail.get(key)).strip()
+                        ),
+                        None,
+                    )
+                    if raw_product_id is not None:
+                        # Detail response is authoritative for product-specific fields.
+                        entry = {**entry, **detail}
+                except Digistore24MarketplaceError:
+                    # Skip this candidate rather than confusing its entry ID for a product ID.
+                    raw_product_id = None
+        product_id = str(raw_product_id).strip() if raw_product_id is not None else None
+        explicit_affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
+        # Keep an entry ID for display only when Digistore24 supplied a real tracking URL.
+        if product_id is None and _public_http_url(explicit_affiliate_url):
+            display_id = next((entry.get(key) for key in ("id", "entry_id", "marketplace_entry_id") if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()), None)
+            product_id = str(display_id).strip() if display_id is not None else None
         name = _first(entry, "headline", "name", "title")
-        affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
+        affiliate_url = explicit_affiliate_url
         image_url = _first(entry, "image_url", "image", "product_image_url", "thumbnail_url", "cover_image_url")
 
         # Digistore24 documents the form /redir/PRODUCT-ID/AFFILIATE/CAMPAIGNKEY.
@@ -144,7 +187,7 @@ def build_digistore24_pinterest_draft(
             })
     if not candidates:
         raise RuntimeError(
-            "Digistore24 returned marketplace products but no usable affiliate URL. "
+            "Digistore24 returned marketplace products but none contained a verified affiliate/tracking URL. AEA will not fabricate an affiliate link. "
             "Set DIGISTORE24_AFFILIATE_ID to your Digistore24 affiliate ID and "
             "DIGISTORE24_APPROVED_PRODUCT_IDS to comma-separated numeric product IDs "
             "whose affiliate partnerships are already approved, or ensure the API returns a promolink. "

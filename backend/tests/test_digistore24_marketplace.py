@@ -74,3 +74,27 @@ def test_client_rejects_api_error_without_fabricating_products():
     client = Digistore24MarketplaceClient(api_key="secret", client=FakeClient())
     with pytest.raises(Digistore24MarketplaceError, match="did not return a successful"):
         client.list_entries()
+
+
+def test_client_fetches_marketplace_entry_details():
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"result": "success", "data": {"entry": {"id": 7, "mainProductId": 456, "headline": "Product"}}}
+
+    class FakeClient:
+        def __init__(self):
+            self.call = None
+
+        def get(self, url, **kwargs):
+            self.call = (url, kwargs)
+            return FakeResponse()
+
+    fake = FakeClient()
+    client = Digistore24MarketplaceClient(api_key="server-secret", client=fake)
+    entry = client.get_entry(7)
+    assert entry["mainProductId"] == 456
+    assert fake.call[0].endswith("/getMarketplaceEntry")
+    assert fake.call[1]["params"] == {"entryId": "7"}
