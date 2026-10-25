@@ -110,8 +110,9 @@ def build_digistore24_pinterest_draft(
         if value.strip()
     }
     for entry in entries:
-        # IDs in Digistore24 responses are often integers, while _first intentionally
-        # handles non-empty strings for copy/URL fields. Preserve numeric product IDs.
+        # Marketplace entry IDs are distinct from product IDs. The API's
+        # getMarketplaceEntry response exposes mainProductId; resolve it when the
+        # listing record does not contain a product ID.
         raw_product_id = next(
             (
                 entry.get(key)
@@ -120,9 +121,34 @@ def build_digistore24_pinterest_draft(
             ),
             None,
         )
+        if raw_product_id is None:
+            entry_id = next(
+                (
+                    entry.get(key)
+                    for key in ("id", "entry_id", "marketplace_entry_id")
+                    if isinstance(entry.get(key), (str, int)) and not isinstance(entry.get(key), bool) and str(entry.get(key)).strip()
+                ),
+                None,
+            )
+            detail_getter = getattr(client, "get_entry", None)
+            if entry_id is not None and callable(detail_getter):
+                try:
+                    detail = detail_getter(entry_id)
+                    raw_product_id = next(
+                        (
+                            detail.get(key)
+                            for key in ("mainProductId", "main_product_id", "productId", "product_id")
+                            if isinstance(detail.get(key), (str, int)) and not isinstance(detail.get(key), bool) and str(detail.get(key)).strip()
+                        ),
+                        None,
+                    )
+                    if raw_product_id is not None:
+                        # Detail response is authoritative for product-specific fields.
+                        entry = {**entry, **detail}
+                except Digistore24MarketplaceError:
+                    # Skip this candidate rather than confusing its entry ID for a product ID.
+                    raw_product_id = None
         product_id = str(raw_product_id).strip() if raw_product_id is not None else None
-        # A marketplace-entry ID is not necessarily the underlying product ID.
-        # Do not build a promolink from entry.id unless the API explicitly identifies it as a product ID.
         name = _first(entry, "headline", "name", "title")
         affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
         image_url = _first(entry, "image_url", "image", "product_image_url", "thumbnail_url", "cover_image_url")
