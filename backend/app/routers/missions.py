@@ -124,7 +124,7 @@ async def create_mission(
 
 
 @router.get("")
-async def list_missions(
+def list_missions(
     request: Request,
     current_user_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
