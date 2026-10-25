@@ -100,12 +100,37 @@ def build_digistore24_pinterest_draft(
         raise Digistore24MarketplaceError("Digistore24 API key is not configured on the server.")
     entries = client.list_entries(limit=250, sort_by="stats_affiliate_profit_visitor")
     candidates: list[dict[str, Any]] = []
+    affiliate_id = os.getenv("DIGISTORE24_AFFILIATE_ID", "").strip()
+    # Only products whose vendor partnership is already approved may use the
+    # documented promolink format as a fallback. Never guess approval from the
+    # mere presence of a marketplace listing.
+    approved_ids = {
+        value.strip()
+        for value in os.getenv("DIGISTORE24_APPROVED_PRODUCT_IDS", "").split(",")
+        if value.strip()
+    }
     for entry in entries:
-        product_id = _first(entry, "id", "entry_id", "marketplace_entry_id")
+        product_id = _first(entry, "product_id", "productId", "id", "entry_id", "marketplace_entry_id")
         name = _first(entry, "headline", "name", "title")
-        # Only a URL explicitly supplied as an affiliate/tracking/promo URL qualifies.
         affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
         image_url = _first(entry, "image_url", "image", "product_image_url", "thumbnail_url", "cover_image_url")
+
+        # Digistore24 documents the form /redir/PRODUCT-ID/AFFILIATE/CAMPAIGNKEY.
+        # Use it only when the operator explicitly allowlists an approved product
+        # and configures the affiliate ID. The URL is never invented from a
+        # marketplace entry ID alone.
+        if (
+            not _public_http_url(affiliate_url)
+            and affiliate_id
+            and product_id
+            and str(product_id) in approved_ids
+            and str(product_id).isdigit()
+        ):
+            affiliate_url = (
+                "https://www.checkout-ds24.com/redir/"
+                f"{product_id}/{affiliate_id}/Pinterest"
+            )
+
         if product_id and name and _public_http_url(affiliate_url):
             candidates.append({
                 "product_id": str(product_id),
@@ -119,8 +144,11 @@ def build_digistore24_pinterest_draft(
             })
     if not candidates:
         raise RuntimeError(
-            "Digistore24 returned marketplace products but none contained a verified affiliate/tracking URL. "
-            "AEA will not fabricate an affiliate link. The API account/response must expose an affiliate URL or an approved link-generation operation."
+            "Digistore24 returned marketplace products but no usable affiliate URL. "
+            "Set DIGISTORE24_AFFILIATE_ID to your Digistore24 affiliate ID and "
+            "DIGISTORE24_APPROVED_PRODUCT_IDS to comma-separated numeric product IDs "
+            "whose affiliate partnerships are already approved, or ensure the API returns a promolink. "
+            "Marketplace listings alone do not prove approval; AEA will not fabricate links for unapproved products."
         )
     # Prefer a matching niche, then retain stable API order rather than guessing performance.
     terms = [term.strip().casefold() for term in niche.split() if len(term.strip()) > 2]
