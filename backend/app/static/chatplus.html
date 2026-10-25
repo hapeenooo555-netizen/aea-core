@@ -936,7 +936,7 @@ Connect Pinterest
 
         <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest AI affiliate autopilot">
           <div class="card-header">Pinterest · AI Affiliate Autopilot</div>
-          <p class="muted">AEA itachagua bidhaa kutoka Digistore24, itengeneze affiliate Pin title na description, itafute picha, na ichague board yako iliyothibitishwa. Hakuna kuingiza URL au copy kwa mkono. Pin haitachapishwa bila idhini yako.</p>
+          <p class="muted">AEA itachagua bidhaa inayofaa kutoka Digistore24 na itatumia AI kutengeneza title na description mpya kila draft inapozalishwa, kulingana na bidhaa, niche na lugha uliyochagua. Itatafuta picha na kuandaa destination URL kiotomatiki. Mifano ni ya kuelekeza tu; haitanakili title/description moja kila mara. Pin haitachapishwa bila idhini yako.</p>
           <div class="field">
             <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
             <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
@@ -960,11 +960,16 @@ Connect Pinterest
             <h3 id="pinterestPreviewTitle"></h3>
             <p id="pinterestPreviewDescription"></p>
             <p><strong>Affiliate destination:</strong> <a id="pinterestPreviewDestination" rel="noopener noreferrer" target="_blank"></a></p>
-            <img id="pinterestPreviewImage" alt="AI-generated affiliate Pin image preview" style="max-width:100%;height:auto;border-radius:12px" hidden>
+            <img id="pinterestPreviewImage" alt="AI affiliate Pin image preview" style="max-width:100%;height:auto;border-radius:12px" hidden>
             <p id="pinterestPreviewBoard"></p>
             <p id="pinterestPreviewAccount"></p>
             <p id="pinterestPreviewProduct"></p>
-            <p><strong>Approval:</strong> Pending — no Pin has been published.</p>
+            <p><strong>Hali:</strong> Draft imeandaliwa; bado haijachapishwa.</p>
+            <div class="card-actions" style="display:grid;grid-template-columns:1fr;gap:10px">
+              <button id="pinterestContinueToApproval" class="primary-button" type="button">Endelea → omba idhini ya kuchapisha</button>
+              <button id="pinterestRegenerateDraft" class="secondary-button" type="button">Rudia kutengeneza draft</button>
+            </div>
+            <p class="muted">Kitufe cha Endelea kitapeleka taarifa hizi ChatPlus ili workflow ya AEA iombe idhini. Chapisho litafanyika tu ikiwa hatua ya approval na Pinterest publishing imekamilika.</p>
           </article>
         </section>
 
@@ -1826,6 +1831,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         throw new Error("Pinterest haikuthibitisha preview. Usichapishe.");
       }
       const preview = previewResult.preview;
+      // Keep the fresh AI-generated copy returned by the draft/preview services.
+      // The example title/description must never override the AI's creative output.
+      document.getElementById("pinterestDraftTitle").value = String(preview.title || draft.title || "");
+      document.getElementById("pinterestDraftDescription").value = String(preview.description || draft.description || "");
       document.getElementById("pinterestPreviewTitle").textContent = String(preview.title || "");
       document.getElementById("pinterestPreviewDescription").textContent = String(preview.description || "");
       const destination = document.getElementById("pinterestPreviewDestination");
@@ -1846,6 +1855,40 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     } finally {
       pinterestAutoGenerate.disabled = false;
     }
+  });
+
+  document.getElementById("pinterestContinueToApproval").addEventListener("click", () => {
+    const title = document.getElementById("pinterestPreviewTitle").textContent.trim();
+    const description = document.getElementById("pinterestPreviewDescription").textContent.trim();
+    const destination = document.getElementById("pinterestPreviewDestination").href;
+    const image = document.getElementById("pinterestPreviewImage").src;
+    const board = document.getElementById("pinterestDraftBoard").selectedOptions[0]?.textContent || "";
+    const product = document.getElementById("pinterestPreviewProduct").textContent.replace(/^Digistore24 product:\s*/, "").trim();
+    if (!title || !description || !destination || !image || !board) {
+      pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
+      return;
+    }
+    const prompt = [
+      "Continue the Pinterest affiliate Pin workflow using the reviewed draft below.",
+      "Create or resume the authenticated owner's Pinterest publish mission and stop at the human approval gate before publishing.",
+      "Do not change the supplied copy or URLs. If the destination URL is not a verified working affiliate URL, stop and report the problem instead of publishing.",
+      "Title: " + title,
+      "Description: " + description,
+      "Destination URL: " + destination,
+      "Image URL: " + image,
+      "Pinterest board: " + board,
+      "Digistore24 product: " + product,
+      "After creating the mission, show the approval controls and wait for explicit approval. Never claim published without a real Pinterest pin_id and URL."
+    ].join("\n");
+    const input = document.getElementById("messageInput");
+    input.value = prompt;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.getElementById("composer").requestSubmit();
+    pinterestDraftStatus.textContent = "Taarifa zimetumwa kwa ChatPlus. Subiri approval request; bado haijathibitishwa kuwa Pin imechapishwa.";
+  });
+  document.getElementById("pinterestRegenerateDraft").addEventListener("click", () => {
+    pinterestDraftPreview.hidden = true;
+    pinterestAutoGenerate.click();
   });
 
   document.getElementById("historyButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
