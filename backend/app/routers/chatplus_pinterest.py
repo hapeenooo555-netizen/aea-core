@@ -7,7 +7,9 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user_id
+from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.services.approval_gateway import ApprovalGateway
+from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.pinterest_live_verification import PinterestVerificationError, verify_account_and_boards
 from app.services.pinterest_token_vault import get_access_token
 
@@ -103,3 +105,118 @@ def pinterest_draft_preview(
         raise HTTPException(status_code=code, detail=message) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Pinterest credential vault is unavailable") from exc
+
+
+
+@router.post("/draft-approval", status_code=status.HTTP_201_CREATED)
+def pinterest_draft_approval(
+    request: PinterestDraftPreviewRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a durable, owner-scoped approval request for a validated Pin draft.
+
+    This endpoint deliberately stops at pending approval. It never publishes.
+    """
+    _validate_http_url(request.destination_url, "destination_url")
+    _validate_http_url(request.image_url, "image_url")
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
+    try:
+        stored = get_access_token(owner_id=owner_id)
+        if not stored:
+            raise HTTPException(status_code=404, detail="Pinterest is not connected for this account")
+        if stored.get("expired"):
+            raise HTTPException(status_code=409, detail="Pinterest access token has expired; reconnect Pinterest")
+
+        verified = verify_account_and_boards(stored["access_token"])
+        selected = next((board for board in verified["boards"] if board.get("id") == request.board_id), None)
+        if selected is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected board ID does not belong to this connected Pinterest account. Refresh boards and select a valid board.",
+            )
+
+        title = request.title.strip()
+        description = request.description.strip()
+        destination_url = request.destination_url.strip()
+        image_url = request.image_url.strip()
+        # The idempotency key ties repeated submissions of the same draft to
+        # one mission, preventing accidental duplicate approval requests.
+        import hashlib
+        fingerprint = hashlib.sha256(
+            "|".join([owner_id, title, description, destination_url, image_url, selected["id"]]).encode("utf-8")
+        ).hexdigest()[:32]
+        orchestration = MissionOrchestrationService(owner_id, client=client)
+        mission_result = orchestration.create_mission(
+            objective=f"Review and approve Pinterest Pin: {title}",
+            title=f"Pinterest approval: {title[:90]}",
+            metadata={"source": "chatplus_pinterest_draft", "platform": "pinterest", "board_id": selected["id"]},
+            idempotency_key=f"pinterest-draft-approval:{fingerprint}",
+        )
+        if not mission_result.get("success") or not (mission_result.get("mission") or {}).get("id"):
+            raise HTTPException(status_code=503, detail="Could not create a durable mission for this Pin approval")
+        mission_id = mission_result["mission"]["id"]
+
+        gateway = ApprovalGateway(client=client)
+        existing = gateway.list_requests(mission_id=mission_id, status="pending", limit=20, client=client)
+        for approval in existing:
+            if approval.get("owner_id") == owner_id and approval.get("action_type") == "publish_content":
+                payload = approval.get("payload") or {}
+                if payload.get("source") == "chatplus_pinterest_draft":
+                    return {
+                        "success": True,
+                        "approval": approval,
+                        "preview": payload.get("preview"),
+                        "published": False,
+                        "idempotent": True,
+                        "message": "This draft already has a pending approval. Nothing was published.",
+                    }
+
+        preview = {
+            "title": title,
+            "description": description,
+            "destination_url": destination_url,
+            "image_url": image_url,
+            "board": {"id": selected["id"], "name": selected["name"]},
+            "account": verified["account"],
+        }
+        result = gateway.create_request(
+            mission_id=mission_id,
+            action_type="publish_content",
+            risk_level="WRITE_EXTERNAL",
+            owner_id=owner_id,
+            client=client,
+            payload={
+                "platform": "pinterest",
+                "worker_id": owner_id,
+                "content": {
+                    "title": title,
+                    "pin_text": description,
+                    "link_url": destination_url,
+                    "image_url": image_url,
+                    "board_id": selected["id"],
+                    "board_name": selected["name"],
+                },
+                "source": "chatplus_pinterest_draft",
+                "preview": preview,
+            },
+        )
+        if not result.get("success") or not result.get("request"):
+            raise HTTPException(status_code=503, detail="Could not persist the Pinterest approval request")
+        return {
+            "success": True,
+            "approval": result["request"],
+            "preview": preview,
+            "published": False,
+            "requires_explicit_approval": True,
+            "message": "Pin draft validated and approval request saved. It will not publish until you explicitly approve it.",
+        }
+    except HTTPException:
+        raise
+    except PinterestVerificationError as exc:
+        message = str(exc)
+        code = status.HTTP_409_CONFLICT if "reconnect" in message.lower() else status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(status_code=code, detail=message) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not create the Pinterest approval request") from exc
