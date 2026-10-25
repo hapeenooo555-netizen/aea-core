@@ -110,7 +110,9 @@ def build_digistore24_pinterest_draft(
         if value.strip()
     }
     for entry in entries:
-        product_id = _first(entry, "product_id", "productId", "id", "entry_id", "marketplace_entry_id")
+        product_id = _first(entry, "main_product_id", "mainProductId", "product_id", "productId")
+        # A marketplace-entry ID is not necessarily the underlying product ID.
+        # Do not build a promolink from entry.id unless the API explicitly identifies it as a product ID.
         name = _first(entry, "headline", "name", "title")
         affiliate_url = _first(entry, "affiliate_url", "affiliate_link", "promotional_url", "promo_url", "tracking_url", "affiliate_tracking_url")
         image_url = _first(entry, "image_url", "image", "product_image_url", "thumbnail_url", "cover_image_url")
