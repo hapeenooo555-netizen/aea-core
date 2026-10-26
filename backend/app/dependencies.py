@@ -150,15 +150,12 @@ def get_user_scoped_client(
 ) -> Any:
     """Return a Supabase client whose queries carry the caller's JWT.
 
-    The returned client is constructed with the Supabase anon key (required by
-    PostgREST for API-key validation) and then the caller's access token is
-    attached via ``auth.set_session``. PostgreSQL RLS therefore sees
-    ``auth.uid()`` equal to ``current_user["id"]`` for every query made with
-    this client.
+    The client is constructed with the public anon/publishable key, then the
+    verified caller JWT is attached directly to PostgREST. This avoids trying
+    to restore a complete Auth session with a missing refresh token while
+    still allowing PostgreSQL RLS to evaluate auth.uid() for this user.
 
-    The caller's raw token is never logged, returned in responses, or
-    persisted. It is used only to construct the client and is then
-    discarded.
+    The raw token is never logged, returned in responses, or persisted.
     """
     token = _extract_bearer_token(request)
     url = database_module.get_supabase_url()
@@ -169,10 +166,10 @@ def get_user_scoped_client(
         from supabase import create_client
 
         client = create_client(url, anon_key)
-        client.auth.set_session(
-            access_token=token,
-            refresh_token="",
-        )
+        # This is an API request scoped to an already-authenticated user, not
+        # a browser Auth session. Attach the access token to PostgREST directly;
+        # auth.set_session requires a valid refresh token for session lifecycle.
+        client.postgrest.auth(token)
         return client
     except Exception:  # pragma: no cover - defensive
         return None
