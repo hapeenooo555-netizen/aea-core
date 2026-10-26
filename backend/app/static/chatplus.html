@@ -1620,12 +1620,12 @@ function renderState(nextState) {
       function renderFreelancerResult(title, payload) {
         const response = document.getElementById("assistantResponse");
         if (!response) return;
-        response.textContent = title + "\\n\\n" + JSON.stringify(payload, null, 2);
+        response.textContent = title + "\n\n" + JSON.stringify(payload, null, 2);
         response.hidden = false;
       }
 
       async function runFreelancerCommand(text) {
-        const match = text.match(/^freelancer\\s+(analyze|proposal|save)\\s*:\\s*([\\s\\S]+)$/i);
+        const match = text.match(/^freelancer\s+(analyze|proposal|save)\s*:\s*([\s\S]+)$/i);
         if (!match) return false;
         const action = match[1].toLowerCase();
         const input = match[2].trim();
