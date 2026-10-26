@@ -82,3 +82,17 @@ Use the existing ChatPlus/dashboard patterns rather than creating a second indep
 - Proposals and client-facing deliveries are drafts until explicitly approved.
 - No unsupported scraping or automatic marketplace interaction is introduced.
 - CI passes, deployed health checks pass, and smoke-test evidence is recorded before claiming completion.
+
+## Implementation status — 2026-10-26
+
+The first code slice is now present on `feat/freelancer-employee-foundation`:
+- `backend/app/services/freelancer_employee.py`: heuristic analysis of user-provided job descriptions and draft-only proposal generation.
+- `backend/app/routers/freelancer.py`: authenticated `POST /freelancer/analyze` and `POST /freelancer/proposal-draft` endpoints.
+- `backend/app/main.py`: registers the Freelancer router.
+- `tests/test_freelancer_employee.py`: service tests for job analysis, blank input, draft-only status, and avoiding invented experience.
+
+Verification evidence:
+- GitHub Actions workflow **Backend tests**, run **#273** (run ID `40356241848`), completed successfully on the PR commit; all listed job steps, including changed-module tests, passed.
+- Production smoke testing of the deployed Render service was not confirmed from this environment.
+- Marketplace search/submission, persistent freelancer projects, deliverable storage, client delivery, and earnings reconciliation are not implemented in this first slice.
+- Keep this pull request in draft until a production smoke test and review of the full diff are complete.
