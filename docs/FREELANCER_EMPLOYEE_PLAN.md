@@ -96,3 +96,23 @@ Verification evidence:
 - Production smoke testing of the deployed Render service was not confirmed from this environment.
 - Marketplace search/submission, persistent freelancer projects, deliverable storage, client delivery, and earnings reconciliation are not implemented in this first slice.
 - Keep this pull request in draft until a production smoke test and review of the full diff are complete.
+
+## Second implementation slice — project tracking
+
+Branch `feat/freelancer-project-tracking` adds:
+- `supabase/migrations/20261026170000_freelancer_projects.sql`: a persistent `freelancer_projects` table with owner-scoped RLS policies.
+- `backend/app/services/freelancer_projects.py`: create, list, read and update service operations using the user-scoped Supabase client.
+- `backend/app/routers/freelancer_projects.py`: authenticated endpoints under `/freelancer/projects`.
+- `tests/test_freelancer_projects.py`: service tests for ownership payload, received-versus-agreed amounts, invalid input, listing and invalid status.
+
+Endpoints:
+- `POST /freelancer/projects` creates a project.
+- `GET /freelancer/projects` lists the authenticated user's projects; optional `?status=` filter.
+- `GET /freelancer/projects/{project_id}` reads a project.
+- `PATCH /freelancer/projects/{project_id}` updates project fields.
+
+Important deployment gate:
+- The Supabase migration must be reviewed and applied using the project's approved migration process before these endpoints can persist data in production.
+- CI and deployed Render smoke tests for this second slice are not yet verified.
+- Do not merge or deploy this branch until tests pass and the migration/RLS behavior has been reviewed.
+- This slice does not yet provide a front-end UI, automatic marketplace discovery/submission, deliverable file storage, or payment-provider reconciliation.
