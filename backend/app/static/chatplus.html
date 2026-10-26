@@ -1800,14 +1800,16 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     }
     pinterestAutoGenerate.disabled = true;
     pinterestDraftPreview.hidden = true;
-    const suppliedAffiliateUrl = document.getElementById("pinterestAffiliateUrl").value.trim();\n    pinterestDraftStatus.textContent = suppliedAffiliateUrl ? "AEA inatengeneza Pin kutoka affiliate link uliyoingiza..." : "AEA inatafuta bidhaa Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
+    const suppliedAffiliateUrl = document.getElementById("pinterestAffiliateUrl").value.trim();
+    pinterestDraftStatus.textContent = suppliedAffiliateUrl ? "AEA inatengeneza Pin kutoka affiliate link uliyoingiza..." : "AEA inatafuta bidhaa Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
     try {
       const generated = await api(suppliedAffiliateUrl ? "/affiliate/automation/pinterest-draft" : "/affiliate/automation/digistore24/pinterest-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           niche: document.getElementById("pinterestAutoNiche").value.trim() || "AI tools and digital marketing",
-          language: document.getElementById("pinterestAutoLanguage").value || "English"
+          language: document.getElementById("pinterestAutoLanguage").value || "English",
+          ...(suppliedAffiliateUrl ? { affiliate_url: suppliedAffiliateUrl, product_name: document.getElementById("pinterestProductName").value.trim() || undefined } : {})
         })
       });
       if (generated.success !== true || !generated.draft || generated.published !== false) {
