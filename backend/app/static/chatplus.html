@@ -340,6 +340,19 @@
       padding: 16px;
     }
 
+    .freelancer-dashboard { display: grid; gap: 12px; }
+    .freelancer-dashboard-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .freelancer-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .freelancer-stat { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); min-width: 0; }
+    .freelancer-stat strong { display: block; font-size: 1.15rem; overflow-wrap: anywhere; }
+    .freelancer-stat span { display: block; color: var(--muted); font-size: 11px; }
+    .freelancer-project { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+    .freelancer-project-title { font-weight: 750; overflow-wrap: anywhere; }
+    .freelancer-project-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
+    .freelancer-badge { display: inline-flex; border-radius: 999px; padding: 3px 8px; background: var(--brand-soft); color: var(--brand-dark); font-size: 11px; font-weight: 700; }
+    .freelancer-empty, .freelancer-message { color: var(--muted); font-size: 13px; }
+    @media (max-width: 420px) { .freelancer-summary { grid-template-columns: 1fr; } }
+
     .card-header {
       color: var(--muted);
       font-size: 10px;
@@ -934,6 +947,24 @@ Connect Pinterest
           <div id="assistantResponse" class="assistant-response" hidden></div>
         </article>
 
+        <section id="freelancerDashboard" class="panel freelancer-dashboard" aria-label="Freelancer project dashboard">
+          <div class="freelancer-dashboard-head">
+            <div>
+              <div class="card-header">Freelancer Employee</div>
+              <h3 style="margin: 4px 0 0;">Project dashboard</h3>
+            </div>
+            <button id="freelancerRefreshProjects" class="secondary-button" type="button">Refresh projects</button>
+          </div>
+          <div class="freelancer-summary" aria-live="polite">
+            <div class="freelancer-stat"><strong id="freelancerTotal">—</strong><span>Total projects</span></div>
+            <div class="freelancer-stat"><strong id="freelancerAgreed">—</strong><span>Agreed value</span></div>
+            <div class="freelancer-stat"><strong id="freelancerReceived">—</strong><span>Received payments</span></div>
+          </div>
+          <p id="freelancerProjectsStatus" class="freelancer-message" role="status">Loading your projects…</p>
+          <div id="freelancerProjectsList"></div>
+          <p class="freelancer-message">Agreed value is not income received. Payments are counted only from the amount recorded as received.</p>
+        </section>
+
         <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest AI affiliate autopilot">
           <div class="card-header">Pinterest · AI Affiliate Autopilot</div>
           <p class="muted">AEA inaweza kutumia affiliate link yako kutoka chanzo chochote, au kutafuta bidhaa Digistore24 ikiwa link imeachwa wazi. AI itatengeneza title na description kulingana na niche na lugha, kisha itatafuta picha. Link uliyoweka wewe haijathibitishwa na AEA; kagua preview kabla ya kuidhinisha. Pin haitachapishwa bila idhini yako.</p>
@@ -1233,6 +1264,71 @@ evaluate: "Evaluating the next step",
         }
         return data;
       }
+
+      const freelancerStatusLabels = {
+        lead: "Lead", proposal_draft: "Proposal draft", proposal_sent: "Proposal sent",
+        in_progress: "In progress", submitted: "Submitted", revision: "Revision",
+        completed: "Completed", cancelled: "Cancelled",
+      };
+
+      function freelancerMoney(value, currency = "USD") {
+        const amount = Number(value || 0);
+        try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount); }
+        catch (_) { return currency + " " + amount.toFixed(2); }
+      }
+
+      async function loadFreelancerProjects() {
+        const status = document.getElementById("freelancerProjectsStatus");
+        const list = document.getElementById("freelancerProjectsList");
+        const total = document.getElementById("freelancerTotal");
+        const agreed = document.getElementById("freelancerAgreed");
+        const received = document.getElementById("freelancerReceived");
+        const button = document.getElementById("freelancerRefreshProjects");
+        if (!status || !list) return;
+        if (button) button.disabled = true;
+        status.textContent = "Loading your projects…";
+        list.replaceChildren();
+        try {
+          const result = await api("/freelancer/projects");
+          const projects = Array.isArray(result.projects) ? result.projects : [];
+          const sumByCurrency = (field) => {
+            const totals = new Map();
+            projects.forEach((project) => {
+              const currency = String(project.currency || "USD").toUpperCase();
+              totals.set(currency, (totals.get(currency) || 0) + Number(project[field] || 0));
+            });
+            if (!totals.size) return "0";
+            return [...totals.entries()].map(([currency, amount]) => freelancerMoney(amount, currency)).join(" · ");
+          };
+          total.textContent = String(projects.length);
+          agreed.textContent = sumByCurrency("agreed_amount");
+          received.textContent = sumByCurrency("amount_received");
+          if (!projects.length) {
+            status.textContent = "No Freelancer projects saved yet.";
+            list.append(makeElement("p", "freelancer-empty", "Save a project from ChatPlus using: freelancer save: Project title | Job description"));
+            return;
+          }
+          status.textContent = "Loaded " + projects.length + " project(s).";
+          projects.forEach((project) => {
+            const card = makeElement("article", "freelancer-project");
+            const title = makeElement("div", "freelancer-project-title", project.title || "Untitled project");
+            const meta = makeElement("div", "freelancer-project-meta");
+            meta.append(makeElement("span", "freelancer-badge", freelancerStatusLabels[project.status] || project.status || "Unknown"));
+            meta.append(makeElement("span", "", "Agreed: " + (project.agreed_amount == null ? "Not set" : freelancerMoney(project.agreed_amount, project.currency))));
+            meta.append(makeElement("span", "", "Received: " + freelancerMoney(project.amount_received, project.currency)));
+            const description = makeElement("p", "freelancer-message", project.job_description || "");
+            card.append(title, meta, description);
+            list.append(card);
+          });
+        } catch (error) {
+          status.textContent = "Could not load projects: " + error.message;
+        } finally {
+          if (button) button.disabled = false;
+        }
+      }
+
+      const freelancerRefreshButton = document.getElementById("freelancerRefreshProjects");
+      if (freelancerRefreshButton) freelancerRefreshButton.addEventListener("click", loadFreelancerProjects);
 
       async function publicRequest(path, options = {}) {
         const response = await fetch(`${supabaseBase()}${path}`, { ...options, headers: publicHeaders() });
@@ -1781,6 +1877,7 @@ function renderState(nextState) {
           return;
         }
         showChat();
+        loadFreelancerProjects();
         try {
           await refreshAll();
         } catch (error) {
