@@ -224,3 +224,40 @@ def build_digistore24_pinterest_draft(
 
 
 __all__ = ["build_digistore24_pinterest_draft"]
+
+
+
+def build_external_pinterest_draft(
+    *, affiliate_url: str, niche: str = "AI tools and digital marketing",
+    language: str = "English", product_name: str | None = None,
+) -> dict[str, Any]:
+    """Prepare a Pin from a user-supplied affiliate URL, without requiring Digistore24."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(affiliate_url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or len(affiliate_url) > 2048:
+        raise ValueError("Provide a valid affiliate destination URL beginning with https:// or http://.")
+    destination = affiliate_url.strip()
+    name = (product_name or "").strip() or niche.strip() or "Recommended resource"
+    product = {
+        "product_id": "user-supplied",
+        "name": name[:200],
+        "description": "Product details were not independently verified by AEA. Use only claims supplied by the publisher.",
+        "category": niche,
+        "affiliate_url": destination,
+        "source": "User-supplied affiliate URL (not independently verified)",
+    }
+    image_url = _pexels_image(name + " " + niche)
+    if not _public_http_url(image_url):
+        raise RuntimeError(
+            "No suitable public image was found. Configure PEXELS_API_KEY or use the Digistore24 option for products with a public image."
+        )
+    copy = _generate_copy(product, niche=niche, language=language)
+    return {
+        "success": True,
+        "product": {"id": "user-supplied", "name": name, "source": product["source"], "affiliate_url": destination},
+        "draft": {**copy, "destination_url": destination, "image_url": image_url, "board_id": None},
+        "requires_explicit_approval": True,
+        "published": False,
+        "note": "Prepared from a user-supplied destination URL. AEA has not independently verified the affiliate partnership or product claims; review before approval.",
+    }

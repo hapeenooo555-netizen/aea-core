@@ -61,3 +61,37 @@ def test_build_draft_requires_image_or_pexels(monkeypatch):
     })
     with pytest.raises(RuntimeError, match="PEXELS_API_KEY"):
         draft.build_digistore24_pinterest_draft(marketplace=MarketplaceWithoutImage())
+
+
+
+def test_external_pinterest_draft_accepts_user_supplied_affiliate_url(monkeypatch):
+    monkeypatch.setattr(draft, "_pexels_image", lambda query: "https://images.example/pin.jpg")
+    monkeypatch.setattr(draft, "_generate_copy", lambda product, *, niche, language: {
+        "title": "AI Marketing Toolkit",
+        "description": "Explore this resource. I may earn a commission if you buy through my affiliate link.",
+    })
+    result = draft.build_external_pinterest_draft(
+        affiliate_url="https://affiliate.example/track?ref=123",
+        product_name="AI Marketing Toolkit",
+        niche="AI tools",
+        language="English",
+    )
+    assert result["success"] is True
+    assert result["draft"]["destination_url"] == "https://affiliate.example/track?ref=123"
+    assert result["draft"]["image_url"] == "https://images.example/pin.jpg"
+    assert result["published"] is False
+    assert result["requires_explicit_approval"] is True
+    assert "not independently verified" in result["product"]["source"]
+
+
+def test_external_pinterest_draft_rejects_invalid_affiliate_url():
+    import pytest
+    with pytest.raises(ValueError, match="valid affiliate destination URL"):
+        draft.build_external_pinterest_draft(affiliate_url="javascript:alert(1)")
+
+
+def test_external_pinterest_draft_requires_a_public_image(monkeypatch):
+    import pytest
+    monkeypatch.setattr(draft, "_pexels_image", lambda query: None)
+    with pytest.raises(RuntimeError, match="PEXELS_API_KEY"):
+        draft.build_external_pinterest_draft(affiliate_url="https://affiliate.example/track")
