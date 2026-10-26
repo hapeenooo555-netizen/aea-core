@@ -936,7 +936,7 @@ Connect Pinterest
 
         <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest AI affiliate autopilot">
           <div class="card-header">Pinterest · AI Affiliate Autopilot</div>
-          <p class="muted">AEA itachagua bidhaa inayofaa kutoka Digistore24 na itatumia AI kutengeneza title na description mpya kila draft inapozalishwa, kulingana na bidhaa, niche na lugha uliyochagua. Itatafuta picha na kuandaa destination URL kiotomatiki. Mifano ni ya kuelekeza tu; haitanakili title/description moja kila mara. Pin haitachapishwa bila idhini yako.</p>
+          <p class="muted">AEA inaweza kutumia affiliate link yako kutoka chanzo chochote, au kutafuta bidhaa Digistore24 ikiwa link imeachwa wazi. AI itatengeneza title na description kulingana na niche na lugha, kisha itatafuta picha. Link uliyoweka wewe haijathibitishwa na AEA; kagua preview kabla ya kuidhinisha. Pin haitachapishwa bila idhini yako.</p>
           <div class="field">
             <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
             <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
@@ -1792,9 +1792,9 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     }
     pinterestAutoGenerate.disabled = true;
     pinterestDraftPreview.hidden = true;
-    pinterestDraftStatus.textContent = "AEA inatafuta bidhaa halisi Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
+    const suppliedAffiliateUrl = document.getElementById("pinterestAffiliateUrl").value.trim();\n    pinterestDraftStatus.textContent = suppliedAffiliateUrl ? "AEA inatengeneza Pin kutoka affiliate link uliyoingiza..." : "AEA inatafuta bidhaa Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
     try {
-      const generated = await api("/affiliate/automation/digistore24/pinterest-draft", {
+      const generated = await api(suppliedAffiliateUrl ? "/affiliate/automation/pinterest-draft" : "/affiliate/automation/digistore24/pinterest-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1847,7 +1847,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       document.getElementById("pinterestPreviewBoard").textContent = "Board: " + String((preview.board || {}).name || board.name);
       const account = preview.account || verifiedPinterestAccount || {};
       document.getElementById("pinterestPreviewAccount").textContent = "Account: " + String(account.username || account.business_name || account.name || "Verified Pinterest account");
-      document.getElementById("pinterestPreviewProduct").textContent = "Digistore24 product: " + String((generated.product || {}).name || "Verified marketplace product");
+      document.getElementById("pinterestPreviewProduct").textContent = "Product/source: " + String((generated.product || {}).name || "Affiliate resource") + " — " + String((generated.product || {}).source || "Source not provided");
       pinterestDraftPreview.hidden = false;
       pinterestDraftStatus.textContent = "Pin draft imeandaliwa na AI na kuthibitishwa kwa board yako. Inasubiri idhini yako; hakuna Pin iliyochapishwa.";
     } catch (error) {
