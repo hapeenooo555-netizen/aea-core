@@ -1161,8 +1161,8 @@ evaluate: "Evaluating the next step",
       const toast = document.getElementById("toast");
 
       function apiPath(path) {
-        // Affiliate automation is mounted at the API root, not below /chatplus.
-        if (path.startsWith("/affiliate/automation/")) return path;
+        // These APIs are mounted at the Core root, not below /chatplus.
+        if (path.startsWith("/affiliate/automation/") || path.startsWith("/freelancer/")) return path;
         return `/chatplus${path}`;
       }
 
@@ -1617,6 +1617,50 @@ function renderState(nextState) {
         await Promise.all([loadHistory(), loadState()]);
       }
 
+      function renderFreelancerResult(title, payload) {
+        const response = document.getElementById("assistantResponse");
+        if (!response) return;
+        response.textContent = title + "\n\n" + JSON.stringify(payload, null, 2);
+        response.hidden = false;
+      }
+
+      async function runFreelancerCommand(text) {
+        const match = text.match(/^freelancer\s+(analyze|proposal|save)\s*:\s*([\s\S]+)$/i);
+        if (!match) return false;
+        const action = match[1].toLowerCase();
+        const input = match[2].trim();
+        if (!input) throw new Error("Add a job description after freelancer " + action + ":");
+        if (action === "analyze") {
+          const result = await api("/freelancer/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: input, source_url: null }),
+          });
+          renderFreelancerResult("Freelancer job analysis", result);
+          return true;
+        }
+        if (action === "proposal") {
+          const result = await api("/freelancer/proposal-draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: input }),
+          });
+          renderFreelancerResult("Freelancer proposal draft — review before use", result);
+          return true;
+        }
+        const separator = input.indexOf("|");
+        if (separator < 1 || !input.slice(separator + 1).trim()) {
+          throw new Error("Use: freelancer save: Project title | Full job description");
+        }
+        const result = await api("/freelancer/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: input.slice(0, separator).trim(), job_description: input.slice(separator + 1).trim(), status: "lead", currency: "USD", amount_received: 0 }),
+        });
+        renderFreelancerResult("Freelancer project saved", result);
+        return true;
+      }
+
       async function sendMessage(event) {
         event.preventDefault();
         const text = messageInput.value.trim();
@@ -1628,6 +1672,13 @@ function renderState(nextState) {
         setSending(true);
         renderState({ state: "thinking", label: localizedStateLabel("thinking"), detail: activeCopy().analyzing });
         try {
+          const handledByFreelancer = await runFreelancerCommand(text);
+          if (handledByFreelancer) {
+            state.messages.push({ role: "user", content: text });
+            renderHistory();
+            renderState({ state: "completed", label: localizedStateLabel("completed"), detail: "Freelancer Employee request completed." });
+            return;
+          }
           const result = await api("/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
