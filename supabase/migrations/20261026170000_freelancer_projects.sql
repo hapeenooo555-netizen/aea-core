@@ -43,3 +43,19 @@ create policy freelancer_projects_delete_own on public.freelancer_projects
     for delete to authenticated using (owner_id = (select auth.uid()));
 
 grant select, insert, update, delete on public.freelancer_projects to authenticated;
+
+-- Keep updated_at accurate when project fields change.
+create or replace function public.set_freelancer_projects_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+    new.updated_at = now();
+    return new;
+end;
+$$;
+
+drop trigger if exists freelancer_projects_set_updated_at on public.freelancer_projects;
+create trigger freelancer_projects_set_updated_at
+before update on public.freelancer_projects
+for each row execute function public.set_freelancer_projects_updated_at();
