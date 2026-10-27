@@ -92,7 +92,10 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
         for word in __import__("re").findall(r"[a-zA-Z0-9]+", product_name)
         if len(word) >= 4 and word.casefold() not in stop_words
     }
-    # If the product title contains only generic category words, no vendor image can be\n    # confidently tied to this specific product. Force the stock-image fallback.\n    if not terms:\n        return None\n
+    # Generic product titles are not enough evidence to select vendor artwork.
+    if not terms:
+        return None
+
     class MetadataParser(HTMLParser):
         def __init__(self) -> None:
             super().__init__()
