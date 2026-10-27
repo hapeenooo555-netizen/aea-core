@@ -31,61 +31,26 @@ def _public_http_url(value: Any) -> bool:
 
 
 def _pexels_image(query: str) -> str | None:
-    """Find a usable stock image; try focused alternatives and log safe diagnostics."""
-    import logging
-    logger = logging.getLogger(__name__)
     api_key = os.getenv("PEXELS_API_KEY", "").strip()
     if not api_key:
-        logger.warning("Pexels image search skipped: PEXELS_API_KEY is not set in this service.")
         return None
-
-    # Pexels search is keyword-based. A long product title plus niche can be too
-    # restrictive, so try a small set of broader, still-relevant queries.
-    normalized = " ".join(query.replace("-", " ").split())
-    queries = [normalized]
-    for candidate in ("small business owner working at desk laptop", "small business office workspace laptop notebook", "entrepreneur working on laptop at desk"):
-        if candidate.casefold() not in normalized.casefold():
-            queries.append(candidate)
-
-    for search_query in queries[:4]:
-        try:
-            response = httpx.get(
-                "https://api.pexels.com/v1/search",
-                params={"query": search_query, "orientation": "portrait", "per_page": 10},
-                headers={"Authorization": api_key},
-                timeout=10.0,
-            )
-            if response.status_code in {401, 403}:
-                logger.error("Pexels image search authentication/permission failed (HTTP %s). Check PEXELS_API_KEY in Render.", response.status_code)
-                return None
-            if response.status_code == 429:
-                logger.warning("Pexels image search rate-limited (HTTP 429).")
-                return None
-            response.raise_for_status()
-            payload = response.json()
-            photos = payload.get("photos", [])
-            ranked: list[tuple[int, str]] = []
-            for photo in photos if isinstance(photos, list) else []:
-                if not isinstance(photo, dict):
-                    continue
-                src = photo.get("src", {})
-                image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
-                if not _public_http_url(image_url):
-                    continue
-                alt = str(photo.get("alt") or "").casefold()
-                score = sum(term in alt for term in ("business", "office", "workspace", "laptop", "desk", "entrepreneur", "working"))
-                if any(term in alt for term in ("deepseek", "chatbot interface", "chatgpt interface", "ai chat interface")):
-                    continue
-                ranked.append((score, image_url))
-            if ranked:
-                ranked.sort(key=lambda item: item[0], reverse=True)
-                logger.info("Pexels image search succeeded for query %r (relevance score %s).", search_query, ranked[0][0])
-                return ranked[0][1]
-            logger.info("Pexels image search returned no photos for query %r.", search_query)
-        except httpx.HTTPStatusError as exc:
-            logger.warning("Pexels image search failed with HTTP %s.", exc.response.status_code)
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("Pexels image search request failed (%s).", type(exc).__name__)
+    try:
+        response = httpx.get(
+            "https://api.pexels.com/v1/search",
+            params={"query": query, "orientation": "portrait", "per_page": 5},
+            headers={"Authorization": api_key},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        photos = payload.get("photos", [])
+        for photo in photos if isinstance(photos, list) else []:
+            src = photo.get("src", {}) if isinstance(photo, dict) else {}
+            image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
+            if _public_http_url(image_url):
+                return image_url
+    except (httpx.HTTPError, ValueError):
+        return None
     return None
 
 def _vendor_product_image(product_url: str, product_name: str = "") -> str | None:
@@ -97,13 +62,13 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
     if parsed.scheme != "https" or parsed.hostname != "marketplace.iotsystemsgrowth.com":
         return None
 
-    stop_words = {"small", "business", "and", "the", "for", "with", "toolkit", "tool", "tools", "pro", "ai", "automation", "automations", "system", "systems", "growth", "solution", "solutions", "resource", "resources", "digital"}
+    stop_words = {"small", "business", "and", "the", "for", "with", "toolkit", "pro"}
     terms = {
         word.casefold()
         for word in __import__("re").findall(r"[a-zA-Z0-9]+", product_name)
         if len(word) >= 4 and word.casefold() not in stop_words
     }
-    # Generic product titles are not enough evidence to select vendor artwork.
+    terms.update({"automation", "toolkit"} if "automation" in product_name.casefold() else set())
     if not terms:
         return None
 
@@ -404,7 +369,7 @@ def build_external_pinterest_draft(
     return {
         "success": True,
         "product": {"id": "user-supplied", "name": name, "source": product["source"], "affiliate_url": destination},
-        "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source_type": "vendor" if _vendor_product_image(destination, name) else "illustrative_stock", "image_note": "Vendor page image matched product-specific metadata" if _vendor_product_image(destination, name) else "Illustrative stock image; not an official product image. Review before publishing.", "board_id": None},
+        "draft": {**copy, "destination_url": destination, "image_url": image_url, "board_id": None},
         "requires_explicit_approval": True,
         "published": False,
         "note": "Prepared from a user-supplied destination URL. AEA has not independently verified the affiliate partnership or product claims; review before approval.",
