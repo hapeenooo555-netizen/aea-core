@@ -43,7 +43,7 @@ def _pexels_image(query: str) -> str | None:
     # restrictive, so try a small set of broader, still-relevant queries.
     normalized = " ".join(query.replace("-", " ").split())
     queries = [normalized]
-    for candidate in ("small business automation", "business technology workspace", "small business owner laptop"):
+    for candidate in ("small business owner working at desk laptop", "small business office workspace laptop notebook", "entrepreneur working on laptop at desk"):
         if candidate.casefold() not in normalized.casefold():
             queries.append(candidate)
 
@@ -51,7 +51,7 @@ def _pexels_image(query: str) -> str | None:
         try:
             response = httpx.get(
                 "https://api.pexels.com/v1/search",
-                params={"query": search_query, "orientation": "portrait", "per_page": 5},
+                params={"query": search_query, "orientation": "portrait", "per_page": 10},
                 headers={"Authorization": api_key},
                 timeout=10.0,
             )
@@ -64,12 +64,23 @@ def _pexels_image(query: str) -> str | None:
             response.raise_for_status()
             payload = response.json()
             photos = payload.get("photos", [])
+            ranked: list[tuple[int, str]] = []
             for photo in photos if isinstance(photos, list) else []:
-                src = photo.get("src", {}) if isinstance(photo, dict) else {}
+                if not isinstance(photo, dict):
+                    continue
+                src = photo.get("src", {})
                 image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
-                if _public_http_url(image_url):
-                    logger.info("Pexels image search succeeded for query %r.", search_query)
-                    return image_url
+                if not _public_http_url(image_url):
+                    continue
+                alt = str(photo.get("alt") or "").casefold()
+                score = sum(term in alt for term in ("business", "office", "workspace", "laptop", "desk", "entrepreneur", "working"))
+                if any(term in alt for term in ("deepseek", "chatbot interface", "chatgpt interface", "ai chat interface")):
+                    continue
+                ranked.append((score, image_url))
+            if ranked:
+                ranked.sort(key=lambda item: item[0], reverse=True)
+                logger.info("Pexels image search succeeded for query %r (relevance score %s).", search_query, ranked[0][0])
+                return ranked[0][1]
             logger.info("Pexels image search returned no photos for query %r.", search_query)
         except httpx.HTTPStatusError as exc:
             logger.warning("Pexels image search failed with HTTP %s.", exc.response.status_code)
@@ -393,7 +404,7 @@ def build_external_pinterest_draft(
     return {
         "success": True,
         "product": {"id": "user-supplied", "name": name, "source": product["source"], "affiliate_url": destination},
-        "draft": {**copy, "destination_url": destination, "image_url": image_url, "board_id": None},
+        "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source_type": "vendor" if _vendor_product_image(destination, name) else "illustrative_stock", "image_note": "Vendor page image matched product-specific metadata" if _vendor_product_image(destination, name) else "Illustrative stock image; not an official product image. Review before publishing.", "board_id": None},
         "requires_explicit_approval": True,
         "published": False,
         "note": "Prepared from a user-supplied destination URL. AEA has not independently verified the affiliate partnership or product claims; review before approval.",
