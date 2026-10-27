@@ -31,26 +31,50 @@ def _public_http_url(value: Any) -> bool:
 
 
 def _pexels_image(query: str) -> str | None:
+    """Find a usable stock image; try focused alternatives and log safe diagnostics."""
+    import logging
+    logger = logging.getLogger(__name__)
     api_key = os.getenv("PEXELS_API_KEY", "").strip()
     if not api_key:
+        logger.warning("Pexels image search skipped: PEXELS_API_KEY is not set in this service.")
         return None
-    try:
-        response = httpx.get(
-            "https://api.pexels.com/v1/search",
-            params={"query": query, "orientation": "portrait", "per_page": 5},
-            headers={"Authorization": api_key},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        photos = payload.get("photos", [])
-        for photo in photos if isinstance(photos, list) else []:
-            src = photo.get("src", {}) if isinstance(photo, dict) else {}
-            image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
-            if _public_http_url(image_url):
-                return image_url
-    except (httpx.HTTPError, ValueError):
-        return None
+
+    # Pexels search is keyword-based. A long product title plus niche can be too
+    # restrictive, so try a small set of broader, still-relevant queries.
+    normalized = " ".join(query.replace("-", " ").split())
+    queries = [normalized]
+    for candidate in ("small business automation", "business technology workspace", "small business owner laptop"):
+        if candidate.casefold() not in normalized.casefold():
+            queries.append(candidate)
+
+    for search_query in queries[:4]:
+        try:
+            response = httpx.get(
+                "https://api.pexels.com/v1/search",
+                params={"query": search_query, "orientation": "portrait", "per_page": 5},
+                headers={"Authorization": api_key},
+                timeout=10.0,
+            )
+            if response.status_code in {401, 403}:
+                logger.error("Pexels image search authentication/permission failed (HTTP %s). Check PEXELS_API_KEY in Render.", response.status_code)
+                return None
+            if response.status_code == 429:
+                logger.warning("Pexels image search rate-limited (HTTP 429).")
+                return None
+            response.raise_for_status()
+            payload = response.json()
+            photos = payload.get("photos", [])
+            for photo in photos if isinstance(photos, list) else []:
+                src = photo.get("src", {}) if isinstance(photo, dict) else {}
+                image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
+                if _public_http_url(image_url):
+                    logger.info("Pexels image search succeeded for query %r.", search_query)
+                    return image_url
+            logger.info("Pexels image search returned no photos for query %r.", search_query)
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Pexels image search failed with HTTP %s.", exc.response.status_code)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Pexels image search request failed (%s).", type(exc).__name__)
     return None
 
 def _vendor_product_image(product_url: str, product_name: str = "") -> str | None:
