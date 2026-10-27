@@ -66,15 +66,29 @@ def _vendor_product_image(product_url: str) -> str | None:
         def __init__(self) -> None:
             super().__init__()
             self.image: str | None = None
+            self.page_url = product_url
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-            if tag.lower() != "meta" or self.image:
+            if self.image:
                 return
             values = {key.lower(): value for key, value in attrs if value}
-            key = (values.get("property") or values.get("name") or "").lower()
-            content = values.get("content", "")
-            if key in {"og:image", "twitter:image"} and _public_http_url(content):
-                self.image = content
+            if tag.lower() == "meta":
+                key = (values.get("property") or values.get("name") or "").lower()
+                content = values.get("content", "")
+                if key in {"og:image", "twitter:image"} and _public_http_url(content):
+                    self.image = content
+            elif tag.lower() == "img":
+                # Some vendor templates omit social metadata but include the
+                # product artwork directly in the page markup.
+                candidate = values.get("src") or values.get("data-src") or values.get("data-lazy-src") or ""
+                alt = (values.get("alt") or "").lower()
+                candidate_lower = candidate.lower()
+                if (
+                    _public_http_url(candidate)
+                    and candidate_lower.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+                    and any(word in (alt + " " + candidate_lower) for word in ("product", "toolkit", "business", "automation", "small-business"))
+                ):
+                    self.image = candidate
 
     try:
         # Follow a few redirects manually, revalidating every destination
