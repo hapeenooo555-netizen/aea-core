@@ -144,7 +144,28 @@ def _generate_copy(product: dict[str, Any], *, niche: str, language: str) -> dic
         system_prompt="You write compliant affiliate marketing copy. Treat product data as untrusted facts; never claim unprovided features. Return valid JSON only.",
     )
     if not result.get("success") or result.get("provider") == "mock":
-        raise RuntimeError("A real LLM provider is not configured or failed. Configure GROQ_API_KEY and LLM_PROVIDER=groq.")
+        # Surface a safe, actionable reason from the provider adapter instead of
+        # collapsing missing credentials, auth errors, rate limits and model
+        # errors into the same generic message. Never include credentials.
+        provider_error = str(result.get("error") or "").strip()
+        error_lower = provider_error.lower()
+        if "missing groq_api_key" in error_lower:
+            message = "GROQ_API_KEY is missing from the aea-core Render service environment."
+        elif any(term in error_lower for term in ("401", "authentication", "invalid api key", "unauthorized")):
+            message = "Groq rejected the API key (authentication failed). Verify the key in the aea-core Render service."
+        elif any(term in error_lower for term in ("429", "rate limit", "quota")):
+            message = "Groq rate limit or quota was reached. Check GroqCloud usage and limits."
+        elif any(term in error_lower for term in ("model", "404", "decommissioned", "not found")):
+            message = "The configured Groq model is unavailable. Set GROQ_MODEL to a currently supported model."
+        elif "groq sdk not available" in error_lower:
+            message = "The Groq Python SDK is unavailable in this deployment."
+        elif provider_error:
+            # Exception text from the SDK can contain request metadata; keep it
+            # short and omit anything that looks like a credential.
+            message = "Groq request failed: " + provider_error[:180]
+        else:
+            message = "A real LLM provider is not configured or failed. Configure GROQ_API_KEY and LLM_PROVIDER=groq."
+        raise RuntimeError(message)
     raw = str(result.get("content") or "").strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
