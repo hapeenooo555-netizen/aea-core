@@ -77,13 +77,33 @@ def _vendor_product_image(product_url: str) -> str | None:
                 self.image = content
 
     try:
-        response = httpx.get(
-            product_url,
-            headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
-            timeout=8.0,
-            follow_redirects=False,
-        )
-        response.raise_for_status()
+        # Follow a few redirects manually, revalidating every destination
+        # against the exact HTTPS vendor host before making another request.
+        from urllib.parse import urljoin
+
+        current_url = product_url
+        response = None
+        for _ in range(4):
+            current = urlparse(current_url)
+            if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
+                return None
+            response = httpx.get(
+                current_url,
+                headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
+                timeout=8.0,
+                follow_redirects=False,
+            )
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                response.raise_for_status()
+                break
+            location = response.headers.get("location")
+            if not location:
+                return None
+            current_url = urljoin(current_url, location)
+        else:
+            return None
+        if response is None:
+            return None
         parser = MetadataParser()
         parser.feed(response.text[:1_000_000])
         return parser.image
