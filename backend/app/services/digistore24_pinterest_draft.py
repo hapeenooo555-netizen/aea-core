@@ -53,8 +53,8 @@ def _pexels_image(query: str) -> str | None:
         return None
     return None
 
-def _vendor_product_image(product_url: str) -> str | None:
-    """Read Open Graph image metadata only from the known vendor domain."""
+def _vendor_product_image(product_url: str, product_name: str = "") -> str | None:
+    """Return vendor artwork only when its metadata is relevant to the requested product."""
     from html.parser import HTMLParser
     from urllib.parse import urlparse
 
@@ -62,37 +62,51 @@ def _vendor_product_image(product_url: str) -> str | None:
     if parsed.scheme != "https" or parsed.hostname != "marketplace.iotsystemsgrowth.com":
         return None
 
+    stop_words = {"small", "business", "and", "the", "for", "with", "toolkit", "pro"}
+    terms = {
+        word.casefold()
+        for word in __import__("re").findall(r"[a-zA-Z0-9]+", product_name)
+        if len(word) >= 4 and word.casefold() not in stop_words
+    }
+    terms.update({"automation", "toolkit"} if "automation" in product_name.casefold() else set())
+    if not terms:
+        return None
+
     class MetadataParser(HTMLParser):
         def __init__(self) -> None:
             super().__init__()
-            self.image: str | None = None
-            self.page_url = product_url
+            self.candidates: list[tuple[int, str]] = []
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-            if self.image:
-                return
             values = {key.lower(): value for key, value in attrs if value}
+            candidate = ""
+            description = ""
             if tag.lower() == "meta":
                 key = (values.get("property") or values.get("name") or "").lower()
-                content = values.get("content", "")
-                if key in {"og:image", "twitter:image"} and _public_http_url(content):
-                    self.image = content
+                if key in {"og:image", "twitter:image"}:
+                    candidate = values.get("content", "")
+                    description = " ".join((values.get("alt", ""), values.get("title", "")))
             elif tag.lower() == "img":
-                # Some vendor templates omit social metadata but include the
-                # product artwork directly in the page markup.
-                candidate = values.get("src") or values.get("data-src") or values.get("data-lazy-src") or ""
-                alt = (values.get("alt") or "").lower()
-                candidate_lower = candidate.lower()
-                if (
-                    _public_http_url(candidate)
-                    and candidate_lower.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
-                    and any(word in (alt + " " + candidate_lower) for word in ("product", "toolkit", "business", "automation", "small-business"))
-                ):
-                    self.image = candidate
+                candidate = (
+                    values.get("src") or values.get("data-src")
+                    or values.get("data-lazy-src") or values.get("data-original") or ""
+                )
+                description = " ".join((
+                    values.get("alt", ""), values.get("title", ""),
+                    values.get("aria-label", ""), candidate,
+                ))
+            if not _public_http_url(candidate):
+                return
+            if not candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                return
+            haystack = description.casefold().replace("-", " ").replace("_", " ")
+            matches = sum(1 for term in terms if term in haystack)
+            # Do not blindly trust a page-wide Open Graph image: it may advertise
+            # a different product. Require at least one product-specific signal.
+            if matches:
+                self.candidates.append((matches, candidate))
 
     try:
-        # Follow a few redirects manually, revalidating every destination
-        # against the exact HTTPS vendor host before making another request.
         from urllib.parse import urljoin
 
         current_url = product_url
@@ -120,10 +134,12 @@ def _vendor_product_image(product_url: str) -> str | None:
             return None
         parser = MetadataParser()
         parser.feed(response.text[:1_000_000])
-        return parser.image
+        if not parser.candidates:
+            return None
+        parser.candidates.sort(key=lambda item: item[0], reverse=True)
+        return parser.candidates[0][1]
     except (httpx.HTTPError, ValueError):
         return None
-
 
 def _generate_copy(product: dict[str, Any], *, niche: str, language: str) -> dict[str, str]:
     provider = get_llm_provider()
@@ -341,7 +357,7 @@ def build_external_pinterest_draft(
     }
     # Prefer the product's own public image; only fetch metadata from the
     # explicitly allowlisted vendor host, then fall back to Pexels.
-    image_url = _vendor_product_image(destination)
+    image_url = _vendor_product_image(destination, name)
     if not _public_http_url(image_url):
         image_url = _pexels_image(name + " " + niche)
     if not _public_http_url(image_url):
