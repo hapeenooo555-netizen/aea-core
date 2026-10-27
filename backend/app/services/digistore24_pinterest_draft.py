@@ -53,6 +53,43 @@ def _pexels_image(query: str) -> str | None:
         return None
     return None
 
+def _vendor_product_image(product_url: str) -> str | None:
+    """Read Open Graph image metadata only from the known vendor domain."""
+    from html.parser import HTMLParser
+    from urllib.parse import urlparse
+
+    parsed = urlparse(product_url)
+    if parsed.scheme != "https" or parsed.hostname != "marketplace.iotsystemsgrowth.com":
+        return None
+
+    class MetadataParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.image: str | None = None
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag.lower() != "meta" or self.image:
+                return
+            values = {key.lower(): value for key, value in attrs if value}
+            key = (values.get("property") or values.get("name") or "").lower()
+            content = values.get("content", "")
+            if key in {"og:image", "twitter:image"} and _public_http_url(content):
+                self.image = content
+
+    try:
+        response = httpx.get(
+            product_url,
+            headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
+            timeout=8.0,
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        parser = MetadataParser()
+        parser.feed(response.text[:1_000_000])
+        return parser.image
+    except (httpx.HTTPError, ValueError):
+        return None
+
 
 def _generate_copy(product: dict[str, Any], *, niche: str, language: str) -> dict[str, str]:
     provider = get_llm_provider()
@@ -247,10 +284,15 @@ def build_external_pinterest_draft(
         "affiliate_url": destination,
         "source": "User-supplied affiliate URL (not independently verified)",
     }
-    image_url = _pexels_image(name + " " + niche)
+    # Prefer the product's own public image; only fetch metadata from the
+    # explicitly allowlisted vendor host, then fall back to Pexels.
+    image_url = _vendor_product_image(destination)
+    if not _public_http_url(image_url):
+        image_url = _pexels_image(name + " " + niche)
     if not _public_http_url(image_url):
         raise RuntimeError(
-            "No suitable public image was found. Configure PEXELS_API_KEY or use the Digistore24 option for products with a public image."
+            "No public product image was found on the approved vendor page and Pexels returned no image. "
+            "Check that the vendor page exposes og:image/twitter:image, or configure PEXELS_API_KEY."
         )
     copy = _generate_copy(product, niche=niche, language=language)
     return {
