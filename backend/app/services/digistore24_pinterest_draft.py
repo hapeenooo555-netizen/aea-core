@@ -31,26 +31,72 @@ def _public_http_url(value: Any) -> bool:
 
 
 def _pexels_image(query: str) -> str | None:
+    """Find a relevant stock image and reject unrelated AI-chat/interface imagery."""
+    import logging
+
+    logger = logging.getLogger(__name__)
     api_key = os.getenv("PEXELS_API_KEY", "").strip()
     if not api_key:
+        logger.warning("Pexels image search skipped: PEXELS_API_KEY is not configured.")
         return None
-    try:
-        response = httpx.get(
-            "https://api.pexels.com/v1/search",
-            params={"query": query, "orientation": "portrait", "per_page": 5},
-            headers={"Authorization": api_key},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        photos = payload.get("photos", [])
-        for photo in photos if isinstance(photos, list) else []:
-            src = photo.get("src", {}) if isinstance(photo, dict) else {}
-            image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
-            if _public_http_url(image_url):
-                return image_url
-    except (httpx.HTTPError, ValueError):
-        return None
+
+    normalized = " ".join(query.replace("-", " ").split())
+    queries = [normalized]
+    for candidate in (
+        "small business owner working at desk laptop",
+        "small business office workspace laptop notebook",
+        "entrepreneur working on laptop at desk",
+    ):
+        if candidate.casefold() not in normalized.casefold():
+            queries.append(candidate)
+
+    excluded_signals = (
+        "deepseek", "chatbot interface", "chatgpt interface", "ai chat interface",
+        "chat interface", "robot head", "robot face",
+    )
+    relevance_signals = (
+        "business", "office", "workspace", "laptop", "desk",
+        "entrepreneur", "working", "small business",
+    )
+    for search_query in queries[:4]:
+        try:
+            response = httpx.get(
+                "https://api.pexels.com/v1/search",
+                params={"query": search_query, "orientation": "portrait", "per_page": 10},
+                headers={"Authorization": api_key},
+                timeout=10.0,
+            )
+            if response.status_code in {401, 403}:
+                logger.error("Pexels image search authentication/permission failed (HTTP %s).", response.status_code)
+                return None
+            if response.status_code == 429:
+                logger.warning("Pexels image search rate-limited (HTTP 429).")
+                return None
+            response.raise_for_status()
+            payload = response.json()
+            photos = payload.get("photos", [])
+            ranked: list[tuple[int, str]] = []
+            for photo in photos if isinstance(photos, list) else []:
+                if not isinstance(photo, dict):
+                    continue
+                src = photo.get("src", {})
+                image_url = _first(src, "large", "large2x", "portrait", "original") if isinstance(src, dict) else None
+                if not _public_http_url(image_url):
+                    continue
+                alt = " ".join(str(photo.get("alt") or "").casefold().split())
+                if any(signal in alt for signal in excluded_signals):
+                    continue
+                score = sum(signal in alt for signal in relevance_signals)
+                ranked.append((score, image_url))
+            if ranked:
+                ranked.sort(key=lambda item: item[0], reverse=True)
+                logger.info("Pexels returned a relevant candidate for query %r (score %s).", search_query, ranked[0][0])
+                return ranked[0][1]
+            logger.info("Pexels returned no acceptable photos for query %r.", search_query)
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Pexels image search failed with HTTP %s.", exc.response.status_code)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Pexels image search request failed (%s).", type(exc).__name__)
     return None
 
 def _vendor_product_image(product_url: str, product_name: str = "") -> str | None:

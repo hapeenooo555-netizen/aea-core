@@ -95,3 +95,55 @@ def test_external_pinterest_draft_requires_a_public_image(monkeypatch):
     monkeypatch.setattr(draft, "_pexels_image", lambda query: None)
     with pytest.raises(RuntimeError, match="PEXELS_API_KEY"):
         draft.build_external_pinterest_draft(affiliate_url="https://affiliate.example/track")
+
+
+def test_pexels_image_skips_deepseek_and_prefers_business_photo(monkeypatch):
+    import os
+    import httpx
+
+    monkeypatch.setenv("PEXELS_API_KEY", "test-key")
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, photos):
+            self._photos = photos
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"photos": self._photos}
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append(params["query"])
+        if len(calls) == 1:
+            return FakeResponse([
+                {"alt": "DeepSeek AI chatbot interface on a laptop", "src": {"large": "https://images.example/deepseek.jpg"}},
+                {"alt": "Small business owner working at desk with laptop", "src": {"large": "https://images.example/business.jpg"}},
+            ])
+        return FakeResponse([])
+
+    monkeypatch.setattr(draft.httpx, "get", fake_get)
+    assert draft._pexels_image("Small Business AI and Automation Toolkit") == "https://images.example/business.jpg"
+    assert len(calls) == 1
+
+
+def test_pexels_image_returns_none_when_only_unrelated_ai_chat_photos(monkeypatch):
+    monkeypatch.setenv("PEXELS_API_KEY", "test-key")
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"photos": [
+                {"alt": "DeepSeek AI chatbot interface", "src": {"large": "https://images.example/deepseek.jpg"}},
+                {"alt": "ChatGPT interface on a screen", "src": {"large": "https://images.example/chatgpt.jpg"}},
+            ]}
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    assert draft._pexels_image("AI automation toolkit") is None
