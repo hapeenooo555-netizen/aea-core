@@ -136,13 +136,13 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             values = {key.lower(): value for key, value in attrs if value}
             candidate = ""
             description = ""
-            is_open_graph = False
+            is_declared_social_image = False
             if tag.lower() == "meta":
                 key = (values.get("property") or values.get("name") or "").lower()
                 if key in {"og:image", "twitter:image"}:
                     candidate = values.get("content", "")
                     description = " ".join((values.get("alt", ""), values.get("title", "")))
-                    is_open_graph = key == "og:image"
+                    is_declared_social_image = True
             elif tag.lower() == "img":
                 candidate = (
                     values.get("src") or values.get("data-src")
@@ -173,8 +173,8 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             haystack = (description + " " + candidate).casefold().replace("-", " ").replace("_", " ")
             matches = sum(1 for term in terms if term in haystack)
             if matches:
-                self.candidates.append((matches + int(is_open_graph), candidate))
-            elif is_open_graph:
+                self.candidates.append((matches + int(is_declared_social_image), candidate))
+            elif is_declared_social_image:
                 # og:image is explicitly declared by the allowlisted product
                 # page. CDNs often use extensionless URLs, so don't discard it
                 # just because the URL has no .jpg/.png suffix.
