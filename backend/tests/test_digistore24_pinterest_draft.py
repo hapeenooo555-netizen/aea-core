@@ -167,3 +167,45 @@ def test_pexels_image_rejects_robot_image_without_business_relevance(monkeypatch
 
     monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
     assert draft._pexels_image("Small Business AI and Automation Toolkit") is None
+
+
+def test_vendor_product_image_accepts_https_cdn_declared_by_vendor_og_image(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        assert url.startswith("https://marketplace.iotsystemsgrowth.com/")
+        return FakeResponse(
+            '<html><head><meta property="og:image" '
+            'content="https://cdn.vendor-assets.example/products/toolkit?id=42"></head></html>'
+        )
+
+    monkeypatch.setattr(draft.httpx, "get", fake_get)
+    image = draft._vendor_product_image(
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-digistore/",
+        "Small Business AI & Automation Toolkit",
+    )
+    assert image == "https://cdn.vendor-assets.example/products/toolkit?id=42"
+
+
+def test_vendor_product_image_rejects_non_https_or_credentialed_og_image(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+        text = '<meta property="og:image" content="https://user:pass@cdn.example/image.jpg">'
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    assert draft._vendor_product_image(
+        "https://marketplace.iotsystemsgrowth.com/product-digistore/",
+        "Small Business AI & Automation Toolkit",
+    ) is None

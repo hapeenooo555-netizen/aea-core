@@ -156,20 +156,29 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
                 return
             candidate = urljoin(product_url, candidate)
             candidate_parsed = urlparse(candidate)
-            if candidate_parsed.scheme != "https" or candidate_parsed.hostname != "marketplace.iotsystemsgrowth.com":
+            # The product page itself is fetched only from the allowlisted vendor,
+            # but its declared artwork may live on a legitimate external CDN.
+            # Never fetch that image server-side: Pinterest receives the HTTPS
+            # URL directly. Reject malformed URLs and credential-bearing URLs.
+            if (
+                candidate_parsed.scheme != "https"
+                or not candidate_parsed.hostname
+                or candidate_parsed.username
+                or candidate_parsed.password
+                or candidate_parsed.hostname.casefold() in {"localhost", "localhost.localdomain"}
+            ):
                 return
-            # Image CDNs sometimes omit a conventional extension, so rely on
-            # product metadata plus the vendor page's Open Graph declaration.
             path = candidate_parsed.path.lower()
             has_image_extension = path.endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))
             haystack = (description + " " + candidate).casefold().replace("-", " ").replace("_", " ")
             matches = sum(1 for term in terms if term in haystack)
             if matches:
                 self.candidates.append((matches + int(is_open_graph), candidate))
-            elif is_open_graph and has_image_extension:
-                # OG artwork belongs to the exact, allowlisted product page;
-                # it is more relevant than an unrelated stock-photo fallback.
-                self.candidates.append((1, candidate))
+            elif is_open_graph:
+                # og:image is explicitly declared by the allowlisted product
+                # page. CDNs often use extensionless URLs, so don't discard it
+                # just because the URL has no .jpg/.png suffix.
+                self.candidates.append((1 + int(has_image_extension), candidate))
 
     # The second URL is an artwork-only fallback for the known product page.
     # It does not change the affiliate destination stored in the Pin draft.
