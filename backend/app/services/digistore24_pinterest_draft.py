@@ -104,9 +104,16 @@ def _pexels_image(query: str) -> str | None:
     return None
 
 def _vendor_product_image(product_url: str, product_name: str = "") -> str | None:
-    """Return vendor artwork only when its metadata is relevant to the requested product."""
+    """Return product artwork from the allowlisted vendor's matching product page.
+
+    The affiliate destination is never changed. For the known toolkit page, the
+    vendor currently exposes the product page under a ClickBank-labelled slug;
+    try that page as an artwork source if the supplied Digistore-labelled page
+    has no usable metadata. Only image URLs from the allowlisted vendor host are
+    accepted, and redirects remain restricted to that host.
+    """
     from html.parser import HTMLParser
-    from urllib.parse import urlparse
+    from urllib.parse import urljoin, urlparse
 
     parsed = urlparse(product_url)
     if parsed.scheme != "https" or parsed.hostname != "marketplace.iotsystemsgrowth.com":
@@ -119,8 +126,6 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
         if len(word) >= 4 and word.casefold() not in stop_words
     }
     terms.update({"automation", "toolkit"} if "automation" in product_name.casefold() else set())
-    if not terms:
-        return None
 
     class MetadataParser(HTMLParser):
         def __init__(self) -> None:
@@ -131,11 +136,13 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             values = {key.lower(): value for key, value in attrs if value}
             candidate = ""
             description = ""
+            is_open_graph = False
             if tag.lower() == "meta":
                 key = (values.get("property") or values.get("name") or "").lower()
                 if key in {"og:image", "twitter:image"}:
                     candidate = values.get("content", "")
                     description = " ".join((values.get("alt", ""), values.get("title", "")))
+                    is_open_graph = key == "og:image"
             elif tag.lower() == "img":
                 candidate = (
                     values.get("src") or values.get("data-src")
@@ -145,51 +152,68 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
                     values.get("alt", ""), values.get("title", ""),
                     values.get("aria-label", ""), candidate,
                 ))
-            if not _public_http_url(candidate):
+            if not candidate:
                 return
-            if not candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            candidate = urljoin(product_url, candidate)
+            candidate_parsed = urlparse(candidate)
+            if candidate_parsed.scheme != "https" or candidate_parsed.hostname != "marketplace.iotsystemsgrowth.com":
                 return
-            haystack = description.casefold().replace("-", " ").replace("_", " ")
+            # Image CDNs sometimes omit a conventional extension, so rely on
+            # product metadata plus the vendor page's Open Graph declaration.
+            path = candidate_parsed.path.lower()
+            has_image_extension = path.endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))
+            haystack = (description + " " + candidate).casefold().replace("-", " ").replace("_", " ")
             matches = sum(1 for term in terms if term in haystack)
-            # Do not blindly trust a page-wide Open Graph image: it may advertise
-            # a different product. Require at least one product-specific signal.
             if matches:
-                self.candidates.append((matches, candidate))
+                self.candidates.append((matches + int(is_open_graph), candidate))
+            elif is_open_graph and has_image_extension:
+                # OG artwork belongs to the exact, allowlisted product page;
+                # it is more relevant than an unrelated stock-photo fallback.
+                self.candidates.append((1, candidate))
 
-    try:
-        from urllib.parse import urljoin
+    # The second URL is an artwork-only fallback for the known product page.
+    # It does not change the affiliate destination stored in the Pin draft.
+    page_urls = [product_url]
+    path = parsed.path
+    if path.rstrip("/").endswith("-digistore"):
+        page_urls.append(
+            parsed._replace(path=path.rstrip("/")[:-len("-digistore")] + "-clickbank/").geturl()
+        )
 
-        current_url = product_url
-        response = None
-        for _ in range(4):
-            current = urlparse(current_url)
-            if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
-                return None
-            response = httpx.get(
-                current_url,
-                headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
-                timeout=8.0,
-                follow_redirects=False,
-            )
-            if response.status_code not in {301, 302, 303, 307, 308}:
-                response.raise_for_status()
-                break
-            location = response.headers.get("location")
-            if not location:
-                return None
-            current_url = urljoin(current_url, location)
-        else:
-            return None
-        if response is None:
-            return None
-        parser = MetadataParser()
-        parser.feed(response.text[:1_000_000])
-        if not parser.candidates:
-            return None
-        parser.candidates.sort(key=lambda item: item[0], reverse=True)
-        return parser.candidates[0][1]
-    except (httpx.HTTPError, ValueError):
-        return None
+    for page_url in page_urls:
+        try:
+            current_url = page_url
+            response = None
+            for _ in range(4):
+                current = urlparse(current_url)
+                if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
+                    return None
+                response = httpx.get(
+                    current_url,
+                    headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
+                    timeout=8.0,
+                    follow_redirects=False,
+                )
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    response.raise_for_status()
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    response = None
+                    break
+                current_url = urljoin(current_url, location)
+            else:
+                response = None
+            if response is None:
+                continue
+            parser = MetadataParser()
+            parser.feed(response.text[:1_000_000])
+            if parser.candidates:
+                parser.candidates.sort(key=lambda item: item[0], reverse=True)
+                return parser.candidates[0][1]
+        except (httpx.HTTPError, ValueError):
+            continue
+    return None
 
 def _generate_copy(product: dict[str, Any], *, niche: str, language: str) -> dict[str, str]:
     provider = get_llm_provider()
