@@ -52,7 +52,7 @@ def _pexels_image(query: str) -> str | None:
 
     excluded_signals = (
         "deepseek", "chatbot interface", "chatgpt interface", "ai chat interface",
-        "chat interface", "robot head", "robot face",
+        "chat interface", "robot", "robotic", "humanoid", "android",
     )
     relevance_signals = (
         "business", "office", "workspace", "laptop", "desk",
@@ -87,6 +87,10 @@ def _pexels_image(query: str) -> str | None:
                 if any(signal in alt for signal in excluded_signals):
                     continue
                 score = sum(signal in alt for signal in relevance_signals)
+                # Never accept a generic technology/AI image just because Pexels
+                # returned a valid URL. Require a business/workspace relevance signal.
+                if score == 0:
+                    continue
                 ranked.append((score, image_url))
             if ranked:
                 ranked.sort(key=lambda item: item[0], reverse=True)
