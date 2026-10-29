@@ -72,25 +72,20 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
     if not terms:
         return None
 
-    from urllib.parse import urljoin
-
     class MetadataParser(HTMLParser):
-        def __init__(self, base_url: str) -> None:
+        def __init__(self) -> None:
             super().__init__()
-            self.base_url = base_url
             self.candidates: list[tuple[int, str]] = []
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
             values = {key.lower(): value for key, value in attrs if value}
             candidate = ""
             description = ""
-            is_social_preview = False
             if tag.lower() == "meta":
                 key = (values.get("property") or values.get("name") or "").lower()
                 if key in {"og:image", "twitter:image"}:
                     candidate = values.get("content", "")
                     description = " ".join((values.get("alt", ""), values.get("title", "")))
-                    is_social_preview = key == "og:image"
             elif tag.lower() == "img":
                 candidate = (
                     values.get("src") or values.get("data-src")
@@ -100,31 +95,20 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
                     values.get("alt", ""), values.get("title", ""),
                     values.get("aria-label", ""), candidate,
                 ))
-            if not candidate:
-                return
-            # Vendor pages commonly use relative or protocol-relative OG image
-            # URLs. Resolve them against the final product page URL before
-            # validating; otherwise the correct vendor image silently falls
-            # through to Pexels.
-            candidate = urljoin(self.base_url, candidate.strip())
             if not _public_http_url(candidate):
                 return
-            extension_ok = candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))
-            # On the allowlisted vendor product page, og:image is the page's
-            # intended social-preview artwork. Prefer it even when its URL has
-            # no extension or the HTML provides no alt/title text. Keep ordinary
-            # inline images behind the product-specific metadata match.
-            if is_social_preview:
-                self.candidates.append((100, candidate))
-                return
-            if not extension_ok:
+            if not candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
                 return
             haystack = description.casefold().replace("-", " ").replace("_", " ")
             matches = sum(1 for term in terms if term in haystack)
+            # Do not blindly trust a page-wide Open Graph image: it may advertise
+            # a different product. Require at least one product-specific signal.
             if matches:
                 self.candidates.append((matches, candidate))
 
     try:
+        from urllib.parse import urljoin
+
         current_url = product_url
         response = None
         for _ in range(4):
@@ -148,7 +132,7 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             return None
         if response is None:
             return None
-        parser = MetadataParser(current_url)
+        parser = MetadataParser()
         parser.feed(response.text[:1_000_000])
         if not parser.candidates:
             return None
