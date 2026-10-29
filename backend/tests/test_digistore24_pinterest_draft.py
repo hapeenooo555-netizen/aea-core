@@ -209,3 +209,19 @@ def test_vendor_product_image_rejects_non_https_or_credentialed_og_image(monkeyp
         "https://marketplace.iotsystemsgrowth.com/product-digistore/",
         "Small Business AI & Automation Toolkit",
     ) is None
+
+
+def test_vendor_product_image_accepts_twitter_image_metadata(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+        text = '<meta name="twitter:image" content="https://cdn.example/toolkit-image">'
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    assert draft._vendor_product_image(
+        "https://marketplace.iotsystemsgrowth.com/product-digistore/",
+        "Small Business AI & Automation Toolkit",
+    ) == "https://cdn.example/toolkit-image"
