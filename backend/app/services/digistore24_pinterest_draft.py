@@ -72,20 +72,25 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
     if not terms:
         return None
 
+    from urllib.parse import urljoin
+
     class MetadataParser(HTMLParser):
-        def __init__(self) -> None:
+        def __init__(self, base_url: str) -> None:
             super().__init__()
+            self.base_url = base_url
             self.candidates: list[tuple[int, str]] = []
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
             values = {key.lower(): value for key, value in attrs if value}
             candidate = ""
             description = ""
+            is_social_preview = False
             if tag.lower() == "meta":
                 key = (values.get("property") or values.get("name") or "").lower()
                 if key in {"og:image", "twitter:image"}:
                     candidate = values.get("content", "")
                     description = " ".join((values.get("alt", ""), values.get("title", "")))
+                    is_social_preview = key == "og:image"
             elif tag.lower() == "img":
                 candidate = (
                     values.get("src") or values.get("data-src")
@@ -95,20 +100,25 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
                     values.get("alt", ""), values.get("title", ""),
                     values.get("aria-label", ""), candidate,
                 ))
+            if not candidate:
+                return
+            candidate = urljoin(self.base_url, candidate.strip())
             if not _public_http_url(candidate):
                 return
-            if not candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            # The Open Graph image belongs to the explicitly allowlisted vendor
+            # product page and is the vendor's intended social preview. Accept
+            # it even if the CDN URL has no file extension or alt text.
+            if is_social_preview:
+                self.candidates.append((100, candidate))
+                return
+            if not candidate.split("?")[0].lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif")):
                 return
             haystack = description.casefold().replace("-", " ").replace("_", " ")
             matches = sum(1 for term in terms if term in haystack)
-            # Do not blindly trust a page-wide Open Graph image: it may advertise
-            # a different product. Require at least one product-specific signal.
             if matches:
                 self.candidates.append((matches, candidate))
 
     try:
-        from urllib.parse import urljoin
-
         current_url = product_url
         response = None
         for _ in range(4):
@@ -132,7 +142,7 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             return None
         if response is None:
             return None
-        parser = MetadataParser()
+        parser = MetadataParser(current_url)
         parser.feed(response.text[:1_000_000])
         if not parser.candidates:
             return None
