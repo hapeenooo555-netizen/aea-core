@@ -147,3 +147,23 @@ def test_pexels_image_returns_none_when_only_unrelated_ai_chat_photos(monkeypatc
 
     monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
     assert draft._pexels_image("AI automation toolkit") is None
+
+
+
+def test_pexels_image_rejects_robot_image_without_business_relevance(monkeypatch):
+    monkeypatch.setenv("PEXELS_API_KEY", "test-key")
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"photos": [
+                {"alt": "White robot hand with blue lights and digital background", "src": {"large": "https://images.example/robot-hand.jpg"}},
+                {"alt": "Abstract blue technology lights", "src": {"large": "https://images.example/blue-lights.jpg"}},
+            ]}
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    assert draft._pexels_image("Small Business AI and Automation Toolkit") is None
