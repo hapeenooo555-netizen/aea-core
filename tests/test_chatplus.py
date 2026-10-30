@@ -139,6 +139,7 @@ class TestChatPlusMessageFlow:
 
         def complete_mission(selected_id):
             assert selected_id == mission_id
+            service.orchestration.transition(selected_id, "active")
             service.orchestration.transition(selected_id, "completed", result={
                 "status": "COMPLETE",
                 "report": {"plan": [], "executed_actions": [], "observations": [], "final_status": "COMPLETE"},
@@ -159,7 +160,7 @@ class TestChatPlusMessageFlow:
             {"step_name": "verify_pin", "status": "failed"},
         ])
         assert [move["status"] for move in moves] == ["done", "current", "pending", "failed"]
-        assert moves[0]["label"] == "Connect Pinterest"
+        assert moves[0]["label"] == "Connect pinterest"
 
     def test_approval_required_uses_existing_gateway(self):
         service = ChatPlusService("owner-h")
@@ -335,7 +336,7 @@ class TestChatPlusRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["state"]["state"] in {"ready", "completed", "waiting_for_approval", "waiting_for_human"}
+        assert data["state"]["state"] in {"ready", "working", "completed", "waiting_for_approval", "waiting_for_human"}
 
     def test_approve_endpoint_requires_body_and_ownership(self, auth_client: TestClient):
         response = auth_client.post("/chatplus/approvals/nonexistent/approve")
@@ -347,7 +348,9 @@ class TestChatPlusRoutes:
             json={"message": "Start affiliate marketing on pinterest", "conversation_id": "conv-approval-route"},
         )
         assert sent.status_code == 200
-        approvals = sent.json()["approvals"]
+        state_after_start = auth_client.get("/chatplus/state?conversation_id=conv-approval-route")
+        assert state_after_start.status_code == 200
+        approvals = state_after_start.json()["approvals"]
         assert len(approvals) >= 1
         approval_id = approvals[0]["id"]
         approved = auth_client.post(f"/chatplus/approvals/{approval_id}/approve")
@@ -363,7 +366,9 @@ class TestChatPlusRoutes:
             json={"message": "Start affiliate marketing on pinterest", "conversation_id": "conv-reject-route"},
         )
         assert sent.status_code == 200
-        approval_id = sent.json()["approvals"][0]["id"]
+        state_after_start = auth_client.get("/chatplus/state?conversation_id=conv-reject-route")
+        assert state_after_start.status_code == 200
+        approval_id = state_after_start.json()["approvals"][0]["id"]
         rejected = auth_client.post(
             f"/chatplus/approvals/{approval_id}/reject",
             json={"reason": "Not now"},
