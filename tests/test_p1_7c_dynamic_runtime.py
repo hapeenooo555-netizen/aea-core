@@ -144,3 +144,18 @@ def test_p1_7c_retry_attempt_is_not_reset_on_resume(monkeypatch):
     assert second["status"] == "RETRY"
     steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
     assert {step["attempt_index"] for step in steps} == {0, 1}
+
+
+def test_read_only_pinterest_status_request_is_not_misrouted_to_content_worker():
+    employee = _slice()
+    result = employee.run(
+        "Check my connected Pinterest account and retrieve my available boards. "
+        "Show the actual worker execution steps and report the results. "
+        "Do not publish anything.",
+        mission_id="mission-readonly-pinterest-status",
+    )
+
+    plan = result["report"]["plan"]
+    assert plan
+    assert plan[0]["tool_name"] == "pinterest.get_account_status"
+    assert all(step["tool_name"] != "prepare_affiliate_content" for step in plan)
