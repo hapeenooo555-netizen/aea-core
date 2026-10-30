@@ -64,21 +64,23 @@ def test_build_draft_requires_image_or_pexels(monkeypatch):
 
 
 
-def test_external_pinterest_draft_accepts_user_supplied_affiliate_url(monkeypatch):
-    monkeypatch.setattr(draft, "_pexels_image", lambda query: "https://images.example/pin.jpg")
+def test_external_pinterest_draft_uses_vendor_product_artwork(monkeypatch):
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+    monkeypatch.setattr(draft, "_pexels_image", lambda query: (_ for _ in ()).throw(AssertionError("stock fallback must not run")))
     monkeypatch.setattr(draft, "_generate_copy", lambda product, *, niche, language: {
         "title": "AI Marketing Toolkit",
         "description": "Explore this resource. I may earn a commission if you buy through my affiliate link.",
     })
     result = draft.build_external_pinterest_draft(
-        affiliate_url="https://affiliate.example/track?ref=123",
+        affiliate_url="https://marketplace.iotsystemsgrowth.com/toolkit-digistore/",
         product_name="AI Marketing Toolkit",
         niche="AI tools",
         language="English",
     )
     assert result["success"] is True
-    assert result["draft"]["destination_url"] == "https://affiliate.example/track?ref=123"
-    assert result["draft"]["image_url"] == "https://images.example/pin.jpg"
+    assert result["draft"]["destination_url"] == "https://marketplace.iotsystemsgrowth.com/toolkit-digistore/"
+    assert result["draft"]["image_url"] == "https://cdn.vendor.example/toolkit.png"
+    assert result["draft"]["image_source"] == "vendor_product_page"
     assert result["published"] is False
     assert result["requires_explicit_approval"] is True
     assert "not independently verified" in result["product"]["source"]
@@ -90,10 +92,11 @@ def test_external_pinterest_draft_rejects_invalid_affiliate_url():
         draft.build_external_pinterest_draft(affiliate_url="javascript:alert(1)")
 
 
-def test_external_pinterest_draft_requires_a_public_image(monkeypatch):
+def test_external_pinterest_draft_fails_closed_without_verified_product_artwork(monkeypatch):
     import pytest
-    monkeypatch.setattr(draft, "_pexels_image", lambda query: None)
-    with pytest.raises(RuntimeError, match="PEXELS_API_KEY"):
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: None)
+    monkeypatch.setattr(draft, "_pexels_image", lambda query: (_ for _ in ()).throw(AssertionError("stock fallback must not run")))
+    with pytest.raises(RuntimeError, match="stopped instead of attaching an unrelated stock photo"):
         draft.build_external_pinterest_draft(affiliate_url="https://affiliate.example/track")
 
 
