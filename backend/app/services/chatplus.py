@@ -200,12 +200,11 @@ class ChatPlusService:
             mission = self.orchestration.get_mission(mission_id)
             if not mission:
                 return {"success": False, "error": "Mission could not be reloaded after creation"}
-            if mission.get("status") in {"pending", "scheduled"}:
-                started = self.orchestration.transition(mission_id, "active")
-                if not started.get("success"):
-                    return {"success": False, "error": started.get("error") or "Mission could not be started"}
-                mission = started.get("mission") or self.orchestration.get_mission(mission_id) or mission
-            state = self.state_for_mission(mission, {"status": "RUNNING"})
+            state = {
+                "state": "working",
+                "label": _STATE_LABELS["working"],
+                "detail": "Execution is starting",
+            }
             assistant_record = self._append_notification(
                 conversation_id,
                 CHAT_ASSISTANT_TYPE,
