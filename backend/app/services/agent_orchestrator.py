@@ -119,23 +119,35 @@ class AgentOrchestrator:
             for mission in pending_missions:
                 mission_id = mission.get("id")
                 if not mission_id:
+                    failed += 1
+                    results.append({
+                        "mission_id": None,
+                        "result": {"success": False, "error": "Pending mission is missing an id"},
+                    })
                     continue
 
                 try:
                     result = self._worker_runtime.execute_mission(mission_id)
+                    if not isinstance(result, dict):
+                        result = {
+                            "success": False,
+                            "error": "Worker runtime returned a non-dictionary result",
+                            "raw_result_type": type(result).__name__,
+                        }
                 except Exception as exc:  # pragma: no cover - defensive runtime handling
                     result = {"success": False, "error": str(exc)}
 
                 results.append({"mission_id": mission_id, "result": result})
-                if result.get("success"):
+                if result.get("success") is True:
                     succeeded += 1
                 else:
                     failed += 1
 
             completed = failed == 0
+            status = "completed" if completed else ("partial" if succeeded else "failed")
             return {
                 "success": completed,
-                "status": "completed" if completed else "partial",
+                "status": status,
                 "worker_id": worker_id,
                 "pending_count": len(pending_missions),
                 "succeeded": succeeded,
