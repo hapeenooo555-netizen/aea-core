@@ -925,6 +925,11 @@ html, body { background: #f4f6fa; }
       display: none !important;
     }
 
+    /* Reveal the Pinterest form when its prompt opens it from the empty workspace. */
+    #chatView.workspace-empty #pinterestDraftPanel:not([hidden]) {
+      display: grid !important;
+    }
+
     @media (min-width: 720px) {
       .shell {
         width: min(100%, 980px);
