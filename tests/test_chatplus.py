@@ -746,7 +746,7 @@ class TestChatPlusActionBoardRegression:
         end = html.index("function closeActionBoard(", start)
         renderer = html[start:end]
         assert 'approve.dataset.approvalId = reject.dataset.approvalId' in renderer
-        assert 'approve.classList.contains("approve-button")' in html
+        assert 'button.classList.contains("approve-button") ? "approve" : "reject"' in html
         assert 'api(`/approvals/${encodeURIComponent(approvalId)}/${action}`' in html
         assert 'document.getElementById("actionBoardApprovalList").addEventListener("click", handleApproval)' in html
         assert "await refreshAll();" in html[start:end + 15000]
