@@ -119,6 +119,49 @@ class TestChatPlusMessageFlow:
         mission = result["mission"]
         assert mission["objective"] == "Tell me a joke"
 
+    def test_deferred_message_returns_before_mission_execution(self):
+        service = ChatPlusService("owner-deferred")
+        def unexpected_execution(_mission_id):
+            pytest.fail("Mission execution must happen after the HTTP acknowledgement")
+        service.orchestration.run_mission = unexpected_execution
+
+        result = service.send_message("Run a background test", defer_execution=True)
+
+        assert result["success"] is True
+        assert result["state"]["state"] == "working"
+        assert result["background_mission_id"] == result["mission"]["id"]
+        assert result["message"]["role"] == "assistant"
+
+    def test_background_execution_appends_final_assistant_report(self):
+        service = ChatPlusService("owner-background")
+        started = service.send_message("Complete a background test", defer_execution=True)
+        mission_id = started["background_mission_id"]
+
+        def complete_mission(selected_id):
+            assert selected_id == mission_id
+            service.orchestration.transition(selected_id, "active")
+            service.orchestration.transition(selected_id, "completed", result={
+                "status": "COMPLETE",
+                "report": {"plan": [], "executed_actions": [], "observations": [], "final_status": "COMPLETE"},
+            })
+            return {"success": True, "status": "COMPLETE", "report": {"plan": [], "executed_actions": [], "observations": [], "final_status": "COMPLETE"}}
+
+        service.orchestration.run_mission = complete_mission
+        service.execute_mission(mission_id, "Complete a background test", "default")
+        history = service.list_messages("default")
+        assert history["success"] is True
+        assert len([m for m in history["messages"] if m["role"] == "assistant"]) >= 2
+
+    def test_live_step_rows_are_rendered_with_real_persisted_statuses(self):
+        moves = ChatPlusService._build_ai_moves_from_steps([
+            {"step_name": "connect_pinterest", "status": "completed"},
+            {"step_name": "prepare_pin", "status": "in_progress"},
+            {"step_name": "publish_pin", "status": "pending"},
+            {"step_name": "verify_pin", "status": "failed"},
+        ])
+        assert [move["status"] for move in moves] == ["done", "current", "pending", "failed"]
+        assert moves[0]["label"] == "Connect pinterest"
+
     def test_approval_required_uses_existing_gateway(self):
         service = ChatPlusService("owner-h")
         result = service.send_message("Start affiliate marketing on pinterest")
@@ -293,7 +336,7 @@ class TestChatPlusRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["state"]["state"] in {"ready", "completed", "waiting_for_approval", "waiting_for_human"}
+        assert data["state"]["state"] in {"ready", "working", "completed", "waiting_for_approval", "waiting_for_human"}
 
     def test_approve_endpoint_requires_body_and_ownership(self, auth_client: TestClient):
         response = auth_client.post("/chatplus/approvals/nonexistent/approve")
@@ -305,7 +348,9 @@ class TestChatPlusRoutes:
             json={"message": "Start affiliate marketing on pinterest", "conversation_id": "conv-approval-route"},
         )
         assert sent.status_code == 200
-        approvals = sent.json()["approvals"]
+        state_after_start = auth_client.get("/chatplus/state?conversation_id=conv-approval-route")
+        assert state_after_start.status_code == 200
+        approvals = state_after_start.json()["approvals"]
         assert len(approvals) >= 1
         approval_id = approvals[0]["id"]
         approved = auth_client.post(f"/chatplus/approvals/{approval_id}/approve")
@@ -321,7 +366,9 @@ class TestChatPlusRoutes:
             json={"message": "Start affiliate marketing on pinterest", "conversation_id": "conv-reject-route"},
         )
         assert sent.status_code == 200
-        approval_id = sent.json()["approvals"][0]["id"]
+        state_after_start = auth_client.get("/chatplus/state?conversation_id=conv-reject-route")
+        assert state_after_start.status_code == 200
+        approval_id = state_after_start.json()["approvals"][0]["id"]
         rejected = auth_client.post(
             f"/chatplus/approvals/{approval_id}/reject",
             json={"reason": "Not now"},

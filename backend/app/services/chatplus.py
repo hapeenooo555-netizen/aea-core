@@ -149,6 +149,8 @@ class ChatPlusService:
         message: str,
         conversation_id: str = DEFAULT_CONVERSATION_ID,
         client_message_id: str | None = None,
+        *,
+        defer_execution: bool = False,
     ) -> dict[str, Any]:
         text = (message or "").strip()
         if not text:
@@ -194,6 +196,33 @@ class ChatPlusService:
             return {"success": False, "error": error, "message": self._last_assistant_message(conversation_id)}
 
         mission_id = created["mission"]["id"]
+        if defer_execution:
+            mission = self.orchestration.get_mission(mission_id)
+            if not mission:
+                return {"success": False, "error": "Mission could not be reloaded after creation"}
+            state = {
+                "state": "working",
+                "label": _STATE_LABELS["working"],
+                "detail": "Execution is starting",
+            }
+            assistant_record = self._append_notification(
+                conversation_id,
+                CHAT_ASSISTANT_TYPE,
+                "AEA has accepted your request and started execution. Live worker steps will appear here as they are recorded.",
+            )
+            if not assistant_record.get("success"):
+                return assistant_record
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "message": assistant_record.get("message"),
+                "mission": sanitize_payload(mission or {}),
+                "execution": {"status": "RUNNING"},
+                "state": state,
+                "approvals": [],
+                "background_mission_id": mission_id,
+            }
+
         execution = self.orchestration.run_mission(mission_id)
         mission = self.orchestration.get_mission(mission_id)
         approvals = self.list_approvals(mission_id)
@@ -215,6 +244,20 @@ class ChatPlusService:
             "approvals": approvals,
         }
 
+    def execute_mission(self, mission_id: str, goal: str, conversation_id: str = DEFAULT_CONVERSATION_ID) -> None:
+        """Execute a ChatPlus mission after the HTTP acknowledgement has been returned."""
+        try:
+            execution = self.orchestration.run_mission(mission_id)
+            mission = self.orchestration.get_mission(mission_id)
+            approvals = self.list_approvals(mission_id)
+            state = self.state_for_mission(mission, execution)
+            assistant_text = self._assistant_text(goal, mission, execution, state, approvals)
+            self._append_notification(conversation_id, CHAT_ASSISTANT_TYPE, assistant_text)
+        except Exception as exc:
+            error = f"Background mission execution failed: {exc}"
+            self.orchestration.transition(mission_id, "failed", error=error)
+            self._append_notification(conversation_id, CHAT_ASSISTANT_TYPE, error)
+
     def current_state(self, conversation_id: str = DEFAULT_CONVERSATION_ID) -> dict[str, Any]:
         missions = self.orchestration.list_missions(limit=100)
         chat_missions = [
@@ -235,14 +278,27 @@ class ChatPlusService:
         mission = max(chat_missions, key=lambda item: _timestamp(item.get("created_at")))
         approvals = self.list_approvals(mission.get("id"))
         execution = (mission.get("result") or {}) if isinstance(mission.get("result"), dict) else {}
+        live_execution = MissionExecutionService(
+            client=self.client,
+            durable_required=self.client is not None,
+        ).load_execution_for_mission(mission.get("id"), self.owner_id)
+        if live_execution:
+            execution = live_execution
+            steps = MissionExecutionService(
+                client=self.client,
+                durable_required=self.client is not None,
+            ).load_steps_for_execution(live_execution.get("execution_id"), self.owner_id)
+            ai_moves = self._build_ai_moves_from_steps(steps)
+        else:
+            ai_moves = self._build_ai_moves(execution)
         return {
             "success": True,
             "conversation_id": conversation_id,
             "mission": sanitize_payload(mission),
             "execution": sanitize_payload(execution),
-            "state": self.state_for_mission(mission, None),
+            "state": self.state_for_mission(mission, execution),
             "approvals": approvals,
-            "ai_moves": self._build_ai_moves(execution),
+            "ai_moves": ai_moves,
         }
 
     def list_approvals(self, mission_id: str | None = None) -> list[dict[str, Any]]:
@@ -386,6 +442,27 @@ class ChatPlusService:
             return "Recording goal"
         # Fallback: humanize snake_case
         return key.replace("_", " ").capitalize()
+
+    @staticmethod
+    def _build_ai_moves_from_steps(steps: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+        """Build the live activity feed from owner-scoped persisted mission steps."""
+        moves: list[dict[str, str]] = []
+        for step in steps or []:
+            name = str(step.get("step_name") or "worker_action")
+            raw_status = str(step.get("status") or "pending").lower()
+            status = {
+                "in_progress": "current",
+                "assigned": "current",
+                "completed": "done",
+                "failed": "failed",
+                "pending": "pending",
+            }.get(raw_status, "pending")
+            moves.append({
+                "step": name,
+                "label": ChatPlusService._human_move_label(name, name),
+                "status": status,
+            })
+        return moves
 
     @staticmethod
     def _build_ai_moves(execution: dict[str, Any] | None) -> list[dict[str, str]]:

@@ -727,6 +727,7 @@ class MissionExecutionService:
                     client.table(STEP_TABLE)
                     .select("*")
                     .eq("execution_id", execution_id)
+                    .eq("owner_id", owner_id)
                     .order("attempt_index")
                     .execute()
                 )

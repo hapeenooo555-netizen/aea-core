@@ -1173,6 +1173,8 @@ evaluate: "Evaluating the next step",
         sending: false,
         userMissionStartedInSession: false,
         completionShownMissionId: null,
+        lastHistoryRefreshKey: null,
+        lastDashboardRefreshAt: 0,
       };
 
       const authView = document.getElementById("authView");
@@ -1563,8 +1565,9 @@ function renderState(nextState) {
 
       function schedulePoll() {
         window.clearTimeout(state.pollTimer);
-        const terminal = ["completed", "failed", "cancelled"].includes(state.currentState?.state);
-        if (!terminal) state.pollTimer = window.setTimeout(loadState, 4000);
+        const current = state.currentState?.state || "ready";
+        const terminal = ["completed", "failed", "cancelled", "waiting_for_approval", "waiting_for_human"].includes(current);
+        if (!terminal) state.pollTimer = window.setTimeout(loadState, current === "working" || current === "thinking" ? 1800 : 3500);
       }
 
       async function loadHistory() {
@@ -1584,8 +1587,19 @@ function renderState(nextState) {
         renderState(result.state);
         renderApprovals();
         renderOrchestration();
-        loadMarketingDashboard();
-        loadMarketingLeads();
+        const stateName = result.state?.state || "ready";
+        const missionId = result.mission?.id;
+        const reportReady = ["completed", "failed", "waiting_for_approval", "waiting_for_human"].includes(stateName);
+        const historyKey = missionId ? missionId + ":" + stateName : null;
+        if (reportReady && historyKey && state.lastHistoryRefreshKey !== historyKey) {
+          state.lastHistoryRefreshKey = historyKey;
+          await loadHistory();
+        }
+        if (Date.now() - state.lastDashboardRefreshAt >= 30000) {
+          state.lastDashboardRefreshAt = Date.now();
+          loadMarketingDashboard();
+          loadMarketingLeads();
+        }
         schedulePoll();
       }
 

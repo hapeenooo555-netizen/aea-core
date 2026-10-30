@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -83,15 +83,26 @@ def chat_history(
 @router.post("/messages")
 def chat_message(
     body: ChatMessageRequest,
+    background_tasks: BackgroundTasks,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    result = _service(owner_id, client).send_message(
+    service = _service(owner_id, client)
+    result = service.send_message(
         body.message,
         conversation_id=body.conversation_id,
         client_message_id=body.client_message_id,
+        defer_execution=True,
     )
     _raise(result)
+    mission_id = result.pop("background_mission_id", None)
+    if mission_id:
+        background_tasks.add_task(
+            service.execute_mission,
+            mission_id,
+            body.message,
+            body.conversation_id,
+        )
     return result
 
 
