@@ -1509,7 +1509,7 @@ function renderState(nextState) {
          const completionCard = document.getElementById("completionCard");
          const errorCard = document.getElementById("errorCard");
          if (completionCard) completionCard.hidden = true;
-         if ((currentState === "completed" || currentState === "waiting_for_approval") && state.userMissionStartedInSession) { const boardId = mission.id || "current"; if (state.completionShownMissionId !== boardId || (currentState === "waiting_for_approval" && document.getElementById("actionBoardBackdrop")?.hidden)) { state.completionShownMissionId = boardId; openActionBoard(); } }
+         if ((currentState === "completed" || currentState === "waiting_for_approval") && state.userMissionStartedInSession) { const boardId = (mission.id || "current") + ":" + currentState; if (state.completionShownMissionId !== boardId) { state.completionShownMissionId = boardId; openActionBoard(); } }
          if (errorCard) errorCard.hidden = currentState !== "failed";
 
          if (currentState === "failed") {
