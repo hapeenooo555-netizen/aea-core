@@ -1174,6 +1174,7 @@ evaluate: "Evaluating the next step",
         userMissionStartedInSession: false,
         completionShownMissionId: null,
         lastHistoryRefreshKey: null,
+        lastDashboardRefreshAt: 0,
       };
 
       const authView = document.getElementById("authView");
@@ -1594,8 +1595,11 @@ function renderState(nextState) {
           state.lastHistoryRefreshKey = historyKey;
           await loadHistory();
         }
-        loadMarketingDashboard();
-        loadMarketingLeads();
+        if (Date.now() - state.lastDashboardRefreshAt >= 30000) {
+          state.lastDashboardRefreshAt = Date.now();
+          loadMarketingDashboard();
+          loadMarketingLeads();
+        }
         schedulePoll();
       }
 
