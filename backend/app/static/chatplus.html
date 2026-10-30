@@ -1112,6 +1112,19 @@ Connect Pinterest
           </ol>
           <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Enter your product details, then start.</p>
           <button id="pinterestStartWorkflow" class="primary-button" type="button" style="width:100%;min-height:56px;font-size:18px;">Start Creating Pin →</button>
+          <div id="pinterestConsent" class="task-card" hidden>
+            <strong>Connect to Pinterest?</strong>
+            <p class="muted">AEA will securely check the Pinterest account connected to your profile and retrieve its boards. This step is read-only; no Pin will be published.</p>
+            <div class="card-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <button id="pinterestAccept" class="primary-button" type="button">Accept</button>
+              <button id="pinterestDeny" class="secondary-button" type="button">Deny</button>
+            </div>
+          </div>
+          <div id="pinterestAccountSelectWrap" class="field" hidden>
+            <label for="pinterestAccountSelect">Select your Pinterest account</label>
+            <select id="pinterestAccountSelect" disabled></select>
+            <p id="pinterestConnectedStatus" role="status" class="task-body"></p>
+          </div>
           <button id="pinterestLoadBoards" class="secondary-button" type="button" hidden>Verify Pinterest account</button>
           <button id="pinterestAutoGenerate" class="primary-button" type="button" disabled hidden>Generate Pin draft</button>
           <div id="pinterestDraftForm" hidden>
@@ -2172,16 +2185,29 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
             pinterestDraftStatus.textContent = "Enter a valid vendor/affiliate URL.";
             return;
           }
-          pinterestStartWorkflow.disabled = true;
-          pinterestWorkflowSteps.hidden = false;
-          pinterestDraftPreview.hidden = true;
-          ["connect","account","boards","workers","draft"].forEach((step) => setPinterestStep(step, "pending"));
-          setPinterestStep("connect", "current");
-          pinterestDraftStatus.textContent = "Connecting to Pinterest…";
-          pinterestWorkflowAutoStart = true;
-          pinterestLoadBoardsButton.click();
+          pinterestStartWorkflow.hidden = true;
+          document.getElementById("pinterestConsent").hidden = false;
+          pinterestDraftStatus.textContent = "Review the access request, then choose Accept or Deny.";
         });
       }
+
+      document.getElementById("pinterestAccept").addEventListener("click", () => {
+        document.getElementById("pinterestConsent").hidden = true;
+        pinterestWorkflowSteps.hidden = false;
+        ["connect","account","boards","workers","draft"].forEach((step) => setPinterestStep(step, "pending"));
+        setPinterestStep("connect", "current");
+        pinterestDraftStatus.textContent = "Connecting to Pinterest…";
+        pinterestWorkflowAutoStart = true;
+        pinterestLoadBoardsButton.click();
+      });
+      document.getElementById("pinterestDeny").addEventListener("click", () => {
+        document.getElementById("pinterestConsent").hidden = true;
+        pinterestStartWorkflow.hidden = false;
+        pinterestStartWorkflow.disabled = false;
+        pinterestWorkflowAutoStart = false;
+        pinterestDraftStatus.textContent = "Pinterest access was declined. No account data was accessed and no Pin was created.";
+        pinterestWorkflowSteps.hidden = true;
+      });
 
   pinterestLoadBoardsButton.addEventListener("click", async () => {
     pinterestLoadBoardsButton.disabled = true;
@@ -2204,6 +2230,15 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       });
       const accountName = [result.account.username, result.account.business_name, result.account.name]
         .find((value) => typeof value === "string" && value.trim()) || "Verified Pinterest account";
+      const accountSelectWrap = document.getElementById("pinterestAccountSelectWrap");
+      const accountSelect = document.getElementById("pinterestAccountSelect");
+      accountSelect.replaceChildren();
+      const accountOption = document.createElement("option");
+      accountOption.value = String(result.account.id || result.account.username || "connected");
+      accountOption.textContent = accountName;
+      accountSelect.append(accountOption);
+      accountSelectWrap.hidden = false;
+      document.getElementById("pinterestConnectedStatus").textContent = "✓ Connected — account verified by Pinterest API.";
       if (!verifiedPinterestBoards.length) {
         pinterestDraftStatus.textContent = accountName + " imethibitishwa lakini haina boards. Tengeneza board kwenye Pinterest kisha ujaribu tena.";
         return;
@@ -2211,9 +2246,12 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       pinterestDraftForm.hidden = false;
       pinterestAutoGenerate.disabled = false;
       setPinterestStep("connect", "done");
+      setPinterestDraftStatus("Pinterest connection confirmed.");
       setPinterestStep("account", "done");
+      setPinterestDraftStatus(accountName + " connected. Pinterest user account retrieved.");
       setPinterestStep("boards", "done");
       if (pinterestWorkflowAutoStart) {
+        setPinterestDraftStatus("Fetching Pinterest boards… " + verifiedPinterestBoards.length + " board(s) found.");
         setPinterestStep("workers", "current");
         pinterestDraftStatus.textContent = accountName + " connected. " + verifiedPinterestBoards.length + " Pinterest board(s) retrieved. Activating AEA workers and mission…";
         setPinterestAutoGenerate.disabled = false;
@@ -2222,7 +2260,13 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         pinterestDraftStatus.textContent = accountName + " imethibitishwa. Boards " + verifiedPinterestBoards.length + " zimepatikana.";
       }
     } catch (error) {
-      pinterestDraftStatus.textContent = "Pinterest haikuweza kuthibitishwa: " + (error instanceof Error ? error.message : String(error));
+      pinterestDraftStatus.textContent = "Pinterest verification failed: " + (error instanceof Error ? error.message : String(error));
+      if (pinterestWorkflowAutoStart) {
+        pinterestWorkflowAutoStart = false;
+        pinterestStartWorkflow.hidden = false;
+        pinterestStartWorkflow.disabled = false;
+        setPinterestStep("connect", "failed");
+      }
     } finally {
       pinterestLoadBoardsButton.disabled = false;
       if (!verifiedPinterestAccount || !verifiedPinterestBoards.length) {
