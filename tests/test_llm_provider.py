@@ -112,9 +112,11 @@ def test_provider_failure_falls_back_to_mock(monkeypatch) -> None:
     engine = AtlasDecisionEngine(provider=FailingProvider())
     details = engine.next_action_details()
 
-    assert details["success"] is True
-    assert details["provider"] == "mock"
-    assert "Mock response" in details["action"]
+    assert details["success"] is False
+    assert details["provider"] == "fallback"
+    assert details["status"] == "FALLBACK"
+    assert "unavailable" in details["error"].lower()
+    assert "Mock response" not in details["action"]
 
 
 def test_get_llm_provider_uses_settings_configuration(monkeypatch) -> None:
