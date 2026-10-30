@@ -136,6 +136,11 @@ class AtlasDecisionEngine:
             if normalized.get("success") and normalized.get("action"):
                 self._save_decision_memory(worker_id, mission, normalized)
                 return normalized
+            if normalized.get("status") == "MOCK":
+                normalized["status"] = "MOCK"
+                normalized["success"] = False
+                normalized["error"] = normalized.get("error") or "Mock output cannot be treated as a verified decision"
+                return normalized
         except Exception:  # pragma: no cover - defensive runtime handling
             pass
 
@@ -162,14 +167,17 @@ class AtlasDecisionEngine:
         content = str(response.get("content") or "").strip()
         action = str(response.get("action") or content or "").strip()
         provider_name = str(response.get("provider") or self._provider.__class__.__name__.lower()).strip()
+        is_mock = provider_name.strip().lower() == "mock" or content.lower().startswith("mock response:")
+        provider_success = bool(response.get("success", bool(action)))
         return {
-            "success": bool(response.get("success", bool(action))),
+            "success": provider_success and bool(action) and not is_mock,
+            "status": "MOCK" if is_mock else ("READY" if provider_success and action else "FAILED"),
             "action": action or "Review pending missions",
             "content": action or content,
             "provider": provider_name,
             "model": response.get("model") or "unknown",
             "usage": response.get("usage") or {},
-            "error": response.get("error"),
+            "error": "Mock provider output is not a verified AI decision" if is_mock else response.get("error"),
         }
 
     def _build_decision_context(self, worker_id: str | None = None, mission: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -246,13 +254,14 @@ class AtlasDecisionEngine:
 
         provider_name = self._provider.__class__.__name__.lower()
         return {
-            "success": True,
-            "action": "Mock response: Review pending missions",
-            "content": "Mock response: Review pending missions",
-            "provider": provider_name,
-            "model": "mock",
+            "success": False,
+            "status": "FALLBACK",
+            "action": "Review pending missions",
+            "content": "Decision unavailable. Review pending missions manually.",
+            "provider": "fallback",
+            "model": "none",
             "usage": {},
-            "error": None,
+            "error": f"Decision provider unavailable or returned an invalid response ({provider_name})",
         }
 
     def _extract_worker_type(self, mission: dict[str, Any]) -> str | None:
