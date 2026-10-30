@@ -940,7 +940,7 @@
           <div id="currentActionText" class="current-action">Analyzing your goal...</div>
         </article>
 
-        <article id="agentActivityPanel" class="panel agent-feed"><div class="card-header">AEA AGENT ACTIVITY · LIVE EXECUTION</div><ul id="agentActivityList" class="agent-feed-list"><li class="agent-feed-item" data-status="current"><span>▶️</span><span class="agent-feed-label">Waiting for execution events</span><span class="agent-feed-status">Ready</span></li></ul></article>
+        <article id="agentActivityPanel" class="panel agent-feed"><div class="card-header">AEA AGENT ACTIVITY · EXECUTION REPORT</div><ul id="agentActivityList" class="agent-feed-list"><li class="agent-feed-item" data-status="current"><span>▶️</span><span class="agent-feed-label">Waiting for execution events</span><span class="agent-feed-status">Ready</span></li></ul></article>
         <div class="card-actions">
           <button id="viewOrchestrationButton" class="secondary-button" type="button">View progress</button>
           <button id="viewHistoryButton" class="secondary-button muted" type="button">View history</button>
@@ -1647,11 +1647,36 @@ function renderState(nextState) {
         if (!backdrop) return;
         const mission = state.currentMission || {};
         document.getElementById("actionBoardSummary").textContent = mission.objective || mission.description || mission.title || "AEA has completed the requested workflow.";
-        const host = document.getElementById("actionBoardApprovalList");
-        host.replaceChildren();
-        (state.approvals || []).forEach((approval) => host.append(makeElement("div", "empty-approval", "Approval pending: " + (approval.reason || approval.action_type || approval.id))));
+        renderActionBoardApprovals();
         backdrop.hidden = false;
         document.getElementById("actionBoardClose").focus();
+      }
+
+      function renderActionBoardApprovals() {
+        const host = document.getElementById("actionBoardApprovalList");
+        if (!host) return;
+        host.replaceChildren();
+        const pending = (Array.isArray(state.approvals) ? state.approvals : [])
+          .filter((approval) => !approval.status || ["pending", "awaiting_approval"].includes(String(approval.status).toLowerCase()));
+        if (!pending.length) {
+          host.append(makeElement("div", "empty-approval", "No pending approvals. All approval actions are up to date."));
+          return;
+        }
+        pending.forEach((approval) => {
+          const card = makeElement("article", "approval-card");
+          const title = makeElement("div", "approval-title", "Approval required");
+          const reason = makeElement("p", "approval-copy", approval.reason || approval.action_type || "Review this action before AEA continues.");
+          const status = makeElement("div", "approval-status", approval.status || "pending");
+          const actions = makeElement("div", "approval-actions");
+          const approve = makeElement("button", "approve-button", activeCopy().approve);
+          const reject = makeElement("button", "reject-button", activeCopy().reject);
+          approve.type = reject.type = "button";
+          approve.dataset.approvalId = reject.dataset.approvalId = String(approval.id || "");
+          approve.disabled = reject.disabled = !approval.id;
+          actions.append(approve, reject);
+          card.append(title, reason, status, actions);
+          host.append(card);
+        });
       }
       function closeActionBoard() {
         const backdrop = document.getElementById("actionBoardBackdrop");
@@ -1948,6 +1973,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   signInForm.addEventListener("submit", signIn);
   composer.addEventListener("submit", sendMessage);
   approvalsView.addEventListener("click", handleApproval);
+  document.getElementById("actionBoardApprovalList").addEventListener("click", handleApproval);
   document.getElementById("actionBoardClose").addEventListener("click", closeActionBoard);
   document.getElementById("actionBoardBackdrop").addEventListener("click", (event) => { if (event.target.id === "actionBoardBackdrop") closeActionBoard(); });
   document.getElementById("actionBoardNext").addEventListener("click", () => { closeActionBoard(); messageInput.focus(); });
