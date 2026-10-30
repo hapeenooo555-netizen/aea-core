@@ -1509,7 +1509,7 @@ function renderState(nextState) {
          const completionCard = document.getElementById("completionCard");
          const errorCard = document.getElementById("errorCard");
          if (completionCard) completionCard.hidden = true;
-         if (currentState === "completed" && state.userMissionStartedInSession) { const completedId = mission.id || "completed"; if (state.completionShownMissionId !== completedId) { state.completionShownMissionId = completedId; openActionBoard(); } }
+         if ((currentState === "completed" || currentState === "waiting_for_approval") && state.userMissionStartedInSession) { const boardId = mission.id || "current"; if (state.completionShownMissionId !== boardId || (currentState === "waiting_for_approval" && document.getElementById("actionBoardBackdrop")?.hidden)) { state.completionShownMissionId = boardId; openActionBoard(); } }
          if (errorCard) errorCard.hidden = currentState !== "failed";
 
          if (currentState === "failed") {
@@ -1646,7 +1646,9 @@ function renderState(nextState) {
         const backdrop = document.getElementById("actionBoardBackdrop");
         if (!backdrop) return;
         const mission = state.currentMission || {};
-        document.getElementById("actionBoardSummary").textContent = mission.objective || mission.description || mission.title || "AEA has completed the requested workflow.";
+        const awaitingApproval = state.currentState?.state === "waiting_for_approval";
+        document.getElementById("actionBoardTitle").textContent = awaitingApproval ? "Approval required" : "Task completed";
+        document.getElementById("actionBoardSummary").textContent = awaitingApproval ? "AEA is waiting for your decision before it can continue." : (mission.objective || mission.description || mission.title || "AEA has completed the requested workflow.");
         renderActionBoardApprovals();
         backdrop.hidden = false;
         document.getElementById("actionBoardClose").focus();
@@ -1890,6 +1892,7 @@ function renderState(nextState) {
             body: action === "reject" ? JSON.stringify({ reason: "Imekataliwa kutoka Chat+" }) : "{}",
           });
           await refreshAll();
+          renderActionBoardApprovals();
         } catch (error) {
           showToast(error.message);
           button.disabled = false;
