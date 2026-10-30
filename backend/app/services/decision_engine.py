@@ -141,22 +141,20 @@ class AtlasDecisionEngine:
                 normalized["success"] = False
                 normalized["error"] = normalized.get("error") or "Mock output cannot be treated as a verified decision"
                 return normalized
-        except Exception:  # pragma: no cover - defensive runtime handling
-            pass
+        except Exception as exc:  # pragma: no cover - defensive runtime handling
+            provider_error = str(exc)[:500]
+        else:
+            provider_error = None
 
-        try:
-            fallback = self._fallback_decision()
-            if self._provider.__class__.__name__.lower() != "mockllmprovider":
-                fallback["provider"] = "mock"
-                fallback["model"] = "mock"
-                fallback["content"] = fallback["action"]
-            fallback["context"] = context
-            self._save_decision_memory(worker_id, mission, fallback)
-            return fallback
-        except Exception:  # pragma: no cover - defensive runtime handling
-            fallback = self._fallback_decision()
-            fallback["context"] = context
-            return fallback
+        fallback = self._fallback_decision()
+        fallback["context"] = context
+        if provider_error:
+            fallback["error"] = (
+                f"{fallback.get('error')}; provider exception: {provider_error}"
+            )
+        # Failed or fallback decisions are not memories: persisting them would
+        # teach future planning from an outcome that was never verified.
+        return fallback
 
     def _normalize_provider_response(self, response: Any) -> dict[str, Any]:
         """Normalize provider output into a stable decision contract."""
