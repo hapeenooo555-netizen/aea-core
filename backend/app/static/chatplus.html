@@ -870,7 +870,17 @@
       .brand-title { font-size: 19px; }
       .menu-button, .ghost-button { font-size: 12px; }
     }
-  </style>
+  
+.agent-feed{display:grid;gap:9px}.agent-feed-list{display:grid;gap:8px;list-style:none;margin:0;padding:0}
+.agent-feed-item{display:grid;grid-template-columns:25px 1fr auto;align-items:center;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:13px}
+.agent-feed-item[data-status="current"]{background:#fff9eb;border-color:#d8b76c}.agent-feed-item[data-status="done"]{border-color:#c5e1d6}
+.agent-feed-label{font-weight:700;overflow-wrap:anywhere}.agent-feed-status{font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase}
+.action-board-backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(10,20,24,.6)}
+.action-board-backdrop[hidden]{display:none}.action-board{width:min(100%,520px);max-height:88svh;overflow:auto;border-radius:22px;background:#fff;padding:22px;display:grid;gap:13px}
+.action-board h2{margin:0;font-size:22px}.action-board p{margin:0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.action-board-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}.action-board-actions button{min-height:44px}
+@media(max-width:420px){.action-board{padding:18px}.action-board-actions{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
   <section id="authView" class="auth-view" hidden>
@@ -930,6 +940,7 @@
           <div id="currentActionText" class="current-action">Analyzing your goal...</div>
         </article>
 
+        <article id="agentActivityPanel" class="panel agent-feed"><div class="card-header">AEA AGENT ACTIVITY · LIVE EXECUTION</div><ul id="agentActivityList" class="agent-feed-list"><li class="agent-feed-item" data-status="current"><span>▶️</span><span class="agent-feed-label">Waiting for execution events</span><span class="agent-feed-status">Ready</span></li></ul></article>
         <div class="card-actions">
           <button id="viewOrchestrationButton" class="secondary-button" type="button">View progress</button>
           <button id="viewHistoryButton" class="secondary-button muted" type="button">View history</button>
@@ -1071,7 +1082,7 @@ Connect Pinterest
     </div>
   </aside>
 
-  <div id="toast" class="toast" role="status"></div>
+  <div id="actionBoardBackdrop" class="action-board-backdrop" hidden><section class="action-board" role="dialog" aria-modal="true" aria-labelledby="actionBoardTitle"><div class="eyebrow">AEA EXECUTION REPORT</div><h2 id="actionBoardTitle">Task completed</h2><p id="actionBoardSummary">AEA has completed the requested workflow.</p><div id="actionBoardApprovalList"></div><div class="action-board-actions"><button id="actionBoardResults" class="primary-button" type="button">View results</button><button id="actionBoardProgress" class="secondary-button" type="button">Execution details</button><button id="actionBoardHistory" class="secondary-button muted" type="button">History</button><button id="actionBoardNext" class="secondary-button" type="button">Run another task</button></div><button id="actionBoardClose" class="ghost-button" type="button">Close</button></section></div><div id="toast" class="toast" role="status"></div>
 
   <script>
     (() => {
@@ -1161,6 +1172,7 @@ evaluate: "Evaluating the next step",
         pollTimer: null,
         sending: false,
         userMissionStartedInSession: false,
+        completionShownMissionId: null,
       };
 
       const authView = document.getElementById("authView");
@@ -1496,7 +1508,8 @@ function renderState(nextState) {
 
          const completionCard = document.getElementById("completionCard");
          const errorCard = document.getElementById("errorCard");
-         if (completionCard) completionCard.hidden = currentState !== "completed";
+         if (completionCard) completionCard.hidden = true;
+         if (currentState === "completed" && state.userMissionStartedInSession) { const completedId = mission.id || "completed"; if (state.completionShownMissionId !== completedId) { state.completionShownMissionId = completedId; openActionBoard(); } }
          if (errorCard) errorCard.hidden = currentState !== "failed";
 
          if (currentState === "failed") {
@@ -1583,6 +1596,7 @@ function renderState(nextState) {
         const moves = state.ai_moves || [];
         const currentState = state.currentState?.state || "ready";
 
+        renderAgentActivity(moves, currentState);
         list.replaceChildren(...moves.map((move) => {
           const item = document.createElement("li");
           item.className = "orchestration-item";
@@ -1603,6 +1617,45 @@ function renderState(nextState) {
           else if (currentState === "completed") actionText.textContent = ui.completed;
           else actionText.textContent = ui.working;
         }
+      }
+
+
+      function renderAgentActivity(moves, currentState) {
+        const feed = document.getElementById("agentActivityList");
+        if (!feed) return;
+        const rows = Array.isArray(moves) ? moves : [];
+        if (!rows.length) {
+          const label = currentState === "completed" ? "Mission completed — no detailed step events were returned." : currentState === "failed" ? "Mission failed — inspect the execution error." : "Waiting for execution events from the backend.";
+          feed.replaceChildren(makeAgentFeedItem(label, currentState === "completed" ? "done" : currentState === "failed" ? "failed" : "current"));
+          return;
+        }
+        feed.replaceChildren(...rows.map((move) => makeAgentFeedItem(move.label || move.step || "Worker action", move.status)));
+      }
+      function makeAgentFeedItem(label, status) {
+        const li = document.createElement("li");
+        li.className = "agent-feed-item";
+        li.dataset.status = status || "pending";
+        const icon = document.createElement("span");
+        icon.textContent = status === "done" ? "✅" : status === "failed" ? "❌" : status === "waiting" ? "⏸️" : status === "current" ? "▶️" : "○";
+        const text = makeElement("span", "agent-feed-label", label);
+        const badge = makeElement("span", "agent-feed-status", status === "done" ? "Completed" : status === "failed" ? "Failed" : status === "waiting" ? "Waiting" : status === "current" ? "Running" : "Pending");
+        li.append(icon, text, badge);
+        return li;
+      }
+      function openActionBoard() {
+        const backdrop = document.getElementById("actionBoardBackdrop");
+        if (!backdrop) return;
+        const mission = state.currentMission || {};
+        document.getElementById("actionBoardSummary").textContent = mission.objective || mission.description || mission.title || "AEA has completed the requested workflow.";
+        const host = document.getElementById("actionBoardApprovalList");
+        host.replaceChildren();
+        (state.approvals || []).forEach((approval) => host.append(makeElement("div", "empty-approval", "Approval pending: " + (approval.reason || approval.action_type || approval.id))));
+        backdrop.hidden = false;
+        document.getElementById("actionBoardClose").focus();
+      }
+      function closeActionBoard() {
+        const backdrop = document.getElementById("actionBoardBackdrop");
+        if (backdrop) backdrop.hidden = true;
       }
 
       function renderApprovals() {
@@ -1895,6 +1948,13 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   signInForm.addEventListener("submit", signIn);
   composer.addEventListener("submit", sendMessage);
   approvalsView.addEventListener("click", handleApproval);
+  document.getElementById("actionBoardClose").addEventListener("click", closeActionBoard);
+  document.getElementById("actionBoardBackdrop").addEventListener("click", (event) => { if (event.target.id === "actionBoardBackdrop") closeActionBoard(); });
+  document.getElementById("actionBoardNext").addEventListener("click", () => { closeActionBoard(); messageInput.focus(); });
+  document.getElementById("actionBoardProgress").addEventListener("click", () => { closeActionBoard(); openDrawer(document.getElementById("orchestrationDrawer")); });
+  document.getElementById("actionBoardHistory").addEventListener("click", () => { closeActionBoard(); openDrawer(document.getElementById("historyDrawer")); });
+  document.getElementById("actionBoardResults").addEventListener("click", () => { closeActionBoard(); const response = document.getElementById("assistantResponse"); if (response) response.scrollIntoView({behavior:"smooth",block:"center"}); });
+
 
   // AI affiliate autopilot: fetch verified boards, then generate all product/link/copy/image fields server-side.
   const pinterestLoadBoardsButton = document.getElementById("pinterestLoadBoards");
