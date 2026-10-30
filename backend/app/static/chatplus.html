@@ -841,6 +841,11 @@
 
     [hidden] { display: none !important; }
 
+/* Focus ChatPlus on the conversation; specialist panels remain prompt-accessible. */
+#freelancerDashboard,
+#pinterestDraftPanel,
+#pinterestContentPromptButton { display: none !important; }
+
     /* Initial workspace: hide all non-composer elements until a goal is submitted */
     #chatView.workspace-empty .status-row,
     #chatView.workspace-empty .hero-card,
@@ -866,7 +871,35 @@
       .composer { padding-left: 22px; padding-right: 22px; }
     }
 
-    @media (min-width: 560px) {
+    
+/* Readable controls and no horizontal overflow on small Android screens. */
+@media (max-width: 559px) {
+  html, body { font-size: 16px; }
+  .shell {
+    width: 100%; height: 100dvh; min-height: 100svh;
+    grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden;
+  }
+  .topbar { padding: 12px 14px; }
+  .brand-title { font-size: 18px; }
+  .brand-subtitle { font-size: 12px; }
+  .menu-button, .ghost-button, .signout { font-size: 14px; padding: 9px 11px; }
+  .status-row { padding: 10px 14px; }
+  .status-pill { font-size: 14px; }
+  .status-detail { font-size: 13px; }
+  .viewport { min-width: 0; overflow-x: hidden; }
+  .workspace { min-width: 0; gap: 12px; padding: 12px; }
+  .panel, .hero-card, .task-card { min-width: 0; padding: 14px; }
+  .eyebrow, .card-header, .task-title { font-size: 12px; letter-spacing: .07em; }
+  .job-meta, .job-steps, .assistant-response { font-size: 15px; }
+  .current-action, .task-body { font-size: 17px; }
+  .secondary-button, .approval-actions button { font-size: 15px; min-height: 44px; }
+  .composer { gap: 8px; padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); }
+  .composer textarea { min-height: 58px; max-height: 120px; padding: 13px; font-size: 16px; resize: none; }
+  .send-button { min-width: 50px; height: 50px; font-size: 22px; }
+  .agent-feed-item { grid-template-columns: 24px minmax(0,1fr); font-size: 15px; }
+  .agent-feed-status { grid-column: 2; font-size: 12px; }
+}
+@media (min-width: 560px) {
       .brand-title { font-size: 19px; }
       .menu-button, .ghost-button { font-size: 12px; }
     }
