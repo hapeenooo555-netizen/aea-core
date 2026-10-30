@@ -1865,6 +1865,8 @@ function renderState(nextState) {
           state.approvals = result.approvals || [];
           state.currentMission = result.mission || state.currentMission || null;
           state.currentExecution = result.execution || state.currentExecution || null;
+          // Avoid displaying the previous mission's activity while the new report is loading.
+          state.ai_moves = Array.isArray(result.ai_moves) ? result.ai_moves : [];
           renderHistory();
           renderApprovals();
           renderState(result.state);
@@ -1892,7 +1894,9 @@ function renderState(nextState) {
             body: action === "reject" ? JSON.stringify({ reason: "Imekataliwa kutoka Chat+" }) : "{}",
           });
           await refreshAll();
-          renderActionBoardApprovals();
+          const remainingApprovals = (Array.isArray(state.approvals) ? state.approvals : []).filter((item) => !item.status || ["pending", "awaiting_approval"].includes(String(item.status).toLowerCase()));
+          if (!remainingApprovals.length) closeActionBoard();
+          else renderActionBoardApprovals();
         } catch (error) {
           showToast(error.message);
           button.disabled = false;
