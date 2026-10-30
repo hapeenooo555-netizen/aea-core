@@ -132,8 +132,10 @@ class AgentOrchestrator:
                 else:
                     failed += 1
 
+            completed = failed == 0
             return {
-                "success": True,
+                "success": completed,
+                "status": "completed" if completed else "partial",
                 "worker_id": worker_id,
                 "pending_count": len(pending_missions),
                 "succeeded": succeeded,
