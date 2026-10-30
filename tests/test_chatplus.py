@@ -711,3 +711,69 @@ def test_completed_pinterest_publish_message_includes_canonical_pin_url():
     assert "Pinterest confirmed the Pin was published" in message
     assert "https://www.pinterest.com/pin/123456789/" in message
     assert "Pin ID: 123456789" in message
+
+
+
+class TestChatPlusActionBoardRegression:
+    """Frontend contract checks for the execution feed and approval Action Board."""
+
+    @staticmethod
+    def _html() -> str:
+        return (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_action_board_has_accessible_dialog_and_all_navigation_actions(self):
+        html = self._html()
+        assert 'id="actionBoardBackdrop"' in html
+        assert 'role="dialog"' in html
+        assert 'aria-modal="true"' in html
+        for element_id in (
+            "actionBoardTitle",
+            "actionBoardSummary",
+            "actionBoardApprovalList",
+            "actionBoardResults",
+            "actionBoardProgress",
+            "actionBoardHistory",
+            "actionBoardNext",
+            "actionBoardClose",
+        ):
+            assert f'id="{element_id}"' in html
+
+    def test_action_board_approval_buttons_use_existing_approval_handler(self):
+        html = self._html()
+        start = html.index("function renderActionBoardApprovals(")
+        end = html.index("function closeActionBoard(", start)
+        renderer = html[start:end]
+        assert 'approve.dataset.approvalId = reject.dataset.approvalId' in renderer
+        assert 'approve.classList.contains("approve-button")' in html
+        assert 'api(`/approvals/${encodeURIComponent(approvalId)}/${action}`' in html
+        assert 'document.getElementById("actionBoardApprovalList").addEventListener("click", handleApproval)' in html
+        assert "await refreshAll();" in html[start:end + 15000]
+
+    def test_action_board_opens_for_completed_and_waiting_approval_only_in_active_session(self):
+        html = self._html()
+        start = html.index("function renderState(")
+        end = html.index("function setSending(", start)
+        render_state = " ".join(html[start:end].split())
+        assert '(currentState === "completed" || currentState === "waiting_for_approval")' in render_state
+        assert "state.userMissionStartedInSession" in render_state
+        assert 'state.completionShownMissionId !== boardId' in render_state
+
+    def test_agent_activity_feed_uses_backend_ai_moves_without_fake_steps(self):
+        html = self._html()
+        start = html.index("function renderAgentActivity(")
+        end = html.index("function openActionBoard(", start)
+        renderer = html[start:end]
+        assert "Array.isArray(moves)" in renderer
+        assert 'move.label || move.step || "Worker action"' in renderer
+        assert 'makeAgentFeedItem(label,' in renderer
+        assert "Waiting for execution events from the backend." in renderer
+        assert "state.ai_moves" in html
+
+    def test_action_board_is_responsive_on_narrow_mobile_viewports(self):
+        html = self._html()
+        assert "@media(max-width:420px)" in html
+        assert ".action-board-actions{grid-template-columns:1fr}" in html
+        assert "max-height:88svh" in html
+        assert "overflow:auto" in html
