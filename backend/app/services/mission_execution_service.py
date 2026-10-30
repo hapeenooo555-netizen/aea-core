@@ -723,11 +723,15 @@ class MissionExecutionService:
         client = self._client()
         if client is not None:
             try:
+                # Ownership is established by load_execution_for_mission(),
+                # which only returns executions matching this owner_id. The
+                # mission_steps schema is keyed by execution_id and does not
+                # contain owner_id; filtering on that nonexistent column
+                # breaks the live ChatPlus state endpoint.
                 response = (
                     client.table(STEP_TABLE)
                     .select("*")
                     .eq("execution_id", execution_id)
-                    .eq("owner_id", owner_id)
                     .order("attempt_index")
                     .execute()
                 )
