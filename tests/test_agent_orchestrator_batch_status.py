@@ -67,3 +67,50 @@ def test_worker_batch_with_no_pending_missions_is_completed():
     assert result["pending_count"] == 0
     assert result["succeeded"] == 0
     assert result["failed"] == 0
+
+
+
+def test_worker_batch_counts_pending_mission_without_id_as_failure():
+    orchestrator = make_orchestrator()
+    orchestrator._mission_engine.get_worker_missions = lambda worker_id, limit=50: [
+        {"status": "pending"},
+        {"id": "mission-ok", "status": "pending"},
+    ]
+
+    result = orchestrator.run_worker("worker-1")
+
+    assert result["success"] is False
+    assert result["status"] == "partial"
+    assert result["pending_count"] == 2
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+    assert result["results"][0]["result"]["error"] == "Pending mission is missing an id"
+
+
+def test_worker_batch_reports_failed_when_every_pending_mission_fails():
+    orchestrator = make_orchestrator()
+    orchestrator._mission_engine.get_worker_missions = lambda worker_id, limit=50: [
+        {"id": "mission-fail", "status": "pending"}
+    ]
+
+    result = orchestrator.run_worker("worker-1")
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["succeeded"] == 0
+    assert result["failed"] == 1
+
+
+def test_worker_batch_counts_non_dictionary_runtime_result_as_failure():
+    orchestrator = make_orchestrator()
+    orchestrator._mission_engine.get_worker_missions = lambda worker_id, limit=50: [
+        {"id": "mission-invalid-result", "status": "pending"}
+    ]
+    orchestrator._worker_runtime.execute_mission = lambda mission_id: "done"
+
+    result = orchestrator.run_worker("worker-1")
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["failed"] == 1
+    assert result["results"][0]["result"]["error"] == "Worker runtime returned a non-dictionary result"
