@@ -1107,7 +1107,7 @@ Connect Pinterest
             <li data-step="connect">○ Connecting to Pinterest…</li>
             <li data-step="account">○ Fetching Pinterest user account…</li>
             <li data-step="boards">○ Fetching Pinterest boards…</li>
-            <li data-step="workers">○ Activating AEA workers and mission…</li>
+            <li data-step="generation">○ Generating Pin content with AEA AI…</li>
             <li data-step="draft">○ Preparing your Pinterest Pin…</li>
           </ol>
           <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Enter your product details, then start.</p>
@@ -2163,7 +2163,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           connect: "Connecting to Pinterest…",
           account: "Fetching Pinterest user account…",
           boards: "Fetching Pinterest boards…",
-          workers: "Activating AEA workers and mission…",
+          generation: "Generating Pin content with AEA AI…",
           draft: "Preparing your Pinterest Pin…",
         };
         item.textContent = (status === "done" ? "✓ " : status === "current" ? "▶ " : "○ ") + labels[step];
@@ -2194,7 +2194,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       document.getElementById("pinterestAccept").addEventListener("click", () => {
         document.getElementById("pinterestConsent").hidden = true;
         pinterestWorkflowSteps.hidden = false;
-        ["connect","account","boards","workers","draft"].forEach((step) => setPinterestStep(step, "pending"));
+        ["connect","account","boards","generation","draft"].forEach((step) => setPinterestStep(step, "pending"));
         setPinterestStep("connect", "current");
         pinterestDraftStatus.textContent = "Connecting to Pinterest…";
         pinterestWorkflowAutoStart = true;
@@ -2252,8 +2252,8 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       setPinterestStep("boards", "done");
       if (pinterestWorkflowAutoStart) {
         setPinterestDraftStatus("Fetching Pinterest boards… " + verifiedPinterestBoards.length + " board(s) found.");
-        setPinterestStep("workers", "current");
-        pinterestDraftStatus.textContent = accountName + " connected. " + verifiedPinterestBoards.length + " Pinterest board(s) retrieved. Activating AEA workers and mission…";
+        setPinterestStep("generation", "current");
+        pinterestDraftStatus.textContent = accountName + " connected. " + verifiedPinterestBoards.length + " Pinterest board(s) retrieved. AEA is generating your Pin draft…";
         setPinterestAutoGenerate.disabled = false;
         pinterestAutoGenerate.click();
       } else {
