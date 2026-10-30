@@ -173,7 +173,7 @@ async def run_worker(
 
     orchestrator = AgentOrchestrator(owner_id=current_user_id, client=client)
     result = orchestrator.run_worker(worker_id)
-    if not result.get("success"):
-        error = result.get("error") or "Worker execution failed"
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error))
+    # A worker run can be processed successfully while individual missions fail.
+    # Return the complete execution report so callers can distinguish completed,
+    # partial, and failed batches instead of losing counts/results in an HTTP 500.
     return result
