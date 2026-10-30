@@ -438,21 +438,22 @@ def build_external_pinterest_draft(
         "affiliate_url": destination,
         "source": "User-supplied affiliate URL (not independently verified)",
     }
-    # Prefer the product's own public image; only fetch metadata from the
-    # explicitly allowlisted vendor host, then fall back to Pexels.
+    # A generic stock photo is not product artwork. Do not silently substitute
+    # Pexels imagery here: the user-supplied affiliate destination may point to a
+    # different product, and a misleading Pin damages customer trust.
     image_url = _vendor_product_image(destination, name)
     if not _public_http_url(image_url):
-        image_url = _pexels_image(name + " " + niche)
-    if not _public_http_url(image_url):
         raise RuntimeError(
-            "No public product image was found on the approved vendor page and Pexels returned no image. "
-            "Check that the vendor page exposes og:image/twitter:image, or configure PEXELS_API_KEY."
+            "AEA could not verify product artwork on the approved vendor product page. "
+            "It has stopped instead of attaching an unrelated stock photo. "
+            "Provide the official product image or ensure the vendor page exposes "
+            "a valid HTTPS og:image/twitter:image. No Pin was published."
         )
     copy = _generate_copy(product, niche=niche, language=language)
     return {
         "success": True,
         "product": {"id": "user-supplied", "name": name, "source": product["source"], "affiliate_url": destination},
-        "draft": {**copy, "destination_url": destination, "image_url": image_url, "board_id": None},
+        "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source": "vendor_product_page", "board_id": None},
         "requires_explicit_approval": True,
         "published": False,
         "note": "Prepared from a user-supplied destination URL. AEA has not independently verified the affiliate partnership or product claims; review before approval.",
