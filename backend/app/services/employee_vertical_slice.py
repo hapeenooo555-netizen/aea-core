@@ -785,10 +785,14 @@ class EmployeeVerticalSlice:
             "wait for my explicit approval before publishing",
             "wait for approval before publishing",
         ))
+        # A read-only Pinterest status request may explicitly say "do not
+        # publish anything". That is a safety constraint, not a request to
+        # generate generic affiliate content. Keep status/connection checks
+        # on the Pinterest path; only explicit drafting language selects the
+        # content-only worker.
         explicit_draft_only = any(term in goal for term in (
-            "do not publish", "don't publish", "dont publish", "without publishing",
-            "draft only", "prepare five content ideas", "content ideas", "content plan",
-            "sample pin", "marketing tips", "prepare content",
+            "draft only", "prepare five content ideas", "content ideas",
+            "content plan", "sample pin", "marketing tips", "prepare content",
         )) and not approval_gated_publish
         explicit_connection = any(term in goal for term in (
             "connect", "onboard", "authorize", "link pinterest", "enroll",
