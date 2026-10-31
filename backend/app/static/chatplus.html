@@ -930,6 +930,12 @@ html, body { background: #f4f6fa; }
       display: grid !important;
     }
 
+    /* Consent controls must remain visible while the workspace is empty. */
+    #chatView.workspace-empty #pinterestDraftPanel .task-card,
+    #chatView.workspace-empty #pinterestDraftPanel .card-actions {
+      display: grid !important;
+    }
+
     @media (min-width: 720px) {
       .shell {
         width: min(100%, 980px);
