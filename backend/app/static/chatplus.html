@@ -936,6 +936,21 @@ html, body { background: #f4f6fa; }
       display: grid !important;
     }
 
+    /* Explicitly reveal the consent prompt and both actions when Start is pressed. */
+    #pinterestConsent:not([hidden]) {
+      display: block !important;
+      visibility: visible !important;
+    }
+    #pinterestConsent:not([hidden]) .card-actions {
+      display: grid !important;
+      visibility: visible !important;
+    }
+    #pinterestConsent:not([hidden]) .card-actions button {
+      display: inline-flex !important;
+      visibility: visible !important;
+      min-height: 48px;
+    }
+
     @media (min-width: 720px) {
       .shell {
         width: min(100%, 980px);
