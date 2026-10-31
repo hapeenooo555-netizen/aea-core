@@ -2171,6 +2171,9 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   // AI affiliate autopilot: fetch verified boards, then generate all product/link/copy/image fields server-side.
   const pinterestLoadBoardsButton = document.getElementById("pinterestLoadBoards");
   const pinterestDraftStatus = document.getElementById("pinterestDraftStatus");
+  function setPinterestDraftStatus(message) {
+    if (pinterestDraftStatus) pinterestDraftStatus.textContent = String(message ?? "");
+  }
   const pinterestDraftForm = document.getElementById("pinterestDraftForm");
   const pinterestDraftBoard = document.getElementById("pinterestDraftBoard");
   const pinterestAutoGenerate = document.getElementById("pinterestAutoGenerate");
@@ -2309,7 +2312,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     }
     pinterestAutoGenerate.disabled = true;
     pinterestDraftPreview.hidden = true;
-    setPinterestStep("workers", "done");
+    setPinterestStep("generation", "done");
     setPinterestStep("draft", "current");
     const suppliedAffiliateUrl = document.getElementById("pinterestAffiliateUrl").value.trim();
     pinterestDraftStatus.textContent = suppliedAffiliateUrl ? "AEA inatengeneza Pin kutoka affiliate link uliyoingiza..." : "AEA inatafuta bidhaa Digistore24, inatengeneza copy kwa AI, na inatafuta picha...";
