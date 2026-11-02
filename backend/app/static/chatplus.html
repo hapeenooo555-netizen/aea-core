@@ -2276,7 +2276,8 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         pinterestOAuthRequested = true;
         pinterestOAuthRedirectStarted = false;
         resetPinterestPinStep();
-        setPinterestDraftStatus("Starting Pinterest OAuth directly…");
+        pinterestDraftStatus.hidden = false;
+        setPinterestDraftStatus("Starting Pinterest OAuth…");
 
         try {
           // Reuse an owned mission/worker when ChatPlus has one. Otherwise create
@@ -2315,11 +2316,15 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           }
 
           setPinterestDraftStatus("Requesting the Pinterest authorization link…");
-          const result = await api("/connectors/oauth/start", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ worker_id: workerId, mission_id: missionId })
-          });
+          setPinterestDraftStatus("Requesting Pinterest authorization link (up to 20 seconds)…");
+          const result = await Promise.race([
+            api("/connectors/oauth/start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ worker_id: workerId, mission_id: missionId })
+            }),
+            new Promise((_, reject) => window.setTimeout(() => reject(new Error("Pinterest OAuth start timed out after 20 seconds. Check the API/Render logs and try again.")), 20000))
+          ]);
           const url = result?.authorization_url;
           if (typeof url !== "string" || !url.trim()) throw new Error("AEA did not return a Pinterest authorization link.");
           let parsed;
@@ -2332,9 +2337,11 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           window.location.assign(parsed.href);
         } catch (error) {
           pinterestOAuthRequested = false;
+          pinterestOAuthRedirectStarted = false;
           button.disabled = false;
           button.textContent = "Connect Pinterest →";
-          setPinterestDraftStatus("Pinterest connection could not start: " + (error instanceof Error ? error.message : String(error)));
+          pinterestDraftStatus.hidden = false;
+          setPinterestDraftStatus("Pinterest connection failed: " + (error instanceof Error ? error.message : String(error)));
         }
       });
       if (pinterestStartWorkflow) {
