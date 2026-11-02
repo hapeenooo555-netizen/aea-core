@@ -414,8 +414,15 @@ class ChatPlusService:
             state = "thinking"
             detail = "Thinking"
         elif mission_status in {"pending", "scheduled"}:
-            state = "ready"
-            detail = "Ready"
+            # ChatPlus creates the mission before its BackgroundTask begins.
+            # Keep the UI active while execution is queued; "ready" stops
+            # polling and hides worker/mission activity before it can appear.
+            state = "working"
+            detail = (
+                "Mission queued; waiting for worker execution"
+                if execution_status in {"PENDING", "RUNNING", "RETRY", "RETRYING"}
+                else "Mission queued; starting worker execution"
+            )
         elif mission_status == "completed" or execution_status in {"COMPLETE", "COMPLETED", "SUCCEEDED"}:
             state = "completed"
             detail = "Completed"
