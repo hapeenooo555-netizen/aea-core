@@ -1746,9 +1746,43 @@ function renderState(nextState) {
         renderHistory();
       }
 
+      // OAuth authorization URLs may arrive with the initial message response or
+      // later from the persisted mission checkpoint while polling /state.
+      let pinterestOAuthRequested = false;
+      let pinterestOAuthRedirectStarted = false;
+      function findPinterestAuthorizationUrl(mission) {
+        const candidates = [
+          mission?.result?.checkpoint?.metadata?.authorization_url,
+          mission?.result?.checkpoint?.authorization_url,
+          mission?.result?.metadata?.authorization_url,
+          mission?.checkpoint?.metadata?.authorization_url,
+          mission?.metadata?.authorization_url,
+        ];
+        return candidates.find((value) => typeof value === "string" && value.trim()) || null;
+      }
+      function redirectToPinterestAuthorization(mission) {
+        if (!pinterestOAuthRequested || pinterestOAuthRedirectStarted) return false;
+        const authorizationUrl = findPinterestAuthorizationUrl(mission);
+        if (!authorizationUrl) return false;
+        let parsed;
+        try { parsed = new URL(authorizationUrl); } catch (_) {
+          setPinterestDraftStatus("AEA returned an invalid Pinterest authorization link. Please try Connect Pinterest again.");
+          return false;
+        }
+        if (parsed.protocol !== "https:" || !(parsed.hostname === "pinterest.com" || parsed.hostname.endsWith(".pinterest.com"))) {
+          setPinterestDraftStatus("AEA returned an unexpected OAuth destination. The link was not opened for security.");
+          return false;
+        }
+        pinterestOAuthRedirectStarted = true;
+        setPinterestDraftStatus("Pinterest OAuth link received. Opening Pinterest to authorize AEA…");
+        window.location.assign(parsed.href);
+        return true;
+      }
+
       async function loadState() {
         const result = await api("/state");
         state.currentMission = result.mission || state.currentMission || null;
+        if (redirectToPinterestAuthorization(state.currentMission)) return;
         state.currentExecution = result.execution || state.currentExecution || null;
         state.approvals = result.approvals || [];
         state.ai_moves = result.ai_moves || [];
@@ -2054,6 +2088,7 @@ function renderState(nextState) {
           renderAssistantMessage(result.message);
           state.approvals = result.approvals || [];
           state.currentMission = result.mission || state.currentMission || null;
+          if (redirectToPinterestAuthorization(state.currentMission)) return;
           state.currentExecution = result.execution || state.currentExecution || null;
           // Avoid displaying the previous mission's activity while the new report is loading.
           state.ai_moves = Array.isArray(result.ai_moves) ? result.ai_moves : [];
@@ -2244,9 +2279,11 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           return;
         }
         resetPinterestPinStep();
+        pinterestOAuthRequested = true;
+        pinterestOAuthRedirectStarted = false;
         if (pinterestDraftStatus) {
           pinterestDraftStatus.hidden = false;
-          pinterestDraftStatus.textContent = "Starting Pinterest OAuth through AEA…";
+          pinterestDraftStatus.textContent = "Starting Pinterest OAuth through AEA. Waiting for the authorization link…";
         }
         messageInput.value = "Connect my Pinterest account. Start the Pinterest OAuth connection flow.";
         composer.requestSubmit();
