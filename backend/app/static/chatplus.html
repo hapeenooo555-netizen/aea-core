@@ -1735,7 +1735,7 @@ function renderState(nextState) {
         window.clearTimeout(state.pollTimer);
         const current = state.currentState?.state || "ready";
         const terminal = ["completed", "failed", "cancelled", "waiting_for_approval", "waiting_for_human"].includes(current);
-        if (!terminal) state.pollTimer = window.setTimeout(loadState, current === "working" || current === "thinking" ? 1800 : 3500);
+        if (!terminal) state.pollTimer = window.setTimeout(loadState, current === "working" || current === "thinking" ? 900 : 1800);
       }
 
       async function loadHistory() {
@@ -2269,24 +2269,73 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       }
       resetPinterestPinStep();
 
-      document.getElementById("pinterestConnectStart").addEventListener("click", () => {
-        // Use AEA's existing mission/OAuth flow. Do not display a redundant in-app
-        // Accept/Deny step; Pinterest itself handles authorization.
+      document.getElementById("pinterestConnectStart").addEventListener("click", async () => {
+        // Start OAuth directly through the authenticated connector endpoint. This
+        // avoids waiting for the general-purpose AI mission planner to discover
+        // the same action. If no owned mission is available yet, create one and
+        // bound the wait for its worker assignment.
         const messageInput = document.getElementById("messageInput");
         const composer = document.getElementById("composer");
-        if (!messageInput || !composer) {
-          pinterestDraftStatus.textContent = "Chat composer is unavailable. Refresh and try again.";
+        const button = document.getElementById("pinterestConnectStart");
+        if (!messageInput || !composer || !button) {
+          setPinterestDraftStatus("Chat composer is unavailable. Refresh and try again.");
           return;
         }
         resetPinterestPinStep();
         pinterestOAuthRequested = true;
         pinterestOAuthRedirectStarted = false;
-        if (pinterestDraftStatus) {
-          pinterestDraftStatus.hidden = false;
-          pinterestDraftStatus.textContent = "Starting Pinterest OAuth through AEA. Waiting for the authorization link…";
+        button.disabled = true;
+        button.textContent = "Connecting…";
+        setPinterestDraftStatus("Starting Pinterest OAuth. Getting the authorization link…");
+
+        const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+        const oauthRequest = async (mission) => {
+          const workerId = mission?.assigned_worker || mission?.worker_id || mission?.assigned_worker_id;
+          const missionId = mission?.id || mission?.mission_id;
+          if (!workerId || !missionId) return null;
+          const result = await api("/connectors/oauth/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ worker_id: workerId, mission_id: missionId }),
+          });
+          const url = result?.authorization_url;
+          if (typeof url !== "string" || !url.trim()) throw new Error("AEA did not return a Pinterest authorization link.");
+          let parsed;
+          try { parsed = new URL(url); } catch (_) { throw new Error("AEA returned an invalid Pinterest authorization link."); }
+          if (parsed.protocol !== "https:" || !(parsed.hostname === "pinterest.com" || parsed.hostname.endsWith(".pinterest.com"))) {
+            throw new Error("Unexpected OAuth destination. The link was not opened for security.");
+          }
+          return parsed.href;
+        };
+
+        try {
+          let current = await api("/state");
+          let mission = current.mission || null;
+          let authorizationUrl = await oauthRequest(mission);
+          if (!authorizationUrl) {
+            setPinterestDraftStatus("Preparing the Pinterest connection workflow…");
+            messageInput.value = "Connect my Pinterest account. Start the Pinterest OAuth connection flow.";
+            composer.requestSubmit();
+            // Bounded wait: at most 12 seconds, polling the durable state.
+            for (let attempt = 0; attempt < 10 && !authorizationUrl; attempt += 1) {
+              await wait(1200);
+              current = await api("/state");
+              mission = current.mission || null;
+              authorizationUrl = await oauthRequest(mission);
+            }
+          }
+          if (!authorizationUrl) {
+            throw new Error("Pinterest setup did not become ready within 12 seconds. Please try again; no indefinite wait was started.");
+          }
+          pinterestOAuthRedirectStarted = true;
+          setPinterestDraftStatus("Authorization link received. Opening Pinterest…");
+          window.location.assign(authorizationUrl);
+        } catch (error) {
+          pinterestOAuthRequested = false;
+          button.disabled = false;
+          button.textContent = "Connect Pinterest →";
+          setPinterestDraftStatus("Pinterest connection could not start: " + (error instanceof Error ? error.message : String(error)));
         }
-        messageInput.value = "Connect my Pinterest account. Start the Pinterest OAuth connection flow.";
-        composer.requestSubmit();
       });
       if (pinterestStartWorkflow) {
         pinterestStartWorkflow.addEventListener("click", async () => {
