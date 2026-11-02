@@ -1110,24 +1110,28 @@ Connect Pinterest
         </section>
 
         <section id="pinterestDraftPanel" class="panel" aria-label="Pinterest Pin creation workflow" hidden>
-          <div class="card-header">PINTEREST · CREATE A PIN</div>
-          <h2 style="margin:8px 0;font-size:25px;">Let's prepare your Pinterest Pin</h2>
-          <p class="muted" style="font-size:16px;line-height:1.55;">Enter your affiliate/vendor link, niche and product name. AEA will verify your Pinterest account, retrieve your boards, prepare the Pin and show you a preview. Nothing will be published without your approval.</p>
-          <div class="field">
-            <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
-            <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
-          </div>
-          <div class="field">
-            <label for="pinterestAffiliateUrl">Vendor / Affiliate link</label>
-            <input id="pinterestAffiliateUrl" type="url" maxlength="2048" placeholder="https://your-vendor-or-affiliate-link.com" required>
-          </div>
-          <div class="field">
-            <label for="pinterestProductName">Product name</label>
-            <input id="pinterestProductName" maxlength="200" placeholder="e.g. AI marketing toolkit" required>
-          </div>
-          <div class="field">
-            <label for="pinterestAutoLanguage">Lugha ya Pin</label>
-            <select id="pinterestAutoLanguage"><option value="English" selected>English</option><option value="Swahili">Swahili</option></select>
+          <div class="card-header">PINTEREST · CONNECT FIRST</div>
+          <h2 style="margin:8px 0;font-size:25px;">Connect your Pinterest account</h2>
+          <p class="muted" style="font-size:16px;line-height:1.55;">Step 1: Connect and verify your Pinterest account. After it is connected, you can create a Pin draft, preview it, and approve publishing.</p>
+          <button id="pinterestConnectStart" class="primary-button" type="button" style="width:100%;min-height:56px;font-size:18px;">Connect Pinterest →</button>
+          <div id="pinterestPinDetails" hidden>
+            <h3 style="margin-top:18px;">Step 2: Pin details</h3>
+            <div class="field">
+              <label for="pinterestAutoNiche">Niche / aina ya bidhaa</label>
+              <input id="pinterestAutoNiche" maxlength="120" value="AI tools and digital marketing">
+            </div>
+            <div class="field">
+              <label for="pinterestAffiliateUrl">Vendor / Affiliate link</label>
+              <input id="pinterestAffiliateUrl" type="url" maxlength="2048" placeholder="https://your-vendor-or-affiliate-link.com" required>
+            </div>
+            <div class="field">
+              <label for="pinterestProductName">Product name</label>
+              <input id="pinterestProductName" maxlength="200" placeholder="e.g. AI marketing toolkit" required>
+            </div>
+            <div class="field">
+              <label for="pinterestAutoLanguage">Lugha ya Pin</label>
+              <select id="pinterestAutoLanguage"><option value="English" selected>English</option><option value="Swahili">Swahili</option></select>
+            </div>
           </div>
           <ol id="pinterestWorkflowSteps" aria-live="polite" hidden>
             <li data-step="connect">○ Connecting to Pinterest…</li>
@@ -2201,6 +2205,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         const value = String(text || "").toLowerCase();
         return value.includes("pinterest") && (value.includes("pin") || value.includes("pinterest marketing"));
       }
+      document.getElementById("pinterestConnectStart").addEventListener("click", () => {
+        document.getElementById("pinterestConsent").hidden = false;
+        pinterestDraftStatus.textContent = "Review the Pinterest read-access request, then choose Accept or Deny.";
+      });
       if (pinterestStartWorkflow) {
         pinterestStartWorkflow.addEventListener("click", async () => {
           const link = document.getElementById("pinterestAffiliateUrl").value.trim();
@@ -2215,8 +2223,11 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
             return;
           }
           pinterestStartWorkflow.hidden = true;
-          document.getElementById("pinterestConsent").hidden = false;
-          pinterestDraftStatus.textContent = "Review the access request, then choose Accept or Deny.";
+          pinterestWorkflowSteps.hidden = false;
+          ["connect","account","boards","generation","draft"].forEach((step) => setPinterestStep(step, "pending"));
+          setPinterestStep("generation", "current");
+          pinterestDraftStatus.textContent = "AEA is generating your Pin draft…";
+          pinterestAutoGenerate.click();
         });
       }
 
@@ -2226,7 +2237,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         ["connect","account","boards","generation","draft"].forEach((step) => setPinterestStep(step, "pending"));
         setPinterestStep("connect", "current");
         pinterestDraftStatus.textContent = "Connecting to Pinterest…";
-        pinterestWorkflowAutoStart = true;
+        pinterestWorkflowAutoStart = false;
         pinterestLoadBoardsButton.click();
       });
       document.getElementById("pinterestDeny").addEventListener("click", () => {
@@ -2279,15 +2290,13 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       setPinterestStep("account", "done");
       setPinterestDraftStatus(accountName + " connected. Pinterest user account retrieved.");
       setPinterestStep("boards", "done");
-      if (pinterestWorkflowAutoStart) {
-        setPinterestDraftStatus("Fetching Pinterest boards… " + verifiedPinterestBoards.length + " board(s) found.");
-        setPinterestStep("generation", "current");
-        pinterestDraftStatus.textContent = accountName + " connected. " + verifiedPinterestBoards.length + " Pinterest board(s) retrieved. AEA is generating your Pin draft…";
-        setPinterestAutoGenerate.disabled = false;
-        pinterestAutoGenerate.click();
-      } else {
-        pinterestDraftStatus.textContent = accountName + " imethibitishwa. Boards " + verifiedPinterestBoards.length + " zimepatikana.";
-      }
+      document.getElementById("pinterestConnectStart").hidden = true;
+      document.getElementById("pinterestPinDetails").hidden = false;
+      pinterestStartWorkflow.hidden = false;
+      pinterestStartWorkflow.disabled = false;
+      pinterestStartWorkflow.textContent = "Create Pinterest Pin draft →";
+      pinterestDraftStatus.textContent = accountName + " connected. " + verifiedPinterestBoards.length + " board(s) retrieved. Step 2 is ready: enter your Pin details.";
+      pinterestWorkflowSteps.hidden = true;
     } catch (error) {
       pinterestDraftStatus.textContent = "Pinterest verification failed: " + (error instanceof Error ? error.message : String(error));
       if (pinterestWorkflowAutoStart) {
