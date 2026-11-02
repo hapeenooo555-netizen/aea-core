@@ -24,6 +24,8 @@
     }
 
     * { box-sizing: border-box; }
+    /* Keep hidden workflow stages hidden even when component styles set display:grid. */
+    [hidden] { display: none !important; }
 
     html, body {
       margin: 0;
@@ -2172,6 +2174,8 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   function setPinterestDraftStatus(message) {
     if (pinterestDraftStatus) pinterestDraftStatus.textContent = String(message ?? "");
   }
+  // Expose the status setter for handlers that run after OAuth navigation.
+  window.setPinterestDraftStatus = setPinterestDraftStatus;
   const pinterestDraftForm = document.getElementById("pinterestDraftForm");
   const pinterestDraftBoard = document.getElementById("pinterestDraftBoard");
   const pinterestAutoGenerate = document.getElementById("pinterestAutoGenerate");
