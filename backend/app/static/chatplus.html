@@ -2199,6 +2199,26 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         const value = String(text || "").toLowerCase();
         return value.includes("pinterest") && (value.includes("pin") || value.includes("pinterest marketing"));
       }
+      function resetPinterestPinStep() {
+        if (pinterestDraftPreview) {
+          pinterestDraftPreview.hidden = true;
+          const approvalControl = document.getElementById("pinterestContinueToApproval");
+          if (approvalControl) approvalControl.disabled = true;
+        }
+        if (pinterestPinDetails) pinterestPinDetails.hidden = true;
+        if (pinterestStartWorkflow) {
+          pinterestStartWorkflow.hidden = true;
+          pinterestStartWorkflow.disabled = true;
+        }
+        if (pinterestDraftForm) pinterestDraftForm.hidden = true;
+        if (pinterestAccountSelectWrap) pinterestAccountSelectWrap.hidden = true;
+        if (pinterestLoadBoardsButton) pinterestLoadBoardsButton.hidden = true;
+        if (pinterestAutoGenerate) pinterestAutoGenerate.hidden = true;
+        verifiedPinterestAccount = null;
+        verifiedPinterestBoards = [];
+      }
+      resetPinterestPinStep();
+
       document.getElementById("pinterestConnectStart").addEventListener("click", () => {
         // Use AEA's existing mission/OAuth flow. Do not display a redundant in-app
         // Accept/Deny step; Pinterest itself handles authorization.
@@ -2208,9 +2228,13 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           pinterestDraftStatus.textContent = "Chat composer is unavailable. Refresh and try again.";
           return;
         }
+        resetPinterestPinStep();
+        if (pinterestDraftStatus) {
+          pinterestDraftStatus.hidden = false;
+          pinterestDraftStatus.textContent = "Starting Pinterest OAuth through AEA…";
+        }
         messageInput.value = "Connect my Pinterest account. Start the Pinterest OAuth connection flow.";
         composer.requestSubmit();
-        pinterestDraftStatus.textContent = "Starting Pinterest connection through AEA…";
       });
       if (pinterestStartWorkflow) {
         pinterestStartWorkflow.addEventListener("click", async () => {
@@ -2369,6 +2393,8 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       document.getElementById("pinterestPreviewAccount").textContent = "Account: " + String(account.username || account.business_name || account.name || "Verified Pinterest account");
       document.getElementById("pinterestPreviewProduct").textContent = "Product/source: " + String((generated.product || {}).name || "Affiliate resource") + " — " + String((generated.product || {}).source || "Source not provided");
       pinterestDraftPreview.hidden = false;
+      const approvalButton = document.getElementById("pinterestContinueToApproval");
+      if (approvalButton) approvalButton.disabled = false;
       setPinterestStep("draft", "done");
       pinterestWorkflowAutoStart = false;
       pinterestDraftStatus.hidden = false; pinterestDraftStatus.textContent = "Step 5: Pin preview is ready. Review it, then request publishing approval. Nothing has been published.";
@@ -2383,6 +2409,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
   });
 
   document.getElementById("pinterestContinueToApproval").addEventListener("click", async () => {
+    if (pinterestDraftPreview.hidden || !verifiedPinterestAccount || !verifiedPinterestBoards.length) {
+      pinterestDraftStatus.textContent = "Create and review a complete Pin preview first. No approval request has been sent.";
+      return;
+    }
     const title = document.getElementById("pinterestPreviewTitle").textContent.trim();
     const description = document.getElementById("pinterestPreviewDescription").textContent.trim();
     const destination = document.getElementById("pinterestPreviewDestination").href;
