@@ -1145,14 +1145,7 @@ Connect Pinterest
           </ol>
           <p id="pinterestDraftStatus" role="status" class="task-body" aria-live="polite">Enter your product details, then start.</p>
           <button id="pinterestStartWorkflow" class="primary-button" type="button" hidden style="width:100%;min-height:56px;font-size:18px;">Start Creating Pin →</button>
-          <div id="pinterestConsent" class="task-card" hidden>
-            <strong>Connect to Pinterest?</strong>
-            <p class="muted">AEA will securely check the Pinterest account connected to your profile and retrieve its boards. This step is read-only; no Pin will be published.</p>
-            <div class="card-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-              <button id="pinterestAccept" class="primary-button" type="button">Accept</button>
-              <button id="pinterestDeny" class="secondary-button" type="button">Deny</button>
-            </div>
-          </div>
+
           <div id="pinterestAccountSelectWrap" class="field" hidden>
             <label for="pinterestAccountSelect">Select your Pinterest account</label>
             <select id="pinterestAccountSelect" disabled></select>
@@ -2209,8 +2202,17 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         return value.includes("pinterest") && (value.includes("pin") || value.includes("pinterest marketing"));
       }
       document.getElementById("pinterestConnectStart").addEventListener("click", () => {
-        document.getElementById("pinterestConsent").hidden = false;
-        pinterestDraftStatus.textContent = "Review the Pinterest read-access request, then choose Accept or Deny.";
+        // Use AEA's existing mission/OAuth flow. Do not display a redundant in-app
+        // Accept/Deny step; Pinterest itself handles authorization.
+        const messageInput = document.getElementById("messageInput");
+        const composer = document.getElementById("composer");
+        if (!messageInput || !composer) {
+          pinterestDraftStatus.textContent = "Chat composer is unavailable. Refresh and try again.";
+          return;
+        }
+        messageInput.value = "Connect my Pinterest account. Start the Pinterest OAuth connection flow.";
+        composer.requestSubmit();
+        pinterestDraftStatus.textContent = "Starting Pinterest connection through AEA…";
       });
       if (pinterestStartWorkflow) {
         pinterestStartWorkflow.addEventListener("click", async () => {
@@ -2234,25 +2236,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         });
       }
 
-      document.getElementById("pinterestAccept").addEventListener("click", () => {
-        document.getElementById("pinterestConsent").hidden = true;
-        pinterestWorkflowSteps.hidden = false;
-        ["connect","account","boards","generation","draft"].forEach((step) => setPinterestStep(step, "pending"));
-        setPinterestStep("connect", "current");
-        pinterestDraftStatus.textContent = "Connecting to Pinterest…";
-        pinterestWorkflowAutoStart = false;
-        pinterestLoadBoardsButton.click();
-      });
-      document.getElementById("pinterestDeny").addEventListener("click", () => {
-        document.getElementById("pinterestConsent").hidden = true;
-        document.getElementById("pinterestPinDetails").hidden = true;
-        pinterestStartWorkflow.hidden = true;
-        document.getElementById("pinterestConnectStart").hidden = false;
-        pinterestStartWorkflow.disabled = false;
-        pinterestWorkflowAutoStart = false;
-        pinterestDraftStatus.textContent = "Pinterest access was declined. No account data was accessed and no Pin was created.";
-        pinterestWorkflowSteps.hidden = true;
-      });
+
 
   pinterestLoadBoardsButton.addEventListener("click", async () => {
     pinterestLoadBoardsButton.disabled = true;
