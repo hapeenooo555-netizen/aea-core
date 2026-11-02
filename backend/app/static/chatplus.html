@@ -1012,6 +1012,17 @@ html, body { background: #f4f6fa; }
 
     /* Keep workflow stages genuinely hidden even when component CSS sets display. */
     [hidden] { display: none !important; }
+
+/* Keep hidden workflow stages hidden even when panel/card display rules are active. */
+#pinterestDraftPanel [hidden],
+#pinterestDraftPanel .task-card[hidden],
+#pinterestDraftPanel #pinterestDraftPreview[hidden],
+#pinterestDraftPanel #pinterestPinDetails[hidden],
+#pinterestDraftPanel #pinterestWorkflowSteps[hidden] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
 </style>
 </head>
 <body>
