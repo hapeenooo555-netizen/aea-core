@@ -116,11 +116,17 @@ def _update_p1_8_mission_state(
     if not mission or "orchestration_idempotency_key" not in mission or not mission.get("objective"):
         return
 
+    status_text = str(outcome.get("status") or "").lower()
     target = {
         "completed": "completed",
         "awaiting_human_intervention": "waiting_human",
         "approval_rejected": "failed",
-    }.get(str(outcome.get("status") or "").lower())
+    }.get(status_text)
+    # A first publish resumes with "resumed"; it is only complete once the
+    # connector confirms a real Pin ID.
+    result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+    if status_text == "resumed" and (outcome.get("pin_id") or result.get("pin_id")):
+        target = "completed"
     if target:
         orchestration.transition(mission_id, target, result=outcome)
 
