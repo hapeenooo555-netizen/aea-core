@@ -15,6 +15,7 @@ database errors as failures (fail-closed).
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -29,7 +30,12 @@ except Exception:  # pragma: no cover - fallback for missing runtime config
 
 
 TABLE_NAME = "published_pins"
+STATUS_PUBLISHING = "publishing"
+STATUS_PUBLISHED = "published"
+STATUS_FAILED = "failed"
+STATUS_UNCERTAIN = "uncertain"
 _GLOBAL_MEMORY_STORE: dict[str, dict[str, Any]] = {}
+_MEMORY_LOCK = threading.Lock()
 
 
 class PinPublishStore:
@@ -127,11 +133,13 @@ class PinPublishStore:
                 "updated_at": now,
             }
             try:
+                # ``INSERT ... ON CONFLICT (operation_key) DO NOTHING``.
+                # postgrest-py exposes this as upsert(ignore_duplicates=True);
+                # the previous ``insert().on_conflict()`` chain does not exist
+                # in postgrest-py and silently fell back to process memory.
                 response = (
                     client.table(TABLE_NAME)
-                    .insert(db_payload)
-                    .on_conflict("operation_key")
-                    .do_nothing()
+                    .upsert(db_payload, on_conflict="operation_key", ignore_duplicates=True)
                     .execute()
                 )
                 rows = response.data or []
@@ -142,7 +150,9 @@ class PinPublishStore:
                 if existing is not None:
                     return {"success": True, "created": False, "pin": existing}
 
-                return {"success": True, "created": True, "pin": self._normalize_row(db_payload)}
+                # No inserted row and no readable existing row: the outcome is
+                # unknown, so never report that this caller owns the claim.
+                return {"success": False, "error": "Pin publish claim could not be confirmed"}
             except Exception as exc:
                 if self._durable_required:
                     return {"success": False, "error": f"Pin persistence failed: {exc}"}
@@ -154,19 +164,20 @@ class PinPublishStore:
         # Keep compatibility with older tests that keyed the record only by
         # ``operation_key`` while still enforcing true owner isolation for all
         # lookups and writes.
-        memory_key = (owner_id, operation_key)
-        existing = self._memory_store.get(memory_key)
-        if existing is None:
-            legacy = self._memory_store.get(operation_key)
-            if legacy is not None and legacy.get("owner_id") == owner_id:
-                existing = legacy
-        if existing is not None:
-            return {"success": True, "created": False, "pin": self._normalize_row(existing)}
+        with _MEMORY_LOCK:
+            memory_key = (owner_id, operation_key)
+            existing = self._memory_store.get(memory_key)
+            if existing is None:
+                legacy = self._memory_store.get(operation_key)
+                if legacy is not None and legacy.get("owner_id") == owner_id:
+                    existing = legacy
+            if existing is not None:
+                return {"success": True, "created": False, "pin": self._normalize_row(existing)}
 
-        record["id"] = str(uuid4())
-        self._memory_store[memory_key] = record
-        self._memory_store.setdefault(operation_key, record)
-        return {"success": True, "created": True, "pin": self._normalize_row(record)}
+            record["id"] = str(uuid4())
+            self._memory_store[memory_key] = record
+            self._memory_store.setdefault(operation_key, record)
+            return {"success": True, "created": True, "pin": self._normalize_row(record)}
 
     def get_by_operation_key(
         self,
@@ -212,6 +223,62 @@ class PinPublishStore:
             return self._normalize_row(legacy)
         return None
 
+    def claim(self, **kwargs: Any) -> dict[str, Any]:
+        """Atomically reserve ``operation_key`` before calling the provider.
+
+        Exactly one caller receives ``created=True``; every concurrent or
+        repeated caller receives the existing record instead.
+        """
+        kwargs.setdefault("pin_id", None)
+        return self.create(status=STATUS_PUBLISHING, **kwargs)
+
+    def transition(
+        self,
+        owner_id: str,
+        operation_key: str,
+        *,
+        from_statuses: tuple[str, ...],
+        updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Compare-and-set the record status.
+
+        Updates only when the current status is one of ``from_statuses`` and
+        returns the updated record, or ``None`` when no row matched (another
+        caller won, or persistence failed).
+        """
+        if not owner_id or not operation_key or not from_statuses:
+            return None
+        values = {**updates, "updated_at": datetime.now(timezone.utc).isoformat()}
+        client = self._client()
+        if client is not None:
+            try:
+                response = (
+                    client.table(TABLE_NAME)
+                    .update(values)
+                    .eq("owner_id", owner_id)
+                    .eq("operation_key", operation_key)
+                    .in_("status", list(from_statuses))
+                    .execute()
+                )
+                rows = response.data or []
+                if rows:
+                    return self._normalize_row(rows[0])
+                return None
+            except Exception:
+                if self._durable_required:
+                    return None
+            if self._durable_required:
+                return None
+
+        with _MEMORY_LOCK:
+            record = self._memory_store.get((owner_id, operation_key))
+            if record is None or record.get("owner_id") != owner_id:
+                return None
+            if record.get("status") not in from_statuses:
+                return None
+            record.update(values)
+            return self._normalize_row(record)
+
     def exists(self, owner_id: str, operation_key: str) -> bool:
         """Return ``True`` when a pin exists for this owner + key."""
         return self.get_by_operation_key(owner_id, operation_key) is not None
@@ -248,4 +315,10 @@ class PinPublishStore:
         }
 
 
-__all__ = ["PinPublishStore"]
+__all__ = [
+    "PinPublishStore",
+    "STATUS_FAILED",
+    "STATUS_PUBLISHED",
+    "STATUS_PUBLISHING",
+    "STATUS_UNCERTAIN",
+]

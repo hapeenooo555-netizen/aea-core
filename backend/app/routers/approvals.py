@@ -121,12 +121,15 @@ def _update_p1_8_mission_state(
         "completed": "completed",
         "awaiting_human_intervention": "waiting_human",
         "approval_rejected": "failed",
+        "publish_uncertain": "waiting_human",
     }.get(status_text)
     # A first publish resumes with "resumed"; it is only complete once the
     # connector confirms a real Pin ID.
     result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
     if status_text == "resumed" and (outcome.get("pin_id") or result.get("pin_id")):
         target = "completed"
+    if result.get("status") == "publish_uncertain":
+        target = "waiting_human"
     if target:
         orchestration.transition(mission_id, target, result=outcome)
 

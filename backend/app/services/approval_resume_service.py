@@ -854,9 +854,27 @@ class ApprovalResumeService:
                     )
                 except Exception:
                     existing = None
+                if existing is not None and not (
+                    existing.get("pin_id") and (existing.get("status") or "published") == "published"
+                ):
+                    if (existing.get("status") or "") == "failed":
+                        # Definitively rejected earlier; the connector may
+                        # take over the reservation for one retry.
+                        return None
+                    return {
+                        "status": "publish_in_progress" if existing.get("status") == "publishing" else "publish_uncertain",
+                        "success": False,
+                        "approval_request_id": request.get("id"),
+                        "action_type": action_type,
+                        "platform": platform,
+                        "operation_key": operation_key,
+                        "requires": ["manual_reconciliation"],
+                        "error": "This approval already has a publish attempt without a confirmed Pin ID; AEA will not publish it again automatically.",
+                    }
                 if existing is not None:
                     return {
                         "status": "completed",
+                        "pin_url": f"https://www.pinterest.com/pin/{existing.get('pin_id')}/",
                         "approval_request_id": request.get("id"),
                         "action_type": action_type,
                         "platform": platform,
