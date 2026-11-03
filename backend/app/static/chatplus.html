@@ -1375,7 +1375,13 @@ evaluate: "Evaluating the next step",
 
       function apiPath(path) {
         // These APIs are mounted at the Core root, not below /chatplus.
-        if (path.startsWith("/affiliate/automation/") || path.startsWith("/freelancer/")) return path;
+        if (
+          path.startsWith("/affiliate/automation/") ||
+          path.startsWith("/freelancer/") ||
+          path === "/missions" ||
+          path.startsWith("/missions/") ||
+          path.startsWith("/connectors/")
+        ) return path;
         return `/chatplus${path}`;
       }
 
