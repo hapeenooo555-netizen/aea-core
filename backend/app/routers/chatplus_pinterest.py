@@ -26,6 +26,19 @@ class PinterestDraftPreviewRequest(BaseModel):
     board_id: str = Field(min_length=1, max_length=128)
 
 
+class PinterestDraftApprovalRequest(PinterestDraftPreviewRequest):
+    """Draft plus the optional AI employee and mission the user selected in the Hub."""
+
+    worker_id: str | None = Field(default=None, max_length=128)
+    mission_id: str | None = Field(default=None, max_length=128)
+
+
+def _owned_row(client: Any, table: str, row_id: str, owner_id: str) -> dict[str, Any] | None:
+    """Return the row only when it belongs to the authenticated owner."""
+    rows = client.table(table).select("*").eq("id", row_id).eq("owner_id", owner_id).limit(1).execute().data or []
+    return rows[0] if rows else None
+
+
 def _validate_http_url(value: str, field_name: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -110,7 +123,7 @@ def pinterest_draft_preview(
 
 @router.post("/draft-approval", status_code=status.HTTP_201_CREATED)
 def pinterest_draft_approval(
-    request: PinterestDraftPreviewRequest,
+    request: PinterestDraftApprovalRequest,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
@@ -137,6 +150,23 @@ def pinterest_draft_approval(
                 detail="Selected board ID does not belong to this connected Pinterest account. Refresh boards and select a valid board.",
             )
 
+        # Link the user's selected worker/mission only after proving ownership.
+        selected_worker_id: str | None = None
+        selected_mission_id: str | None = None
+        if request.mission_id and not request.worker_id:
+            raise HTTPException(status_code=422, detail="worker_id is required when mission_id is provided")
+        if request.worker_id:
+            if not _owned_row(client, "workers", request.worker_id, owner_id):
+                raise HTTPException(status_code=404, detail="Selected worker was not found for this account")
+            selected_worker_id = request.worker_id
+        if request.mission_id:
+            source_mission = _owned_row(client, "missions", request.mission_id, owner_id)
+            if not source_mission:
+                raise HTTPException(status_code=404, detail="Selected mission was not found for this account")
+            if source_mission.get("worker_id") not in (None, selected_worker_id) and source_mission.get("assigned_worker") != selected_worker_id:
+                raise HTTPException(status_code=422, detail="Selected mission is not assigned to the selected worker")
+            selected_mission_id = request.mission_id
+
         title = request.title.strip()
         description = request.description.strip()
         destination_url = request.destination_url.strip()
@@ -151,7 +181,13 @@ def pinterest_draft_approval(
         mission_result = orchestration.create_mission(
             objective=f"Review and approve Pinterest Pin: {title}",
             title=f"Pinterest approval: {title[:90]}",
-            metadata={"source": "chatplus_pinterest_draft", "platform": "pinterest", "board_id": selected["id"]},
+            metadata={
+                "source": "chatplus_pinterest_draft",
+                "platform": "pinterest",
+                "board_id": selected["id"],
+                "source_worker_id": selected_worker_id,
+                "source_mission_id": selected_mission_id,
+            },
             idempotency_key=f"pinterest-draft-approval:{fingerprint}",
         )
         if not mission_result.get("success") or not (mission_result.get("mission") or {}).get("id"):
@@ -167,6 +203,8 @@ def pinterest_draft_approval(
                     return {
                         "success": True,
                         "approval": approval,
+                        "approval_request_id": approval.get("id"),
+                        "mission_id": mission_id,
                         "preview": payload.get("preview"),
                         "published": False,
                         "idempotent": True,
@@ -199,6 +237,8 @@ def pinterest_draft_approval(
                     "board_name": selected["name"],
                 },
                 "source": "chatplus_pinterest_draft",
+                "source_worker_id": selected_worker_id,
+                "source_mission_id": selected_mission_id,
                 "preview": preview,
             },
         )
@@ -207,6 +247,9 @@ def pinterest_draft_approval(
         return {
             "success": True,
             "approval": result["request"],
+            "approval_request_id": result["request"].get("id"),
+            "mission_id": mission_id,
+            "source_mission_id": selected_mission_id,
             "preview": preview,
             "published": False,
             "requires_explicit_approval": True,
