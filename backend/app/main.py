@@ -33,6 +33,7 @@ _default_cors_origins = [
     "https://aea-affiliate-hub-web.onrender.com",
     "https://aea-affiliate-hub-production.up.railway.app",
     "https://id-preview--15f25893-acd7-4e76-b02a-cce7d9dbc38d.lovable.app",
+    "https://15f25893-acd7-4e76-b02a-cce7d9dbc38d.lovableproject.com",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
@@ -45,9 +46,18 @@ _cors_origins = list(dict.fromkeys(
     for origin in [*_default_cors_origins, *_configured_cors_origins.split(",")]
     if origin.strip()
 ))
+HUB_PREVIEW_ORIGIN_REGEX = (
+    r"^https://("
+    r"(id-preview-[a-z0-9]+--)?15f25893-acd7-4e76-b02a-cce7d9dbc38d\.lovable\.app"
+    r"|15f25893-acd7-4e76-b02a-cce7d9dbc38d\.lovableproject\.com"
+    r")$"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # Lovable editor/preview hosts for the Hub project only (including
+    # version previews such as id-preview-<hash>--<project>.lovable.app).
+    allow_origin_regex=HUB_PREVIEW_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "apikey", "x-client-info"],
