@@ -824,3 +824,33 @@ class TestChatPlusActionBoardRegression:
         assert ".action-board-actions{grid-template-columns:1fr}" in html
         assert "max-height:88svh" in html
         assert "overflow:auto" in html
+
+
+class TestChatPlusApiPathRouting:
+    """Regression coverage for Core-root endpoints used by ChatPlus."""
+
+    @staticmethod
+    def _api_path_helper() -> str:
+        html = (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+        start = html.index("function apiPath(path)")
+        end = html.index("function supabaseBase()", start)
+        return " ".join(html[start:end].split())
+
+    def test_missions_endpoint_is_not_prefixed_with_chatplus(self):
+        helper = self._api_path_helper()
+        assert 'path === "/missions" || path.startsWith("/missions/")' in helper
+
+    def test_connectors_oauth_endpoint_is_not_prefixed_with_chatplus(self):
+        helper = self._api_path_helper()
+        assert 'path.startsWith("/connectors/")' in helper
+
+    def test_existing_root_api_exceptions_remain(self):
+        helper = self._api_path_helper()
+        assert 'path.startsWith("/affiliate/automation/")' in helper
+        assert 'path.startsWith("/freelancer/")' in helper
+
+    def test_chatplus_scoped_routes_keep_the_chatplus_prefix(self):
+        helper = self._api_path_helper()
+        assert "return `/chatplus${path}`;" in helper
