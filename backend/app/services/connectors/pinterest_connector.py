@@ -22,7 +22,13 @@ from uuid import uuid4
 
 from ..stores.onboarding_workflow_store import OnboardingWorkflowStore
 from ..stores.platform_connection_store import PlatformConnectionStore
-from ..stores.pin_publish_store import PinPublishStore
+from ..stores.pin_publish_store import (
+    STATUS_FAILED,
+    STATUS_PUBLISHED,
+    STATUS_PUBLISHING,
+    STATUS_UNCERTAIN,
+    PinPublishStore,
+)
 from ..p1_7_contracts import SENSITIVE_FIELDS
 from ..pinterest_oauth import PinterestOAuthConfig, PinterestOAuthHelper
 from .base import BaseConnector, ConnectorCapabilities
@@ -907,32 +913,54 @@ class PinterestConnector(BaseConnector):
         # approval-derived key must not create a duplicate Pin.
         if not idempotency_key:
             return {"success": False, "error": "An approval-derived idempotency key is required"}
+        operation_key = str(idempotency_key)
+        if self._pin_store is None:
+            return {"success": False, "error": "Durable Pinterest publish ledger is unavailable"}
+        # Reserve the approval-derived key BEFORE calling Pinterest. The
+        # UNIQUE(operation_key) index guarantees one winner; concurrent and
+        # repeated approvals read the existing record instead of publishing.
         try:
-            existing_pin = self._pin_store.get_by_operation_key(owner_id, str(idempotency_key))
+            claim = self._pin_store.claim(
+                owner_id=owner_id,
+                worker_id=worker_id,
+                platform="pinterest",
+                operation_key=operation_key,
+                board_name=board_name,
+                pin_text=pin_text,
+                link_url=link_url,
+                approval_request_id=approval_request_id,
+                content=sanitized_content,
+            )
         except Exception:
-            return {"success": False, "error": "Unable to verify Pinterest publish idempotency"}
-        if existing_pin:
-            existing_pin_id = existing_pin.get("pin_id")
-            if not existing_pin_id:
-                return {
-                    "success": False,
-                    "error": "A prior Pinterest publish record exists without a confirmed Pin ID; manual reconciliation is required",
-                }
-            return {
-                "success": True,
-                "status": "duplicate_record",
-                "pin_id": existing_pin_id,
-                "approval_request_id": existing_pin.get("approval_request_id") or approval_request_id,
-                "platform": "pinterest",
-                "board_name": existing_pin.get("board_name") or board_name,
-                "message": "This approved operation was already published; no duplicate Pin was created.",
-                "operation_key": idempotency_key,
-            }
+            claim = {"success": False}
+        if not claim.get("success"):
+            return {"success": False, "error": "Unable to reserve Pinterest publish operation; nothing was sent to Pinterest"}
+        if not claim.get("created"):
+            existing_pin = claim.get("pin") or {}
+            reclaimed = None
+            if existing_pin.get("status") == STATUS_FAILED:
+                # A previous attempt was definitively rejected before Pinterest
+                # created anything; exactly one retry may take it over.
+                reclaimed = self._pin_store.transition(
+                    owner_id, operation_key,
+                    from_statuses=(STATUS_FAILED,),
+                    updates={"status": STATUS_PUBLISHING},
+                )
+            if reclaimed is None:
+                return self._existing_publish_outcome(existing_pin, approval_request_id, board_name, operation_key)
+
+        def _settle(status_value: str, **fields: Any) -> dict[str, Any] | None:
+            return self._pin_store.transition(
+                owner_id, operation_key,
+                from_statuses=(STATUS_PUBLISHING,),
+                updates={"status": status_value, **fields},
+            )
 
         # Resolve board name to the provider's real board ID unless an explicit
         # board_id was supplied by the authenticated boards endpoint.
         board_id = content.get("board_id")
         headers = {"Authorization": f"Bearer {stored_token['access_token']}", "Content-Type": "application/json"}
+        pin_request_sent = False
         try:
             with httpx.Client(timeout=25.0) as client:
                 if not board_id:
@@ -942,6 +970,7 @@ class PinterestConnector(BaseConnector):
                         params={"page_size": 100},
                     )
                     if boards_response.status_code != 200:
+                        _settle(STATUS_FAILED)
                         return {"success": False, "error": "Pinterest board lookup failed", "provider_status": boards_response.status_code}
                     boards_data = boards_response.json()
                     match = next(
@@ -949,9 +978,11 @@ class PinterestConnector(BaseConnector):
                         None,
                     )
                     if not match:
+                        _settle(STATUS_FAILED)
                         return {"success": False, "error": "Pinterest board not found; choose a board from the connected account"}
                     board_id = match.get("id")
                 if not board_id:
+                    _settle(STATUS_FAILED)
                     return {"success": False, "error": "Pinterest board ID is missing"}
 
                 pin_payload: dict[str, Any] = {
@@ -962,26 +993,42 @@ class PinterestConnector(BaseConnector):
                 }
                 if title:
                     pin_payload["title"] = str(title)[:100]
+                pin_request_sent = True
                 publish_response = client.post(
                     "https://api.pinterest.com/v5/pins",
                     headers=headers,
                     json=pin_payload,
                 )
-            if publish_response.status_code not in (200, 201):
-                return {
-                    "success": False,
-                    "error": "Pinterest rejected pin creation",
-                    "provider_status": publish_response.status_code,
-                }
-            provider_pin = publish_response.json()
-        except httpx.TimeoutException:
-            return {"success": False, "error": "Pinterest request timed out; check Pinterest before retrying"}
-        except httpx.HTTPError:
-            return {"success": False, "error": "Unable to reach Pinterest API"}
+            provider_status = publish_response.status_code
+            if provider_status not in (200, 201):
+                if 400 <= provider_status < 500:
+                    # Pinterest refused the request; no Pin was created.
+                    _settle(STATUS_FAILED, content={**sanitized_content, "provider_status": provider_status})
+                    return {
+                        "success": False,
+                        "status": "publish_failed",
+                        "error": "Pinterest rejected pin creation",
+                        "provider_status": provider_status,
+                    }
+                _settle(STATUS_UNCERTAIN, content={**sanitized_content, "provider_status": provider_status})
+                return self._uncertain_result(operation_key, approval_request_id, provider_status=provider_status)
+            try:
+                provider_pin = publish_response.json()
+            except ValueError:
+                provider_pin = {}
+        except (httpx.TimeoutException, httpx.HTTPError):
+            if not pin_request_sent:
+                _settle(STATUS_FAILED)
+                return {"success": False, "status": "publish_failed", "error": "Unable to reach Pinterest API; no Pin was requested"}
+            # The create request may have reached Pinterest. Pinterest v5 has
+            # no idempotency key, so a blind retry could duplicate the Pin.
+            _settle(STATUS_UNCERTAIN)
+            return self._uncertain_result(operation_key, approval_request_id)
 
         pin_id = str(provider_pin.get("id") or "")
         if not pin_id:
-            return {"success": False, "error": "Pinterest returned no pin ID"}
+            _settle(STATUS_UNCERTAIN)
+            return self._uncertain_result(operation_key, approval_request_id)
 
         # Pinterest's create response provides the canonical Pin ID. Build the
         # public Pin URL from that provider-confirmed ID; keep link_url as the
@@ -1006,39 +1053,65 @@ class PinterestConnector(BaseConnector):
             "provider_response": {"id": pin_id, "created_at": provider_pin.get("created_at")},
         }
 
-        # Persist the confirmed provider result. If persistence fails, surface
-        # the failure rather than pretending the local record is complete.
-        if self._pin_store is not None and owner_id and idempotency_key:
-            store_result = self._pin_store.create(
-                owner_id=owner_id,
-                worker_id=worker_id,
-                platform="pinterest",
-                operation_key=idempotency_key,
-                board_name=board_name,
-                pin_text=pin_text,
-                link_url=final_url,
-                pin_id=pin_id,
-                approval_request_id=approval_request_id,
-                content=sanitized_content,
-            )
-            if not store_result.get("success"):
-                return {
-                    "success": False,
-                    "error": "Pinterest created the pin, but AEA could not persist its record",
-                    "pin_id": pin_id,
-                }
-            if not store_result.get("created"):
-                existing = store_result.get("pin", {})
-                return {
-                    "success": True,
-                    "status": "duplicate_record",
-                    "pin_id": existing.get("pin_id") or pin_id,
-                    "message": "Pinterest created a pin; the AEA operation record already existed",
-                    "platform": "pinterest",
-                    "operation_key": idempotency_key,
-                }
+        # Settle the reserved record with Pinterest's confirmed Pin ID. If
+        # this write fails the record stays "publishing", which blocks any
+        # further publish attempt for this approval.
+        settled = _settle(STATUS_PUBLISHED, pin_id=pin_id, link_url=final_url)
+        if settled is None:
+            return {
+                "success": False,
+                "status": "publish_unrecorded",
+                "error": "Pinterest created the pin, but AEA could not persist its record",
+                "pin_id": pin_id,
+                "pin_url": pin_url,
+                "operation_key": operation_key,
+            }
 
         return result
+
+    @staticmethod
+    def _uncertain_result(operation_key: str, approval_request_id: Any, **extra: Any) -> dict[str, Any]:
+        result = {
+            "success": False,
+            "status": "publish_uncertain",
+            "error": (
+                "Pinterest may or may not have created this Pin. AEA will not retry automatically; "
+                "check the board on Pinterest before taking any further action."
+            ),
+            "requires": ["manual_reconciliation"],
+            "operation_key": operation_key,
+            "approval_request_id": approval_request_id,
+        }
+        result.update({k: v for k, v in extra.items() if v is not None})
+        return result
+
+    @classmethod
+    def _existing_publish_outcome(
+        cls, existing_pin: dict[str, Any], approval_request_id: Any, board_name: Any, operation_key: str,
+    ) -> dict[str, Any]:
+        status_value = existing_pin.get("status")
+        existing_pin_id = existing_pin.get("pin_id")
+        if status_value == STATUS_PUBLISHED and existing_pin_id:
+            return {
+                "success": True,
+                "status": "duplicate_record",
+                "pin_id": existing_pin_id,
+                "pin_url": f"https://www.pinterest.com/pin/{existing_pin_id}/",
+                "approval_request_id": existing_pin.get("approval_request_id") or approval_request_id,
+                "platform": "pinterest",
+                "board_name": existing_pin.get("board_name") or board_name,
+                "message": "This approved operation was already published; no duplicate Pin was created.",
+                "operation_key": operation_key,
+            }
+        if status_value == STATUS_PUBLISHING:
+            return {
+                "success": False,
+                "status": "publish_in_progress",
+                "error": "This approval is already being published; no second Pin was sent.",
+                "operation_key": operation_key,
+                "approval_request_id": approval_request_id,
+            }
+        return cls._uncertain_result(operation_key, approval_request_id)
 
     @staticmethod
     def _validate_url(url: str) -> tuple[bool, str]:
