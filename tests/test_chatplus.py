@@ -875,3 +875,23 @@ class TestChatPlusPinDraftRequiredFields:
         start = html.index('id="pinterestProductName"')
         tag = html[start:html.index(">", start)]
         assert "required" not in tag
+
+
+class TestChatPlusRootWorkersAndExistingConnection:
+    @staticmethod
+    def _html() -> str:
+        return (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_workers_api_is_routed_to_core_root(self):
+        html = self._html()
+        helper = html[html.index("function apiPath(path)"):html.index("function supabaseBase()")]
+        assert 'path === "/workers"' in helper
+
+    def test_connect_reuses_existing_verified_connection_before_oauth(self):
+        html = self._html()
+        handler = html[html.index('getElementById("pinterestConnectStart").addEventListener'):]
+        verify = handler.index('api("/pinterest/verification")')
+        oauth = handler.index('api("/connectors/oauth/start"')
+        assert verify < oauth
