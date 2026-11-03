@@ -1142,7 +1142,7 @@ Connect Pinterest
             </div>
             <div class="field">
               <label for="pinterestProductName">Product name</label>
-              <input id="pinterestProductName" maxlength="200" placeholder="e.g. AI marketing toolkit" required>
+              <input id="pinterestProductName" maxlength="200" placeholder="Optional, e.g. AI marketing toolkit">
             </div>
             <div class="field">
               <label for="pinterestAutoLanguage">Lugha ya Pin</label>
@@ -2353,10 +2353,10 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       if (pinterestStartWorkflow) {
         pinterestStartWorkflow.addEventListener("click", async () => {
           const link = document.getElementById("pinterestAffiliateUrl").value.trim();
-          const niche = document.getElementById("pinterestAutoNiche").value.trim();
-          const product = document.getElementById("pinterestProductName").value.trim();
-          if (!link || !niche || !product) {
-            pinterestDraftStatus.textContent = "Please enter your vendor/affiliate link, niche and product name.";
+          // Only the destination link is required; Core's draft API treats
+          // niche and product name as optional and infers them when omitted.
+          if (!link) {
+            pinterestDraftStatus.textContent = "Please enter your vendor/affiliate link. Niche and product name are optional.";
             return;
           }
           try { new URL(link); } catch (_) {
