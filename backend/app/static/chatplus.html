@@ -1380,6 +1380,8 @@ evaluate: "Evaluating the next step",
           path.startsWith("/freelancer/") ||
           path === "/missions" ||
           path.startsWith("/missions/") ||
+          path === "/workers" ||
+          path.startsWith("/workers/") ||
           path.startsWith("/connectors/")
         ) return path;
         return `/chatplus${path}`;
@@ -2286,6 +2288,19 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
         setPinterestDraftStatus("Starting Pinterest OAuth…");
 
         try {
+          // If this signed-in Core user already has a stored Pinterest
+          // connection (e.g. authorized from AEA Affiliate Hub), reuse it
+          // instead of sending the user through OAuth again.
+          setPinterestDraftStatus("Checking for an existing Pinterest connection…");
+          let existingConnection = null;
+          try { existingConnection = await api("/pinterest/verification"); } catch (_) { existingConnection = null; }
+          if (existingConnection?.success === true && existingConnection.account) {
+            pinterestOAuthRequested = false;
+            button.disabled = false;
+            button.textContent = "Connect Pinterest →";
+            pinterestLoadBoardsButton.click();
+            return;
+          }
           // Reuse an owned mission/worker when ChatPlus has one. Otherwise create
           // them through authenticated APIs; do not submit OAuth through the
           // composer, whose Pin form validation can intercept the message.
