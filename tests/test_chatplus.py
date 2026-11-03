@@ -854,3 +854,24 @@ class TestChatPlusApiPathRouting:
     def test_chatplus_scoped_routes_keep_the_chatplus_prefix(self):
         helper = self._api_path_helper()
         assert "return `/chatplus${path}`;" in helper
+
+
+class TestChatPlusPinDraftRequiredFields:
+    """The draft API only requires affiliate_url; the UI must not demand more."""
+
+    @staticmethod
+    def _html() -> str:
+        return (Path(__file__).resolve().parents[1] / "backend" / "app" / "static" / "chatplus.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_start_workflow_requires_only_the_destination_link(self):
+        html = self._html()
+        assert "if (!link || !niche || !product)" not in html
+        assert "if (!link) {" in html
+
+    def test_product_name_input_is_optional(self):
+        html = self._html()
+        start = html.index('id="pinterestProductName"')
+        tag = html[start:html.index(">", start)]
+        assert "required" not in tag
