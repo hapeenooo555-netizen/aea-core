@@ -150,22 +150,37 @@ def pinterest_draft_approval(
                 detail="Selected board ID does not belong to this connected Pinterest account. Refresh boards and select a valid board.",
             )
 
-        # Link the user's selected worker/mission only after proving ownership.
+        # Link the Hub-selected mission/worker only after proving ownership.
         selected_worker_id: str | None = None
         selected_mission_id: str | None = None
-        if request.mission_id and not request.worker_id:
-            raise HTTPException(status_code=422, detail="worker_id is required when mission_id is provided")
-        if request.worker_id:
-            if not _owned_row(client, "workers", request.worker_id, owner_id):
-                raise HTTPException(status_code=404, detail="Selected worker was not found for this account")
-            selected_worker_id = request.worker_id
+        source_mission: dict[str, Any] | None = None
         if request.mission_id:
             source_mission = _owned_row(client, "missions", request.mission_id, owner_id)
             if not source_mission:
                 raise HTTPException(status_code=404, detail="Selected mission was not found for this account")
-            if source_mission.get("worker_id") not in (None, selected_worker_id) and source_mission.get("assigned_worker") != selected_worker_id:
-                raise HTTPException(status_code=422, detail="Selected mission is not assigned to the selected worker")
             selected_mission_id = request.mission_id
+
+        # Hub currently passes the mission ID; infer its assigned worker server-side.
+        requested_worker_id = request.worker_id
+        if not requested_worker_id and source_mission:
+            requested_worker_id = (
+                source_mission.get("worker_id")
+                or source_mission.get("assigned_worker")
+                or source_mission.get("assigned_worker_id")
+            )
+        if requested_worker_id:
+            if not _owned_row(client, "workers", requested_worker_id, owner_id):
+                raise HTTPException(status_code=404, detail="Selected worker was not found for this account")
+            selected_worker_id = requested_worker_id
+
+        if source_mission and selected_worker_id:
+            mission_worker_id = (
+                source_mission.get("worker_id")
+                or source_mission.get("assigned_worker")
+                or source_mission.get("assigned_worker_id")
+            )
+            if mission_worker_id and mission_worker_id != selected_worker_id:
+                raise HTTPException(status_code=422, detail="Selected mission is not assigned to the selected worker")
 
         title = request.title.strip()
         description = request.description.strip()
