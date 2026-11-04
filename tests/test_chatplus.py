@@ -464,8 +464,11 @@ class TestChatPlusFrontend:
         response = _client_with_app.get("/chatplus/")
         assert response.status_code == 200
         html = response.text
-        assert "What should we work on?" in html
-        assert "Send" in html
+        assert "AEA Affiliate Employee" in html
+        assert "Research Digistore24" in html
+        assert "Find affiliate opportunities" in html
+        assert "Choose a niche" in html
+        assert "Create Pin draft" in html
         assert "Sign in" in html
         assert "Approval" in html or "approval" in html.lower()
         assert "Bearer eyJ" not in html
