@@ -748,6 +748,16 @@
       z-index: 5;
     }
 
+    .affiliate-employee-launcher { display:grid; gap:12px; padding:14px; }
+    .affiliate-launcher-heading { display:grid; gap:3px; }
+    .affiliate-launcher-heading strong { font-size:15px; color:var(--ink); }
+    .affiliate-launcher-heading span { color:var(--muted); font-size:12px; }
+    .affiliate-action-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+    .affiliate-action { min-height:62px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--surface-soft); color:var(--ink); font-size:13px; font-weight:750; text-align:left; line-height:1.35; white-space:normal; }
+    .affiliate-action-primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+    .affiliate-action:disabled { opacity:.55; }
+    .affiliate-hidden-composer { position:absolute!important; width:1px!important; height:1px!important; overflow:hidden!important; clip-path:inset(50%)!important; white-space:nowrap!important; }
+    @media(max-width:380px) { .affiliate-action-grid { grid-template-columns:1fr; } }
     .composer textarea {
       width: 100%;
       min-height: 48px;
@@ -1216,14 +1226,23 @@ Connect Pinterest
       </section>
     </div>
 
-    <form id="composer" class="composer">
-      <div style="grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; margin-left: 2px;">What should we work on?</div>
-      <button id="pinterestContentPromptButton" class="secondary-button" type="button" style="grid-column: 1 / -1; width: 100%; min-height: 44px; white-space: normal;">Continue to Pinterest content creation</button>
-      <div class="composer-input-wrap">
-        <textarea id="messageInput" rows="1" maxlength="4000" placeholder="What would you like AEA Employee to do?" required></textarea>
-        <button id="sendButton" class="send-button" type="submit" aria-label="Send message" title="Send message">➤</button>
+    <section class="composer affiliate-employee-launcher" aria-label="AEA Affiliate Employee actions">
+      <div class="affiliate-launcher-heading">
+        <strong>AEA Affiliate Employee</strong>
+        <span>Choose a task to start. Your work stays in this session.</span>
       </div>
-    </form>
+      <div class="affiliate-action-grid">
+        <button class="affiliate-action" type="button" data-affiliate-task="Research Digistore24 marketplace products and return verified affiliate opportunities with product details, vendor links, niches, and commission information where available.">Research Digistore24</button>
+        <button class="affiliate-action" type="button" data-affiliate-task="Find promising affiliate marketing opportunities for my selected niche. Research current products and compare relevance, audience, vendor page, affiliate availability, and known commission information.">Find affiliate opportunities</button>
+        <button class="affiliate-action" type="button" data-affiliate-task="Help me decide on a profitable affiliate niche and recommend relevant products based on audience demand, fit, and realistic monetization potential.">Choose a niche</button>
+        <button class="affiliate-action affiliate-action-primary" type="button" data-affiliate-task="Prepare an AI-generated Pinterest affiliate Pin draft. Research a suitable product opportunity, identify its niche and vendor/affiliate destination link, generate an engaging SEO-friendly title and description, and prepare the image/content preview for my approval. Do not publish until I approve.">Create Pin draft</button>
+      </div>
+      <button id="pinterestContentPromptButton" class="secondary-button" type="button" style="width:100%;min-height:44px;white-space:normal;">Continue Pinterest content creation</button>
+      <form id="composer" class="affiliate-hidden-composer" aria-hidden="true">
+        <textarea id="messageInput" rows="1" maxlength="4000" tabindex="-1"></textarea>
+        <button id="sendButton" type="submit" tabindex="-1">Run task</button>
+      </form>
+    </section>
   </main>
 
   <aside id="historyDrawer" class="drawer" aria-hidden="true">
@@ -2211,6 +2230,13 @@ function renderState(nextState) {
 
 document.getElementById("signOutButton").addEventListener("click", signOut);
   signInForm.addEventListener("submit", signIn);
+  document.querySelectorAll("[data-affiliate-task]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (state.sending) return;
+      messageInput.value = button.dataset.affiliateTask || "";
+      composer.requestSubmit();
+    });
+  });
   composer.addEventListener("submit", sendMessage);
   approvalsView.addEventListener("click", handleApproval);
   document.getElementById("actionBoardApprovalList").addEventListener("click", handleApproval);
