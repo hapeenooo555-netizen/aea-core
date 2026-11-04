@@ -2615,7 +2615,69 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
       pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = (result.idempotent ? "Approval request hii tayari ipo. " : "Approval request imehifadhiwa. ")
         + (approvalId ? "ID: " + approvalId + ". " : "")
-        + "Fungua sehemu ya Approvals, kagua preview, kisha idhinisha kwa uwazi. Hakuna Pin iliyochapishwa.";
+        + "Kagua Pin preview hapo juu, kisha chagua Approve & Publish au Reject. Hakuna Pin iliyochapishwa bado.";
+
+      const priorCard = document.getElementById("pinterestApprovalActionCard");
+      if (priorCard) priorCard.remove();
+      const card = document.createElement("section");
+      card.id = "pinterestApprovalActionCard";
+      card.style.cssText = "margin:12px 0;padding:14px;border:1px solid #cfe3da;border-radius:12px;background:#f2faf6;display:grid;gap:10px;";
+      const heading = document.createElement("strong");
+      heading.textContent = "Human approval required";
+      const note = document.createElement("p");
+      note.style.cssText = "margin:0;font-size:13px;line-height:1.5;";
+      note.textContent = "Review the Pin preview above, including its image, destination and selected board. Approving may publish it to Pinterest.";
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
+      const approve = document.createElement("button");
+      approve.type = "button";
+      approve.textContent = "Approve & Publish";
+      approve.style.cssText = "flex:1;min-height:44px;padding:10px;border:0;border-radius:9px;background:#176b5b;color:#fff;font-weight:700;";
+      const reject = document.createElement("button");
+      reject.type = "button";
+      reject.textContent = "Reject draft";
+      reject.style.cssText = "flex:1;min-height:44px;padding:10px;border:1px solid #c66;border-radius:9px;background:#fff;color:#933;font-weight:700;";
+      const outcome = document.createElement("p");
+      outcome.style.cssText = "margin:0;font-size:13px;overflow-wrap:anywhere;";
+      approve.addEventListener("click", async () => {
+        if (!approvalId) { outcome.textContent = "Approval ID missing."; return; }
+        if (!window.confirm("Unaidhinisha Pin hii kuchapishwa kwenye Pinterest?")) return;
+        approve.disabled = true; reject.disabled = true;
+        outcome.textContent = "Submitting approval…";
+        try {
+          const response = await api("/approvals/" + encodeURIComponent(approvalId) + "/approve", { method: "POST" });
+          if (response.success !== true) throw new Error("Approval was not confirmed by Core.");
+          const raw = JSON.stringify(response);
+          const match = raw.match(/"pin_id"\s*:\s*"([^"]+)"/i);
+          outcome.textContent = match
+            ? "Pinterest returned pin_id: " + match[1] + ". Verify the Pin on the selected board."
+            : "Approval submitted and execution started. No pin_id in this response, so publishing is not yet confirmed; check the execution result.";
+          approve.textContent = "Approval submitted";
+        } catch (error) {
+          outcome.textContent = "Approval failed: " + (error instanceof Error ? error.message : String(error));
+          approve.disabled = false; reject.disabled = false;
+        }
+      });
+      reject.addEventListener("click", async () => {
+        if (!approvalId) { outcome.textContent = "Approval ID missing."; return; }
+        approve.disabled = true; reject.disabled = true;
+        outcome.textContent = "Rejecting draft…";
+        try {
+          const response = await api("/approvals/" + encodeURIComponent(approvalId) + "/reject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason: "Rejected by user from Pinterest preview." })
+          });
+          if (response.success !== true) throw new Error("Rejection was not confirmed by Core.");
+          outcome.textContent = "Draft rejected. No Pin was published.";
+        } catch (error) {
+          outcome.textContent = "Reject failed: " + (error instanceof Error ? error.message : String(error));
+          approve.disabled = false; reject.disabled = false;
+        }
+      });
+      actions.append(approve, reject);
+      card.append(heading, note, actions, outcome);
+      pinterestDraftStatus.insertAdjacentElement("afterend", card);
     } catch (error) {
       pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = "Imeshindikana kuhifadhi approval request: " + (error instanceof Error ? error.message : String(error));
