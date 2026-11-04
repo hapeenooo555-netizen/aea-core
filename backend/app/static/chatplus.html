@@ -2574,6 +2574,7 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
 
   document.getElementById("pinterestContinueToApproval").addEventListener("click", async () => {
     if (pinterestDraftPreview.hidden || !verifiedPinterestAccount || !verifiedPinterestBoards.length) {
+      pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = "Create and review a complete Pin preview first. No approval request has been sent.";
       return;
     }
@@ -2585,12 +2586,14 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     const board = boardSelect.selectedOptions[0]?.textContent || "";
     const boardId = boardSelect.value || "";
     if (!title || !description || !destination || !image || !board || !boardId) {
+      pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
       return;
     }
     const button = document.getElementById("pinterestContinueToApproval");
     button.disabled = true;
-    pinterestDraftStatus.textContent = "Inathibitisha tena akaunti/board na kuhifadhi approval request...";
+    pinterestDraftStatus.hidden = false;
+      pinterestDraftStatus.textContent = "Inathibitisha tena akaunti/board na kuhifadhi approval request...";
     try {
       const result = await api("/pinterest/draft-approval", {
         method: "POST",
@@ -2600,17 +2603,21 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
           description,
           destination_url: destination,
           image_url: image,
-          board_id: boardId
+          board_id: boardId,
+          mission_id: new URLSearchParams(window.location.search).get("mission_id") || null,
+          worker_id: new URLSearchParams(window.location.search).get("worker_id") || null
         })
       });
       if (result.success !== true || !result.approval || result.published !== false) {
         throw new Error("Approval request haikuthibitishwa kuwa imehifadhiwa.");
       }
       const approvalId = String(result.approval.id || result.approval.request_id || "");
+      pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = (result.idempotent ? "Approval request hii tayari ipo. " : "Approval request imehifadhiwa. ")
         + (approvalId ? "ID: " + approvalId + ". " : "")
         + "Fungua sehemu ya Approvals, kagua preview, kisha idhinisha kwa uwazi. Hakuna Pin iliyochapishwa.";
     } catch (error) {
+      pinterestDraftStatus.hidden = false;
       pinterestDraftStatus.textContent = "Imeshindikana kuhifadhi approval request: " + (error instanceof Error ? error.message : String(error));
     } finally {
       button.disabled = false;
