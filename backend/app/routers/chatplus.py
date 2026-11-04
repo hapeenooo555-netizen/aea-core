@@ -23,6 +23,13 @@ class ChatMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SelectedMissionRequest(BaseModel):
+    mission_id: str = Field(min_length=1, max_length=128)
+    conversation_id: str = Field(default="default", min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRejectRequest(BaseModel):
     reason: str = Field(default="", max_length=1000)
 
@@ -104,6 +111,35 @@ def chat_message(
             body.conversation_id,
         )
     return result
+
+
+@router.post("/execute-selected")
+def chat_execute_selected(
+    body: SelectedMissionRequest,
+    background_tasks: BackgroundTasks,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Queue an existing owner-scoped mission without creating a duplicate."""
+    service = _service(owner_id, client)
+    mission = service.orchestration.get_mission(body.mission_id)
+    if not mission:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mission not found")
+    mission_status = str(mission.get("status") or "").lower()
+    if mission_status not in {"pending", "scheduled", "retrying"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mission is not in an executable state")
+    readiness = service.orchestration.readiness(mission)
+    if not readiness.get("ready"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=readiness)
+    goal = str(mission.get("objective") or mission.get("description") or mission.get("title") or "Selected mission")
+    background_tasks.add_task(service.execute_mission, body.mission_id, goal, body.conversation_id)
+    return {
+        "success": True,
+        "conversation_id": body.conversation_id,
+        "mission": mission,
+        "execution": {"status": "QUEUED"},
+        "state": {"state": "working", "label": "Working", "detail": "Selected mission queued for execution"},
+    }
 
 
 @router.get("/state")
