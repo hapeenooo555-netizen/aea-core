@@ -91,6 +91,8 @@ def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
     assert body["source_mission_id"] == "m1"
     assert body["published"] is False
     assert created["approval"]["payload"]["source_mission_id"] == "m1"
+    assert created["approval"]["payload"]["worker_id"] == "w1"
+    assert created["approval"]["payload"]["source_worker_id"] == "w1"
     assert created["mission"]["metadata"]["source_worker_id"] == "w1"
 
 
@@ -113,6 +115,8 @@ def test_works_without_selection(monkeypatch):
     res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json=DRAFT)
     assert res.status_code == 201
     assert res.json()["source_mission_id"] is None
+    assert created["approval"]["payload"]["worker_id"] == OWNER
+    assert created["approval"]["payload"]["source_worker_id"] is None
 
 
 def _transition_for(monkeypatch, outcome):
