@@ -2217,6 +2217,15 @@ function renderState(nextState) {
         loadFreelancerProjects();
         try {
           await refreshAll();
+          // Hub may pass a mission goal as a convenience, never as authentication.
+          // Prefill only; the signed-in user must explicitly submit it in ChatPlus.
+          const handoffGoal = new URL(window.location.href).searchParams.get("goal");
+          if (handoffGoal && handoffGoal.trim()) {
+            messageInput.value = handoffGoal.trim().slice(0, 4000);
+            messageInput.focus();
+            showToast("Hub request loaded. Review it, then submit when ready.");
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
         } catch (error) {
           if (error.message.toLowerCase().includes("authorization") || error.message.includes("401")) {
             localStorage.removeItem(TOKEN_KEY);
