@@ -209,6 +209,32 @@ def pinterest_draft_approval(
             raise HTTPException(status_code=503, detail="Could not create a durable mission for this Pin approval")
         mission_id = mission_result["mission"]["id"]
 
+        # The approval mission is a new durable mission, not the selected
+        # source mission. Persist the validated owner-scoped worker assignment
+        # on the mission row so the runtime can resolve its employee.
+        if selected_worker_id:
+            try:
+                assigned = (
+                    client.table("missions")
+                    .update({"worker_id": selected_worker_id})
+                    .eq("id", mission_id)
+                    .eq("owner_id", owner_id)
+                    .execute()
+                )
+                rows = assigned.data or []
+                if not rows or rows[0].get("worker_id") != selected_worker_id:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Pinterest approval mission was created, but its worker assignment could not be verified",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Pinterest approval mission worker assignment failed",
+                ) from exc
+
         gateway = ApprovalGateway(client=client)
         existing = gateway.list_requests(mission_id=mission_id, status="pending", limit=20, client=client)
         for approval in existing:
