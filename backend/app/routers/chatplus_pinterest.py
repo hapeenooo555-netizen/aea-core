@@ -268,7 +268,7 @@ def pinterest_draft_approval(
             client=client,
             payload={
                 "platform": "pinterest",
-                "worker_id": owner_id,
+                "worker_id": selected_worker_id or owner_id,
                 "content": {
                     "title": title,
                     "pin_text": description,
