@@ -9,6 +9,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -18,10 +19,31 @@ import httpx
 
 API_BASE = "https://www.digistore24.com/api/call"
 logger = logging.getLogger(__name__)
+_SAFE_VENDOR_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
 class Digistore24ConnectionError(RuntimeError):
     """Safe Digistore24 connection error."""
+
+
+def _safe_vendor_code(response: httpx.Response) -> str | None:
+    """Extract only a constrained vendor error code; never expose response text."""
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[Any] = [payload.get("code")]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        candidates.append(data.get("code"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and _SAFE_VENDOR_CODE.fullmatch(candidate):
+            return candidate
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            return str(candidate)
+    return None
 
 
 def _developer_key() -> str:
@@ -74,13 +96,15 @@ def _call(function: str, params: dict[str, Any]) -> dict[str, Any]:
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        # Log only endpoint name, status, and exception class. Never log request
-        # headers, query params, response body, API keys, or request tokens.
+        # Log only endpoint name, status, constrained vendor code, and exception
+        # class. Never log headers, query params, response text, or API tokens.
+        vendor_code = _safe_vendor_code(exc.response)
         logger.warning(
-            "Digistore24 API returned HTTP status; function=%s status=%s exception=%s",
+            "Digistore24 API returned HTTP status; function=%s status=%s exception=%s vendor_code=%s",
             function,
             exc.response.status_code,
             type(exc).__name__,
+            vendor_code or "unavailable",
         )
         raise Digistore24ConnectionError(
             "Digistore24 API request failed. Please try again."
