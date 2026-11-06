@@ -44,6 +44,8 @@ def _status_code_for_error(error: str | None) -> int:
         return status.HTTP_500_INTERNAL_SERVER_ERROR
 
     message = error.lower()
+    if "assigned worker" in message:
+        return status.HTTP_422_UNPROCESSABLE_ENTITY
     if "required" in message or "missing" in message:
         return status.HTTP_400_BAD_REQUEST
     if "not found" in message:
@@ -222,6 +224,14 @@ async def run_mission(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Execute a mission owned by the current user."""
+
+    # Reject unassigned missions before changing lifecycle state or invoking the worker runtime.
+    assigned_worker = mission.get("assigned_worker") or mission.get("worker_id")
+    if not assigned_worker:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Mission has no assigned worker. Select a worker and an assigned mission before running.",
+        )
 
     # Persist lifecycle transitions so the authenticated UI does not remain stuck
     # on the previous "active" value after the run action returns.
