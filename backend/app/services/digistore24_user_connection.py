@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from urllib.parse import urlparse
 import httpx
 
 API_BASE = "https://www.digistore24.com/api/call"
+logger = logging.getLogger(__name__)
 
 
 class Digistore24ConnectionError(RuntimeError):
@@ -71,11 +73,47 @@ def _call(function: str, params: dict[str, Any]) -> dict[str, Any]:
             timeout=15.0,
         )
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # Log only endpoint name, status, and exception class. Never log request
+        # headers, query params, response body, API keys, or request tokens.
+        logger.warning(
+            "Digistore24 API returned HTTP status; function=%s status=%s exception=%s",
+            function,
+            exc.response.status_code,
+            type(exc).__name__,
+        )
+        raise Digistore24ConnectionError(
+            "Digistore24 API request failed. Please try again."
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Digistore24 API transport failure; function=%s exception=%s",
+            function,
+            type(exc).__name__,
+        )
+        raise Digistore24ConnectionError(
+            "Could not reach Digistore24. Please try again."
+        ) from exc
+
+    try:
         payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise Digistore24ConnectionError("Digistore24 API request failed. Please try again.") from exc
+    except ValueError as exc:
+        logger.warning(
+            "Digistore24 API returned invalid JSON; function=%s status=%s",
+            function,
+            response.status_code,
+        )
+        raise Digistore24ConnectionError(
+            "Digistore24 returned an invalid response. Please try again."
+        ) from exc
+
     if not isinstance(payload, dict) or str(payload.get("result", "")).lower() != "success":
         # Do not forward vendor/API error text that may contain sensitive details.
+        logger.warning(
+            "Digistore24 API did not confirm success; function=%s status=%s",
+            function,
+            response.status_code,
+        )
         raise Digistore24ConnectionError("Digistore24 did not confirm the connection request.")
     return payload
 
