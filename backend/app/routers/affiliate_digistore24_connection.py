@@ -96,7 +96,7 @@ def finish_connection(state: str = Query(..., min_length=20, max_length=256)) ->
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Digistore24 connection could not be saved.") from exc
 
-    hub_url = os.getenv("AEA_HUB_URL", "https://aea-affiliate-hub.lovable.app").rstrip("/")
+    hub_url = os.getenv("AEA_HUB_URL", "https://aea-affiliate-hub-web.onrender.com").rstrip("/")
     return RedirectResponse(f"{hub_url}/settings/integrations?digistore24=connected", status_code=303)
 
 
