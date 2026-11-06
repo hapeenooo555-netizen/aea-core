@@ -33,12 +33,15 @@ def _service_client():
     return client
 
 
-def _callback_url() -> str:
+def _callback_url(state: str) -> str:
     value = os.getenv("DIGISTORE24_CALLBACK_URL", "").strip()
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc:
         raise HTTPException(status_code=503, detail="Digistore24 callback URL is not configured as HTTPS.")
-    return value
+    # Bind the Digistore24 redirect to the same one-time state persisted below.
+    query = [(key, item) for key, item in parse_qsl(parsed.query) if key != "state"]
+    query.append(("state", state))
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 @router.post("/start")
