@@ -11,6 +11,10 @@ from app.services.digistore24_marketplace import (
     Digistore24MarketplaceClient,
     Digistore24MarketplaceError,
 )
+from app.services.digistore24_user_connection import (
+    Digistore24ConnectionError,
+    load_connected_api_key,
+)
 
 router = APIRouter(prefix="/affiliate/research", tags=["affiliate-research"])
 
@@ -22,13 +26,19 @@ async def research_digistore24(
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """Fetch and rank live marketplace records; never publish or create promo links."""
-    client = Digistore24MarketplaceClient()
     try:
+        # Research must use this authenticated user's saved credential, never a
+        # process-wide key that could belong to another connected account.
+        api_key = load_connected_api_key(_owner_id)
+        client = Digistore24MarketplaceClient(api_key=api_key)
         return client.research(target_niches=tuple(niche), limit=limit)
-    except Digistore24MarketplaceError as exc:
+    except Digistore24ConnectionError as exc:
         message = str(exc)
-        code = 503 if "not configured" in message.lower() else 502
+        lowered = message.lower()
+        code = 503 if "not configured" in lowered or "database" in lowered else 401
         raise HTTPException(status_code=code, detail=message) from exc
+    except Digistore24MarketplaceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/digistore24/partnership-status")
