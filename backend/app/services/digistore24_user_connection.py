@@ -108,3 +108,29 @@ def retrieve_user_api_key(request_token: str) -> str:
 
 def state_expiry() -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+
+
+def load_connected_api_key(user_id: str) -> str:
+    """Load and decrypt the Digistore24 credential for the authenticated user."""
+    if not user_id:
+        raise Digistore24ConnectionError("Authenticated user is required.")
+    from app import database
+
+    client = database.get_supabase_oauth_callback_client()
+    if client is None:
+        raise Digistore24ConnectionError("Secure Digistore24 storage is not configured.")
+    try:
+        result = (
+            client.table("digistore24_user_connections")
+            .select("api_key_ciphertext")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+    except Exception as exc:
+        raise Digistore24ConnectionError("Could not load the connected Digistore24 account.") from exc
+    ciphertext = rows[0].get("api_key_ciphertext") if rows else None
+    if not isinstance(ciphertext, str) or not ciphertext:
+        raise Digistore24ConnectionError("Connect your Digistore24 account before marketplace research.")
+    return decrypt_api_key(ciphertext)
