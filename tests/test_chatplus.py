@@ -898,3 +898,57 @@ class TestChatPlusRootWorkersAndExistingConnection:
         verify = handler.index('api("/pinterest/verification")')
         oauth = handler.index('api("/connectors/oauth/start"')
         assert verify < oauth
+
+
+class TestChatPlusSelectedMissionHandoff:
+    def _fake_service(self, mission, ready=True):
+        class Orchestration:
+            def get_mission(self, mission_id):
+                return mission if mission and mission.get("id") == mission_id else None
+
+            def readiness(self, selected):
+                return {"ready": ready, "reason": "ready" if ready else "blocked"}
+
+        class Service:
+            orchestration = Orchestration()
+
+            def execute_mission(self, mission_id, goal, conversation_id):
+                return {"success": True}
+
+        return Service()
+
+    def test_execute_selected_queues_existing_mission_without_creating_new(self, auth_client, monkeypatch):
+        import app.routers.chatplus as route_module
+
+        mission = {"id": "mission-selected", "owner_id": "chat-user-a", "status": "pending", "objective": "Publish selected pin"}
+        service = self._fake_service(mission)
+        monkeypatch.setattr(route_module, "_service", lambda owner_id, client: service)
+        response = auth_client.post("/chatplus/execute-selected", json={"mission_id": "mission-selected", "conversation_id": "conv-selected"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mission"]["id"] == "mission-selected"
+        assert payload["execution"]["status"] == "QUEUED"
+        assert payload["conversation_id"] == "conv-selected"
+
+    def test_execute_selected_returns_404_for_non_owned_or_missing_mission(self, auth_client, monkeypatch):
+        import app.routers.chatplus as route_module
+
+        monkeypatch.setattr(route_module, "_service", lambda owner_id, client: self._fake_service(None))
+        response = auth_client.post("/chatplus/execute-selected", json={"mission_id": "not-owned"})
+        assert response.status_code == 404
+
+    def test_execute_selected_rejects_non_executable_state(self, auth_client, monkeypatch):
+        import app.routers.chatplus as route_module
+
+        mission = {"id": "mission-done", "status": "completed", "objective": "Already done"}
+        monkeypatch.setattr(route_module, "_service", lambda owner_id, client: self._fake_service(mission))
+        response = auth_client.post("/chatplus/execute-selected", json={"mission_id": "mission-done"})
+        assert response.status_code == 409
+
+    def test_execute_selected_rejects_blocked_mission(self, auth_client, monkeypatch):
+        import app.routers.chatplus as route_module
+
+        mission = {"id": "mission-blocked", "status": "pending", "objective": "Blocked"}
+        monkeypatch.setattr(route_module, "_service", lambda owner_id, client: self._fake_service(mission, ready=False))
+        response = auth_client.post("/chatplus/execute-selected", json={"mission_id": "mission-blocked"})
+        assert response.status_code == 409
