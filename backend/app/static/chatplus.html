@@ -2572,120 +2572,12 @@ document.getElementById("signOutButton").addEventListener("click", signOut);
     }
   });
 
-  document.getElementById("pinterestContinueToApproval").addEventListener("click", async () => {
-    if (pinterestDraftPreview.hidden || !verifiedPinterestAccount || !verifiedPinterestBoards.length) {
-      pinterestDraftStatus.hidden = false;
-      pinterestDraftStatus.textContent = "Create and review a complete Pin preview first. No approval request has been sent.";
-      return;
-    }
-    const title = document.getElementById("pinterestPreviewTitle").textContent.trim();
-    const description = document.getElementById("pinterestPreviewDescription").textContent.trim();
-    const destination = document.getElementById("pinterestPreviewDestination").href;
-    const image = document.getElementById("pinterestPreviewImage").src;
-    const boardSelect = document.getElementById("pinterestDraftBoard");
-    const board = boardSelect.selectedOptions[0]?.textContent || "";
-    const boardId = boardSelect.value || "";
-    if (!title || !description || !destination || !image || !board || !boardId) {
-      pinterestDraftStatus.hidden = false;
-      pinterestDraftStatus.textContent = "Draft haijakamilika. Hakuna ombi lililotumwa.";
-      return;
-    }
-    const button = document.getElementById("pinterestContinueToApproval");
-    button.disabled = true;
+  // Pinterest approval and publishing are owned exclusively by AEA Affiliate Hub.
+  // ChatPlus must not create approval requests or approve/reject/publish Pins.
+  document.getElementById("pinterestContinueToApproval").addEventListener("click", () => {
     pinterestDraftStatus.hidden = false;
-      pinterestDraftStatus.textContent = "Inathibitisha tena akaunti/board na kuhifadhi approval request...";
-    try {
-      const result = await api("/pinterest/draft-approval", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          description,
-          destination_url: destination,
-          image_url: image,
-          board_id: boardId,
-          mission_id: new URLSearchParams(window.location.search).get("mission_id") || null,
-          worker_id: new URLSearchParams(window.location.search).get("worker_id") || null
-        })
-      });
-      if (result.success !== true || !result.approval || result.published !== false) {
-        throw new Error("Approval request haikuthibitishwa kuwa imehifadhiwa.");
-      }
-      const approvalId = String(result.approval.id || result.approval.request_id || "");
-      pinterestDraftStatus.hidden = false;
-      pinterestDraftStatus.textContent = (result.idempotent ? "Approval request hii tayari ipo. " : "Approval request imehifadhiwa. ")
-        + (approvalId ? "ID: " + approvalId + ". " : "")
-        + "Kagua Pin preview hapo juu, kisha chagua Approve & Publish au Reject. Hakuna Pin iliyochapishwa bado.";
-
-      const priorCard = document.getElementById("pinterestApprovalActionCard");
-      if (priorCard) priorCard.remove();
-      const card = document.createElement("section");
-      card.id = "pinterestApprovalActionCard";
-      card.style.cssText = "margin:12px 0;padding:14px;border:1px solid #cfe3da;border-radius:12px;background:#f2faf6;display:grid;gap:10px;";
-      const heading = document.createElement("strong");
-      heading.textContent = "Human approval required";
-      const note = document.createElement("p");
-      note.style.cssText = "margin:0;font-size:13px;line-height:1.5;";
-      note.textContent = "Review the Pin preview above, including its image, destination and selected board. Approving may publish it to Pinterest.";
-      const actions = document.createElement("div");
-      actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
-      const approve = document.createElement("button");
-      approve.type = "button";
-      approve.textContent = "Approve & Publish";
-      approve.style.cssText = "flex:1;min-height:44px;padding:10px;border:0;border-radius:9px;background:#176b5b;color:#fff;font-weight:700;";
-      const reject = document.createElement("button");
-      reject.type = "button";
-      reject.textContent = "Reject draft";
-      reject.style.cssText = "flex:1;min-height:44px;padding:10px;border:1px solid #c66;border-radius:9px;background:#fff;color:#933;font-weight:700;";
-      const outcome = document.createElement("p");
-      outcome.style.cssText = "margin:0;font-size:13px;overflow-wrap:anywhere;";
-      approve.addEventListener("click", async () => {
-        if (!approvalId) { outcome.textContent = "Approval ID missing."; return; }
-        if (!window.confirm("Unaidhinisha Pin hii kuchapishwa kwenye Pinterest?")) return;
-        approve.disabled = true; reject.disabled = true;
-        outcome.textContent = "Submitting approval…";
-        try {
-          const response = await api("/approvals/" + encodeURIComponent(approvalId) + "/approve", { method: "POST" });
-          if (response.success !== true) throw new Error("Approval was not confirmed by Core.");
-          const raw = JSON.stringify(response);
-          const match = raw.match(/"pin_id"\s*:\s*"([^"]+)"/i);
-          outcome.textContent = match
-            ? "Pinterest returned pin_id: " + match[1] + ". Verify the Pin on the selected board."
-            : "Approval submitted and execution started. No pin_id in this response, so publishing is not yet confirmed; check the execution result.";
-          approve.textContent = "Approval submitted";
-        } catch (error) {
-          outcome.textContent = "Approval failed: " + (error instanceof Error ? error.message : String(error));
-          approve.disabled = false; reject.disabled = false;
-        }
-      });
-      reject.addEventListener("click", async () => {
-        if (!approvalId) { outcome.textContent = "Approval ID missing."; return; }
-        approve.disabled = true; reject.disabled = true;
-        outcome.textContent = "Rejecting draft…";
-        try {
-          const response = await api("/approvals/" + encodeURIComponent(approvalId) + "/reject", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reason: "Rejected by user from Pinterest preview." })
-          });
-          if (response.success !== true) throw new Error("Rejection was not confirmed by Core.");
-          outcome.textContent = "Draft rejected. No Pin was published.";
-        } catch (error) {
-          outcome.textContent = "Reject failed: " + (error instanceof Error ? error.message : String(error));
-          approve.disabled = false; reject.disabled = false;
-        }
-      });
-      actions.append(approve, reject);
-      card.append(heading, note, actions, outcome);
-      pinterestDraftStatus.insertAdjacentElement("afterend", card);
-    } catch (error) {
-      pinterestDraftStatus.hidden = false;
-      pinterestDraftStatus.textContent = "Imeshindikana kuhifadhi approval request: " + (error instanceof Error ? error.message : String(error));
-    } finally {
-      button.disabled = false;
-    }
+    pinterestDraftStatus.textContent = "Pinterest approval and publishing are managed in AEA Affiliate Hub only. Open AEA Hub to review the saved mission, approve or reject the draft, and check the verified publishing result. ChatPlus cannot submit or approve this request.";
   });
-  
 
   document.getElementById("historyButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
   document.getElementById("viewHistoryButton").addEventListener("click", () => openDrawer(document.getElementById("historyDrawer")));
