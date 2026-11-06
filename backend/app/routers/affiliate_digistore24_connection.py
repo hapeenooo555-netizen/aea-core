@@ -6,7 +6,7 @@ Supabase service client after user identity and callback state are verified.
 from __future__ import annotations
 
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
@@ -46,7 +46,7 @@ def start_connection(user_id: str = Depends(get_current_user_id)) -> dict[str, s
     client = _service_client()
     state = new_state()
     try:
-        initiated = request_user_api_key(_callback_url())
+        initiated = request_user_api_key(_callback_url(state))
         client.table("digistore24_connect_states").insert({
             "state_hash": hash_state(state),
             "user_id": user_id,
