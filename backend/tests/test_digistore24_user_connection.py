@@ -96,3 +96,46 @@ def test_call_vendor_non_success_is_safe(payload, caplog):
             _call("requestApiKey", {})
 
     assert "secret detail" not in caplog.text
+
+from app.services.digistore24_user_connection import request_user_api_key
+
+
+def test_request_user_api_key_sends_app_context():
+    payload = {
+        "result": "success",
+        "data": {
+            "request_token": "request-token",
+            "request_url": "https://www.digistore24.com/authorize",
+        },
+    }
+    with patch("app.services.digistore24_user_connection._call", return_value=payload) as call:
+        result = request_user_api_key(
+            "https://core.example.com/callback?state=abc",
+            site_url="https://hub.example.com",
+            cancel_url="https://hub.example.com/settings/integrations?digistore24=cancelled",
+        )
+
+    assert result == {
+        "request_token": "request-token",
+        "request_url": "https://www.digistore24.com/authorize",
+    }
+    call.assert_called_once_with(
+        "requestApiKey",
+        {
+            "permissions": "writable",
+            "return_url": "https://core.example.com/callback?state=abc",
+            "site_url": "https://hub.example.com",
+            "cancel_url": "https://hub.example.com/settings/integrations?digistore24=cancelled",
+            "comment": "AEA Affiliate Hub",
+        },
+    )
+
+
+@pytest.mark.parametrize("url", ["http://hub.example.com", "not-a-url"])
+def test_request_user_api_key_rejects_non_https_app_urls(url):
+    with pytest.raises(Digistore24ConnectionError, match="HTTPS"):
+        request_user_api_key(
+            "https://core.example.com/callback",
+            site_url=url,
+            cancel_url="https://hub.example.com/cancel",
+        )
