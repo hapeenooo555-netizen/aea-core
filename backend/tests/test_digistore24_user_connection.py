@@ -40,6 +40,7 @@ def test_call_http_status_error_logs_only_safe_metadata(caplog):
     request = httpx.Request("GET", "https://www.digistore24.com/api/call/requestApiKey")
     response.request = request
     response.status_code = 502
+    response.json.return_value = {"code": "INVALID_RETURN_URL", "message": "secret vendor response"}
     error = httpx.HTTPStatusError("secret vendor response", request=request, response=response)
 
     with patch("app.services.digistore24_user_connection.httpx.get", side_effect=error):
@@ -47,9 +48,27 @@ def test_call_http_status_error_logs_only_safe_metadata(caplog):
             _call("requestApiKey", {"token": "secret-token"})
 
     assert "status=502" in caplog.text
+    assert "vendor_code=INVALID_RETURN_URL" in caplog.text
     assert "secret-token" not in caplog.text
     assert "test-developer-key" not in caplog.text
     assert "secret vendor response" not in caplog.text
+
+
+def test_call_vendor_code_is_not_logged_if_unconstrained(caplog):
+    response = _response(status_code=400)
+    request = httpx.Request("GET", "https://www.digistore24.com/api/call/requestApiKey")
+    response.request = request
+    response.status_code = 400
+    response.json.return_value = {"code": "unsafe code with PII", "message": "private"}
+    error = httpx.HTTPStatusError("private", request=request, response=response)
+
+    with patch("app.services.digistore24_user_connection.httpx.get", side_effect=error):
+        with pytest.raises(Digistore24ConnectionError):
+            _call("requestApiKey", {})
+
+    assert "vendor_code=unavailable" in caplog.text
+    assert "unsafe code with PII" not in caplog.text
+    assert "private" not in caplog.text
 
 
 def test_call_transport_error_is_safe():
