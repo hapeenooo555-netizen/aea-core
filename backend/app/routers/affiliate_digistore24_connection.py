@@ -49,15 +49,7 @@ def start_connection(user_id: str = Depends(get_current_user_id)) -> dict[str, s
     client = _service_client()
     state = new_state()
     try:
-        hub_url = os.getenv("AEA_HUB_URL", "https://aea-affiliate-hub-web.onrender.com").strip().rstrip("/")
-        parsed_hub = urlparse(hub_url)
-        if parsed_hub.scheme != "https" or not parsed_hub.netloc:
-            raise HTTPException(status_code=503, detail="AEA Hub URL is not configured as HTTPS.")
-        initiated = request_user_api_key(
-            _callback_url(state),
-            site_url=hub_url,
-            cancel_url=f"{hub_url}/settings/integrations?digistore24=cancelled",
-        )
+        initiated = request_user_api_key(_callback_url(state))
         client.table("digistore24_connect_states").insert({
             "state_hash": hash_state(state),
             "user_id": user_id,
