@@ -71,7 +71,7 @@ class MissionEngine:
             payload["owner_id"] = owner_id
 
         try:
-            response = self._client.table("missions").insert(payload).execute()
+            response = db_client.table("missions").insert(payload).execute()
             record = self._normalize_mission(response.data[0]) if response.data else None
             return {"success": True, "mission": record}
         except Exception as exc:  # pragma: no cover - defensive runtime handling
