@@ -14,10 +14,14 @@ def developer_key(monkeypatch):
     monkeypatch.setenv("DIGISTORE24_DEVELOPER_API_KEY", "test-developer-key")
 
 
-def _response(status_code=200, payload=None):
+_SUCCESS = {"result": "success"}
+_UNSET = object()
+
+
+def _response(status_code=200, payload=_UNSET):
     response = Mock()
     response.status_code = status_code
-    response.json.return_value = payload if payload is not None else {"result": "success"}
+    response.json.return_value = _SUCCESS if payload is _UNSET else payload
     response.raise_for_status.return_value = None
     return response
 
