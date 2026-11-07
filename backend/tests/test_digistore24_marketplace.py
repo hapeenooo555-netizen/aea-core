@@ -51,12 +51,12 @@ def test_client_calls_documented_marketplace_operation():
 
     fake = FakeClient()
     client = Digistore24MarketplaceClient(api_key="server-secret", client=fake)
-    entries = client.list_entries(limit=5, sort_by="stats_stars")
+    entries = client.list_entries(limit=5)
     assert entries == [{"id": 1, "headline": "Example"}]
     url, kwargs = fake.call
     assert url.endswith("/listMarketplaceEntries")
     assert kwargs["headers"]["X-DS-API-KEY"] == "server-secret"
-    assert kwargs["params"] == {"sortBy": "stats_stars"}
+    assert kwargs["params"] == {}
 
 
 def test_client_rejects_api_error_without_fabricating_products():
