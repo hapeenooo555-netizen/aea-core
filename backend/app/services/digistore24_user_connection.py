@@ -142,31 +142,12 @@ def _call(function: str, params: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def request_user_api_key(
-    return_url: str,
-    *,
-    site_url: str,
-    cancel_url: str,
-    comment: str = "AEA Affiliate Hub",
-) -> dict[str, str]:
-    # Digistore24's interactive key request also receives the public app URL,
-    # cancellation destination, and a vendor-readable application comment.
-    for label, value in (("callback", return_url), ("site", site_url), ("cancel", cancel_url)):
-        parsed = urlparse(value)
-        if parsed.scheme != "https" or not parsed.netloc:
-            raise Digistore24ConnectionError(
-                f"The Digistore24 {label} URL must be an HTTPS URL."
-            )
-    payload = _call(
-        "requestApiKey",
-        {
-            "permissions": "writable",
-            "return_url": return_url,
-            "site_url": site_url,
-            "cancel_url": cancel_url,
-            "comment": comment,
-        },
-    )
+def request_user_api_key(return_url: str) -> dict[str, str]:
+    parsed = urlparse(return_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise Digistore24ConnectionError("The Digistore24 callback must be an HTTPS URL.")
+    # Official docs specify only these two requestApiKey parameters.
+    payload = _call("requestApiKey", {"permissions": "writable", "return_url": return_url})
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     token, request_url = data.get("request_token"), data.get("request_url")
     if not isinstance(token, str) or not token or not isinstance(request_url, str):
