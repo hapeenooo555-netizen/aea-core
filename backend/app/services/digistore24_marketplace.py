@@ -131,7 +131,7 @@ class Digistore24MarketplaceClient:
             )
             raise Digistore24MarketplaceError("Digistore24 marketplace response had an unexpected entries format.")
         records = [entry for entry in entries[:limit] if isinstance(entry, dict)]
-        logger.info(
+        logger.warning(
             "Digistore24 marketplace list succeeded: returned_entries=%d top_level_keys=%s sample_entry_keys=%s",
             len(entries),
             sorted(str(key) for key in payload.keys()),
