@@ -7,7 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import get_current_user_id
-from app.services.digistore24_user_connection import (\n    Digistore24ConnectionError,\n    load_connected_api_key,\n)\nfrom app.services.digistore24_marketplace import (
+from app.services.digistore24_user_connection import (
+    Digistore24ConnectionError,
+    load_connected_api_key,
+)
+from app.services.digistore24_marketplace import (
     Digistore24MarketplaceClient,
     Digistore24MarketplaceError,
 )
@@ -23,11 +27,13 @@ async def research_digistore24(
 ) -> dict[str, Any]:
     """Fetch and rank live marketplace records; never publish or create promo links."""
     try:
-        # Marketplace research uses the service-level API key configured on Render.
-        # The authenticated user dependency above still gates access to this endpoint;
-        # their personal connection credential is reserved for account-specific actions.
-        client = Digistore24MarketplaceClient()
+        # Use the authenticated affiliate's encrypted connected API key.
+        # The developer key is only for creating/retrieving user API keys.
+        api_key = load_connected_api_key(_owner_id)
+        client = Digistore24MarketplaceClient(api_key=api_key)
         return client.research(target_niches=tuple(niche), limit=limit)
+    except Digistore24ConnectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Digistore24MarketplaceError as exc:
         message = str(exc)
         code = 503 if "not configured" in message.lower() else 502
