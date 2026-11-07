@@ -5,6 +5,7 @@ No product is promoted or published by this module.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ import httpx
 from .affiliate_product_research import rank_marketplace_products
 
 API_BASE = "https://www.digistore24.com/api/call"
+logger = logging.getLogger(__name__)
 
 
 class Digistore24MarketplaceError(RuntimeError):
@@ -120,8 +122,22 @@ class Digistore24MarketplaceClient:
             data = payload.get("data")
             entries = data.get("entries") if isinstance(data, dict) else None
         if not isinstance(entries, list):
+            data = payload.get("data")
+            logger.warning(
+                "Digistore24 marketplace response shape mismatch: top_level_keys=%s data_type=%s data_keys=%s",
+                sorted(str(key) for key in payload.keys()),
+                type(data).__name__,
+                sorted(str(key) for key in data.keys()) if isinstance(data, dict) else [],
+            )
             raise Digistore24MarketplaceError("Digistore24 marketplace response had an unexpected entries format.")
-        return [entry for entry in entries[:limit] if isinstance(entry, dict)]
+        records = [entry for entry in entries[:limit] if isinstance(entry, dict)]
+        logger.info(
+            "Digistore24 marketplace list succeeded: returned_entries=%d top_level_keys=%s sample_entry_keys=%s",
+            len(entries),
+            sorted(str(key) for key in payload.keys()),
+            sorted(str(key) for key in records[0].keys()) if records else [],
+        )
+        return records
 
     def get_entry(self, entry_id: str | int) -> dict[str, Any]:
         """Fetch one marketplace entry by its marketplace entry ID."""
