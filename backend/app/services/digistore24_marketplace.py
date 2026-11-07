@@ -137,7 +137,7 @@ class Digistore24MarketplaceClient:
         return record
 
     def research(self, *, target_niches: tuple[str, ...] = ("AI tools", "digital marketing", "software"), limit: int = 10) -> dict[str, Any]:
-        entries = self.list_entries(limit=250, sort_by="stats_affiliate_profit_visitor")
+        entries = self.list_entries(limit=250)
         normalized = [normalize_marketplace_entry(entry) for entry in entries]
         result = rank_marketplace_products(normalized, target_niches=target_niches, limit=limit)
         result.update({
