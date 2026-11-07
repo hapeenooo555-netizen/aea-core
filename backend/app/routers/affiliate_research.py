@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import get_current_user_id
-from app.services.digistore24_marketplace import (
+from app.services.digistore24_user_connection import (\n    Digistore24ConnectionError,\n    load_connected_api_key,\n)\nfrom app.services.digistore24_marketplace import (
     Digistore24MarketplaceClient,
     Digistore24MarketplaceError,
 )
