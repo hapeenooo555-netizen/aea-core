@@ -131,11 +131,29 @@ class Digistore24MarketplaceClient:
             )
             raise Digistore24MarketplaceError("Digistore24 marketplace response had an unexpected entries format.")
         records = [entry for entry in entries[:limit] if isinstance(entry, dict)]
+        data = payload.get("data")
+        # Keep diagnostics structural only: never log API key, product names, IDs,
+        # descriptions, URLs, or raw response data. This distinguishes an actually
+        # empty catalog from a non-empty envelope we have not mapped yet.
+        data_keys = sorted(str(key) for key in data.keys()) if isinstance(data, dict) else []
+        collection_shapes = {
+            str(key): {
+                "type": type(value).__name__,
+                "count": len(value) if isinstance(value, (list, tuple, dict)) else None,
+            }
+            for key, value in (data.items() if isinstance(data, dict) else [])
+            if isinstance(value, (list, tuple, dict))
+        }
         logger.warning(
-            "Digistore24 marketplace list succeeded: returned_entries=%d top_level_keys=%s sample_entry_keys=%s",
+            "Digistore24 marketplace list succeeded: entries_count=%d records_count=%d "
+            "entries_type=%s top_level_keys=%s data_type=%s data_keys=%s data_collection_shapes=%s",
             len(entries),
+            len(records),
+            type(entries).__name__,
             sorted(str(key) for key in payload.keys()),
-            sorted(str(key) for key in records[0].keys()) if records else [],
+            type(data).__name__,
+            data_keys,
+            collection_shapes,
         )
         return records
 
