@@ -118,7 +118,7 @@ def test_request_user_api_key_sends_documented_parameters():
     call.assert_called_once_with(
         "requestApiKey",
         {
-            "permissions": "writable",
+            "permissions": "readonly",
             "return_url": "https://core.example.com/callback?state=abc",
         },
     )
