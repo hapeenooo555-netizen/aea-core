@@ -47,6 +47,31 @@ def _callback_url(state: str) -> str:
 @router.post("/start")
 def start_connection(user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
     client = _service_client()
+
+    # A connected user must not trigger requestApiKey again: Digistore24 creates
+    # a new API key for each authorization request. Reconnect explicitly by
+    # disconnecting first, so repeated clicks/retries do not accumulate keys.
+    try:
+        existing = (
+            client.table("digistore24_user_connections")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if getattr(existing, "data", None):
+            raise HTTPException(
+                status_code=409,
+                detail="Digistore24 is already connected. Disconnect the existing account before reconnecting.",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify the existing Digistore24 connection.",
+        ) from exc
+
     state = new_state()
     try:
         initiated = request_user_api_key(_callback_url(state))
