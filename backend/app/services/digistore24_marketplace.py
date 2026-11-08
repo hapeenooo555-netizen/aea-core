@@ -52,6 +52,8 @@ def normalize_marketplace_entry(entry: dict[str, Any]) -> dict[str, Any]:
     cancellation = _as_number(_first(entry, "stats_cancel_rate", "statsCancelRate", "cancellation_rate"))
     category = _first(entry, "product_category", "productCategory", "category") or ""
     description = _first(entry, "description", "headline") or ""
+    image_url = _first(entry, "image_url", "imageUrl", "product_image_url", "productImageUrl", "image")
+    vendor_name = _first(entry, "vendor_name", "vendorName", "vendor", "seller_name", "sellerName")
     # The authenticated marketplace API is the verification source. Eligibility still
     # requires complete performance metrics and a real URL in the record.
     return {
@@ -63,6 +65,8 @@ def normalize_marketplace_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "verified": bool(entry_id and name),
         "category": str(category),
         "description": str(description),
+        "image_url": image_url,
+        "vendor_name": str(vendor_name) if vendor_name is not None else None,
         "commission_rate": commission,
         "earnings_per_click": epc,
         "conversion_rate": conversion,
@@ -174,10 +178,14 @@ class Digistore24MarketplaceClient:
         entries = self.list_entries(limit=250)
         normalized = [normalize_marketplace_entry(entry) for entry in entries]
         result = rank_marketplace_products(normalized, target_niches=target_niches, limit=limit)
+        # Marketplace display is deliberately separate from research eligibility.
+        # Listings remain visible even when performance KPIs are absent, because
+        # those KPIs are optional for browsing and only required for ranking.
         result.update({
             "source": "Digistore24 authenticated marketplace API",
             "live_marketplace_fetch_performed": True,
             "marketplace_records_fetched": len(entries),
+            "marketplace_entries": normalized,
             "requires_human_approval_before_promotion": True,
             "published": False,
         })

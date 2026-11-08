@@ -147,7 +147,7 @@ def request_user_api_key(return_url: str) -> dict[str, str]:
     if parsed.scheme != "https" or not parsed.netloc:
         raise Digistore24ConnectionError("The Digistore24 callback must be an HTTPS URL.")
     # Official docs specify only these two requestApiKey parameters.
-    payload = _call("requestApiKey", {"permissions": "writable", "return_url": return_url})
+    payload = _call("requestApiKey", {"permissions": "readonly", "return_url": return_url})
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     token, request_url = data.get("request_token"), data.get("request_url")
     if not isinstance(token, str) or not token or not isinstance(request_url, str):

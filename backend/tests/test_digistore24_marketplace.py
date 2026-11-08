@@ -98,3 +98,69 @@ def test_client_fetches_marketplace_entry_details():
     assert entry["mainProductId"] == 456
     assert fake.call[0].endswith("/getMarketplaceEntry")
     assert fake.call[1]["params"] == {"entryId": "7"}
+
+
+def test_research_returns_catalog_entries_even_when_metrics_are_missing():
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": "success",
+                "entries": [
+                    {
+                        "id": 321,
+                        "main_product_id": 654,
+                        "headline": "Catalog product without performance data",
+                        "description": "A listed product with limited KPIs.",
+                        "product_category": "Software",
+                        "price": 29.0,
+                        "currency": "EUR",
+                        "affiliate_share": 40,
+                    }
+                ],
+            }
+
+    class FakeClient:
+        def get(self, url, **kwargs):
+            return FakeResponse()
+
+    result = Digistore24MarketplaceClient(api_key="test-key", client=FakeClient()).research(
+        target_niches=("Software",),
+        limit=10,
+    )
+
+    assert result["marketplace_records_fetched"] == 1
+    assert len(result["marketplace_entries"]) == 1
+    assert result["marketplace_entries"][0]["marketplace_entry_id"] == "321"
+    assert result["marketplace_entries"][0]["product_id"] == "654"
+    assert result["marketplace_entries"][0]["name"] == "Catalog product without performance data"
+    assert result["marketplace_entries"][0]["price"] == 29.0
+    assert result["eligible_count"] == 0
+    assert result["candidates"] == []
+    assert result["published"] is False
+
+
+def test_normalize_marketplace_entry_preserves_display_fields():
+    record = normalize_marketplace_entry({
+        "id": 88,
+        "main_product_id": 99,
+        "headline": "Product title",
+        "description": "Product description",
+        "product_category": "Education",
+        "price": 17.5,
+        "currency": "USD",
+        "affiliate_share": 35,
+        "image_url": "https://vendor.example/product.png",
+        "vendor_name": "Vendor Inc",
+    })
+
+    assert record["marketplace_entry_id"] == "88"
+    assert record["product_id"] == "99"
+    assert record["description"] == "Product description"
+    assert record["category"] == "Education"
+    assert record["price"] == 17.5
+    assert record["currency"] == "USD"
+    assert record["image_url"] == "https://vendor.example/product.png"
+    assert record["vendor_name"] == "Vendor Inc"
