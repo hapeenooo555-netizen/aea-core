@@ -127,3 +127,37 @@ def test_request_user_api_key_sends_documented_parameters():
 def test_request_user_api_key_rejects_non_https_callback():
     with pytest.raises(Digistore24ConnectionError, match="HTTPS"):
         request_user_api_key("http://core.example.com/callback")
+
+
+
+def test_unregister_user_api_key_uses_user_key_and_delete():
+    from app.services.digistore24_user_connection import unregister_user_api_key
+
+    response = _response(payload={"result": "success", "modified": True})
+    with patch("app.services.digistore24_user_connection.httpx.delete", return_value=response) as delete:
+        unregister_user_api_key("user-api-key")
+
+    delete.assert_called_once_with(
+        "https://www.digistore24.com/api/call/unregister",
+        headers={"X-DS-API-KEY": "user-api-key", "Accept": "application/json"},
+        timeout=15.0,
+    )
+
+
+def test_unregister_user_api_key_rejects_empty_key():
+    from app.services.digistore24_user_connection import unregister_user_api_key
+
+    with pytest.raises(Digistore24ConnectionError, match="invalid"):
+        unregister_user_api_key("  ")
+
+
+def test_unregister_user_api_key_failure_is_safe():
+    from app.services.digistore24_user_connection import unregister_user_api_key
+
+    response = _response(status_code=401)
+    request = httpx.Request("DELETE", "https://www.digistore24.com/api/call/unregister")
+    response.request = request
+    error = httpx.HTTPStatusError("secret", request=request, response=response)
+    with patch("app.services.digistore24_user_connection.httpx.delete", side_effect=error):
+        with pytest.raises(Digistore24ConnectionError, match="could not revoke"):
+            unregister_user_api_key("secret-user-key")

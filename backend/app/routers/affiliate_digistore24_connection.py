@@ -15,11 +15,13 @@ from app import database
 from app.dependencies import get_current_user_id
 from app.services.digistore24_user_connection import (
     Digistore24ConnectionError,
+    decrypt_api_key,
     encrypt_api_key,
     hash_state,
     new_state,
     request_user_api_key,
     retrieve_user_api_key,
+    unregister_user_api_key,
     state_expiry,
 )
 
@@ -139,9 +141,30 @@ def connection_status(user_id: str = Depends(get_current_user_id)) -> dict[str, 
 def disconnect(user_id: str = Depends(get_current_user_id)) -> dict[str, bool]:
     client = _service_client()
     try:
-        # Credential deletion is performed locally. Digistore24 unregister() needs
-        # the user's key and is intentionally not called until its API contract is tested.
+        result = (
+            client.table("digistore24_user_connections")
+            .select("api_key_ciphertext")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            return {"connected": False}
+
+        ciphertext = rows[0].get("api_key_ciphertext")
+        if not isinstance(ciphertext, str) or not ciphertext:
+            raise HTTPException(status_code=503, detail="Stored Digistore24 credential is unavailable.")
+
+        # Revoke at Digistore24 first. Keep the encrypted local credential if
+        # vendor revocation fails, so the user can retry rather than lose access.
+        api_key = decrypt_api_key(ciphertext)
+        unregister_user_api_key(api_key)
         client.table("digistore24_user_connections").delete().eq("user_id", user_id).execute()
         return {"connected": False}
+    except HTTPException:
+        raise
+    except Digistore24ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Could not disconnect Digistore24.") from exc

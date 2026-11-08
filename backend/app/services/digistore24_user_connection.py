@@ -78,6 +78,43 @@ def decrypt_api_key(ciphertext: str) -> str:
         raise Digistore24ConnectionError("Stored Digistore24 credential cannot be decrypted.") from exc
 
 
+
+def unregister_user_api_key(api_key: str) -> None:
+    """Revoke the user's own Digistore24 API key using documented unregister()."""
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise Digistore24ConnectionError("Digistore24 API key is invalid.")
+    try:
+        response = httpx.delete(
+            f"{API_BASE}/unregister",
+            headers={"X-DS-API-KEY": api_key.strip(), "Accept": "application/json"},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        vendor_code = _safe_vendor_code(exc.response)
+        logger.warning(
+            "Digistore24 API returned HTTP status; function=unregister status=%s exception=%s vendor_code=%s",
+            exc.response.status_code,
+            type(exc).__name__,
+            vendor_code or "unavailable",
+        )
+        raise Digistore24ConnectionError("Digistore24 could not revoke the connected API key.") from exc
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Digistore24 API transport failure; function=unregister exception=%s",
+            type(exc).__name__,
+        )
+        raise Digistore24ConnectionError("Could not reach Digistore24 to revoke the connected API key.") from exc
+    except ValueError as exc:
+        logger.warning("Digistore24 API returned invalid JSON; function=unregister")
+        raise Digistore24ConnectionError("Digistore24 returned an invalid unregister response.") from exc
+
+    if not isinstance(payload, dict) or str(payload.get("result", "")).lower() != "success":
+        logger.warning("Digistore24 API did not confirm success; function=unregister")
+        raise Digistore24ConnectionError("Digistore24 did not confirm API key revocation.")
+
+
 def hash_state(state: str) -> str:
     return hashlib.sha256(state.encode("utf-8")).hexdigest()
 
