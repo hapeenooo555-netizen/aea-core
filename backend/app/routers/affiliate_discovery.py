@@ -16,11 +16,12 @@ from app.dependencies import get_current_user_id
 from app.services.affiliate_networks.catalog import AffiliateNetworkRegistry
 
 router = APIRouter(prefix="/affiliate", tags=["affiliate-discovery"])
+_registry = AffiliateNetworkRegistry()
 
 
 def get_affiliate_network_registry() -> AffiliateNetworkRegistry:
-    """Return the process registry; deployments register approved adapters here."""
-    return AffiliateNetworkRegistry()
+    """Return the process-wide registry populated by approved provider adapters."""
+    return _registry
 
 
 def _decode_cursor(cursor: str | None) -> dict[str, str | None]:
