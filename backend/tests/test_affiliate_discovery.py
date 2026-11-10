@@ -82,3 +82,25 @@ def test_partnerstack_program_search_uses_bearer_and_normalizes(monkeypatch):
     assert response.json()["items"][0]["id"] == "co_1"
     assert captured["headers"]["Authorization"] == "Bearer ps-secret"
     assert "ps-secret" not in response.text
+
+
+
+def test_cj_upstream_http_error_exposes_status_but_not_provider_body(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret")
+    monkeypatch.setenv("CJ_COMPANY_ID", "12345")
+
+    class Response:
+        status_code = 400
+        headers = {"content-type": "application/xml"}
+        text = "<cj-api><error-message>private provider detail</error-message></cj-api>"
+        def raise_for_status(self):
+            import httpx
+            request = httpx.Request("GET", "https://advertiser-lookup.api.cj.com/v2/advertiser-lookup")
+            raise httpx.HTTPStatusError("bad request", request=request, response=httpx.Response(400, request=request))
+
+    monkeypatch.setattr(module.httpx, "get", lambda *args, **kwargs: Response())
+    response = client().get("/affiliate/discovery?provider=cj&q=AI")
+    assert response.status_code == 502
+    assert "upstream HTTP 400" in response.json()["detail"]
+    assert "private provider detail" not in response.text
+    assert "secret" not in response.text
