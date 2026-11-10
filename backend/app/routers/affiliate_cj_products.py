@@ -157,7 +157,7 @@ def search_cj_products(
     _, company_id = _credentials()
     link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if pid else ""
     query = (
-        "query { products(companyId: " + company_id
+        "query { products(companyId: " + _gql_string(company_id)
         + f", limit: {limit}, offset: {offset})"
         + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
         "price { amount currency }" + link_field + " } } }"
