@@ -95,6 +95,16 @@ class Digistore24MarketplaceClient:
             raise Digistore24MarketplaceError("Digistore24 API key is not configured on the server.")
         if function not in {"listMarketplaceEntries", "getMarketplaceEntry"}:
             raise ValueError("Unsupported read-only marketplace operation")
+        # Digistore24 Support confirmed that these marketplace operations do
+        # not grant third-party apps access to the affiliate-facing Marketplace
+        # catalog. They are scoped to vendor-owned product data. Do not make a
+        # misleading live request or present an empty response as an empty catalog.
+        raise Digistore24MarketplaceError(
+            "Digistore24 does not provide third-party apps access to the full affiliate "
+            "Marketplace catalog through these API operations. Choose an offer in the "
+            "official Digistore24 Marketplace and provide its approved product details "
+            "or affiliate link to AEA."
+        )
         headers = {"X-DS-API-KEY": self._api_key, "Accept": "application/json"}
         try:
             if self._client is not None:
