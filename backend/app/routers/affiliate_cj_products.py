@@ -131,7 +131,7 @@ def search_cj_products(
     query = (
         "query { products(companyId: " + _gql_string(company_id)
         + f", limit: {limit}, offset: {offset})"
-        + " { totalCount count resultList { advertiserId catalogId id title description "
+        + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
         "price { amount currency }" + link_field + " } } }"
     )
     result = _request_cj(query).get("products")

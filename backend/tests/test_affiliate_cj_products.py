@@ -42,7 +42,7 @@ def test_products_returns_normalized_provider_result_and_optional_tracking_link(
         captured["query"] = query
         return {"products": {"totalCount": 2, "resultList": [
             {"id": "p1", "advertiserId": "12", "title": "AI Toolkit",
-             "description": "Automation", "price": {"amount": "10", "currency": "USD"},
+             "description": "Automation", "imageLink": "https://images.example/p1.jpg", "price": {"amount": "10", "currency": "USD"},
              "linkCode": {"clickUrl": "https://tracking.example/p1"}},
             {"id": "p2", "advertiserId": "13", "title": "Other Product",
              "description": "Other", "price": {"amount": "5", "currency": "USD"}}
@@ -55,6 +55,8 @@ def test_products_returns_normalized_provider_result_and_optional_tracking_link(
     payload = response.json()
     assert payload["count"] == 1
     assert payload["items"][0]["id"] == "p1"
+    assert payload["items"][0]["imageLink"] == "https://images.example/p1.jpg"
+    assert "imageLink" in captured["query"]
     assert payload["tracking_links_included"] is True
     assert 'linkCode(pid: "555")' in captured["query"]
     assert "limit: 20, offset: 51" in captured["query"]
