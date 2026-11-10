@@ -25,15 +25,35 @@ AWIN_FEED_LIST_URL = "https://ui.awin.com/productdata-darwin-download/publisher/
 PARTNERSTACK_PROGRAMS_URL = "https://api.partnerstack.com/api/v2/marketplace/programs"
 
 
-def _safe_request_error(provider: str, response: httpx.Response | None = None) -> HTTPException:
+def _cj_error_summary(response: httpx.Response, token: str = "", cid: str = "") -> str | None:
+    """Extract a short CJ XML error message, redacting credentials and publisher CID."""
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError:
+        return None
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1].casefold() in {"message", "error", "error-message", "description"} and node.text:
+            summary = " ".join(node.text.split())
+            for secret in (token, cid):
+                if secret:
+                    summary = summary.replace(secret, "[redacted]")
+            summary = "".join(ch for ch in summary if ch.isprintable())[:240]
+            return summary or None
+    return None
+
+
+def _safe_request_error(provider: str, response: httpx.Response | None = None, *, token: str = "", cid: str = "") -> HTTPException:
     if response is not None and response.status_code in (401, 403):
         return HTTPException(status_code=response.status_code, detail=f"{provider} rejected the configured credentials or denied this resource.")
     if response is not None and response.status_code == 429:
         return HTTPException(status_code=429, detail=f"{provider} rate limit reached. Retry later.")
     if response is not None:
         # Surface the upstream status without echoing provider bodies, request headers, or credentials.
-        logger.warning("%s advertiser discovery returned upstream HTTP %s (content-type=%s)", provider, response.status_code, response.headers.get("content-type", "unknown"))
-        return HTTPException(status_code=502, detail=f"{provider} advertiser discovery returned upstream HTTP {response.status_code}. Check the publisher CID, API access, and provider status.")
+        summary = _cj_error_summary(response, token, cid) if provider == "CJ" else None
+        logger.warning("%s advertiser discovery returned upstream HTTP %s (content-type=%s, provider_error=%s)", provider, response.status_code, response.headers.get("content-type", "unknown"), summary or "not-provided")
+        detail = f"{provider} advertiser discovery returned upstream HTTP {response.status_code}."
+        detail += f" CJ says: {summary}" if summary else " Check the publisher CID, API access, and provider status."
+        return HTTPException(status_code=502, detail=detail)
     logger.warning("%s advertiser discovery failed before receiving an HTTP response", provider)
     return HTTPException(status_code=502, detail=f"Could not reach {provider} advertiser discovery API. Check provider availability and retry.")
 
@@ -53,7 +73,7 @@ def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
         response.raise_for_status()
         root = ET.fromstring(response.text)
     except httpx.HTTPStatusError as exc:
-        raise _safe_request_error("CJ", exc.response) from exc
+        raise _safe_request_error("CJ", exc.response, token=token, cid=cid) from exc
     except httpx.TimeoutException as exc:
         logger.warning("CJ advertiser discovery timed out")
         raise HTTPException(status_code=504, detail="CJ advertiser discovery timed out. Retry later.") from exc
