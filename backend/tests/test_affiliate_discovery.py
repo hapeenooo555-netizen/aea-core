@@ -104,3 +104,24 @@ def test_cj_upstream_http_error_exposes_status_but_not_provider_body(monkeypatch
     assert "upstream HTTP 400" in response.json()["detail"]
     assert "private provider detail" not in response.text
     assert "secret" not in response.text
+
+
+def test_cj_advertiser_lookup_prefers_explicit_requestor_cid(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret")
+    monkeypatch.setenv("CJ_COMPANY_ID", "company-123")
+    monkeypatch.setenv("CJ_REQUESTOR_CID", "publisher-456")
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = "<cj-api><advertisers total-matched=\"0\"></advertisers></cj-api>"
+        def raise_for_status(self): pass
+
+    def fake_get(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(module.httpx, "get", fake_get)
+    response = client().get("/affiliate/discovery?provider=cj")
+    assert response.status_code == 200
+    assert captured["params"]["requestor-cid"] == "publisher-456"
