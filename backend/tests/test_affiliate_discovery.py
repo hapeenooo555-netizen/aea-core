@@ -1,3 +1,4 @@
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -125,3 +126,14 @@ def test_cj_advertiser_lookup_prefers_explicit_requestor_cid(monkeypatch):
     response = client().get("/affiliate/discovery?provider=cj")
     assert response.status_code == 200
     assert captured["params"]["requestor-cid"] == "publisher-456"
+
+
+def test_cj_error_summary_extracts_xml_message_and_redacts_credentials():
+    response = httpx.Response(400, content=b"<cj-api><error-message>Invalid requestor CID 987654 for token abc-secret</error-message></cj-api>", headers={"content-type": "application/xml"})
+    summary = module._cj_error_summary(response, token="abc-secret", cid="987654")
+    assert summary == "Invalid requestor CID [redacted] for token [redacted]"
+
+
+def test_cj_error_summary_ignores_unstructured_provider_body():
+    response = httpx.Response(400, content=b"<html>bad request</html>")
+    assert module._cj_error_summary(response) is None
