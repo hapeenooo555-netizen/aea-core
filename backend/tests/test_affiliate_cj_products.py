@@ -28,7 +28,7 @@ def test_product_feed_summary_uses_server_credentials_and_documented_query(monke
 
     assert response.status_code == 200
     assert response.json()["items"][0]["feedName"] == "Catalog"
-    assert 'productFeeds(companyId: "987654")' in captured["query"]
+    assert 'productFeeds(companyId: 987654)' in captured["query"]
     assert "secret-token" not in response.text
     assert "987654" not in response.text
 

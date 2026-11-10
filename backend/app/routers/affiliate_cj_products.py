@@ -117,10 +117,10 @@ def list_cj_product_feeds(
 ) -> dict[str, Any]:
     """List feed summaries for all accessible advertisers or one advertiser."""
     _, company_id = _credentials()
-    partner_filter = f', partnerIds: [{_gql_string(advertiser_id)}]' if advertiser_id else ""
+    partner_filter = f", partnerIds: [{advertiser_id}]" if advertiser_id else ""
     # CJ's documented publisher query supports companyId and partnerIds here.
     query = (
-        "{ productFeeds(companyId: " + _gql_string(company_id)
+        "{ productFeeds(companyId: " + company_id
         + partner_filter + ") { totalCount count resultList { adId feedName advertiserId "
         "productCount advertiserCountry lastUpdated advertiserName language currency "
         "sourceFeedType } } }"
