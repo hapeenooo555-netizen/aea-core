@@ -73,7 +73,7 @@ def verify_cj_connection(
     # Publisher query: no partnerIds means CJ returns feeds across advertisers
     # accessible to this publisher, including joined and non-joined advertisers.
     query = (
-        "{ productFeeds(companyId: " + _gql_string(company_id)
+        "{ productFeeds(companyId: " + company_id
         + ") { totalCount count resultList { adId advertiserId } } }"
     )
     result = _request_cj(query).get("productFeeds")
