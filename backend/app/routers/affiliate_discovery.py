@@ -10,6 +10,7 @@ import io
 import os
 import xml.etree.ElementTree as ET
 from typing import Any
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/affiliate/discovery", tags=["affiliate-discovery"])
+logger = logging.getLogger(__name__)
 
 CJ_LOOKUP_URL = "https://advertiser-lookup.api.cj.com/v2/advertiser-lookup"
 AWIN_FEED_LIST_URL = "https://ui.awin.com/productdata-darwin-download/publisher/{publisher_id}/{feed_key}/1/feedList"
@@ -28,7 +30,12 @@ def _safe_request_error(provider: str, response: httpx.Response | None = None) -
         return HTTPException(status_code=response.status_code, detail=f"{provider} rejected the configured credentials or denied this resource.")
     if response is not None and response.status_code == 429:
         return HTTPException(status_code=429, detail=f"{provider} rate limit reached. Retry later.")
-    return HTTPException(status_code=502, detail=f"{provider} discovery request failed. Check API access and retry.")
+    if response is not None:
+        # Surface the upstream status without echoing provider bodies, request headers, or credentials.
+        logger.warning("%s advertiser discovery returned upstream HTTP %s (content-type=%s)", provider, response.status_code, response.headers.get("content-type", "unknown"))
+        return HTTPException(status_code=502, detail=f"{provider} advertiser discovery returned upstream HTTP {response.status_code}. Check the publisher CID, API access, and provider status.")
+    logger.warning("%s advertiser discovery failed before receiving an HTTP response", provider)
+    return HTTPException(status_code=502, detail=f"Could not reach {provider} advertiser discovery API. Check provider availability and retry.")
 
 
 def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
@@ -47,8 +54,15 @@ def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
         root = ET.fromstring(response.text)
     except httpx.HTTPStatusError as exc:
         raise _safe_request_error("CJ", exc.response) from exc
-    except (httpx.HTTPError, ET.ParseError) as exc:
-        raise HTTPException(status_code=502, detail="CJ returned an unavailable or invalid advertiser response.") from exc
+    except httpx.TimeoutException as exc:
+        logger.warning("CJ advertiser discovery timed out")
+        raise HTTPException(status_code=504, detail="CJ advertiser discovery timed out. Retry later.") from exc
+    except httpx.HTTPError as exc:
+        logger.warning("CJ advertiser discovery transport failure: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Could not reach CJ advertiser discovery API. Check provider availability and retry.") from exc
+    except ET.ParseError as exc:
+        logger.warning("CJ advertiser discovery returned invalid XML")
+        raise HTTPException(status_code=502, detail="CJ advertiser discovery returned an invalid XML response. Check CJ API access and retry.") from exc
     advertisers = root.find(".//advertisers")
     items: list[dict[str, Any]] = []
     if advertisers is not None:
