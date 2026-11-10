@@ -36,7 +36,8 @@ async def research_digistore24(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Digistore24MarketplaceError as exc:
         message = str(exc)
-        code = 503 if "not configured" in message.lower() else 502
+        lowered = message.lower()
+        code = 503 if "not configured" in lowered else 501 if "third-party apps" in lowered else 502
         raise HTTPException(status_code=code, detail=message) from exc
 
 
