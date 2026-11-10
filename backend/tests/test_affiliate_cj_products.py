@@ -49,7 +49,7 @@ def test_products_returns_normalized_provider_result_and_optional_tracking_link(
         ]}}
 
     monkeypatch.setattr(module, "_request_cj", fake_request)
-    response = _client().get("/affiliate/cj/products?q=AI&advertiser_id=12&pid=555")
+    response = _client().get("/affiliate/cj/products?q=AI&advertiser_id=12&pid=555&limit=20&offset=51")
 
     assert response.status_code == 200
     payload = response.json()
@@ -57,6 +57,9 @@ def test_products_returns_normalized_provider_result_and_optional_tracking_link(
     assert payload["items"][0]["id"] == "p1"
     assert payload["tracking_links_included"] is True
     assert 'linkCode(pid: "555")' in captured["query"]
+    assert "limit: 20, offset: 51" in captured["query"]
+    assert payload["limit"] == 20
+    assert payload["offset"] == 51
     assert "secret-token" not in response.text
 
 
