@@ -24,30 +24,41 @@ def test_discovery_reports_missing_credentials_without_exposing_secrets(monkeypa
     assert all(item["configured"] is False for item in payload["providers"])
 
 
-def test_cj_advertiser_search_uses_publisher_credentials_and_normalizes_xml(monkeypatch):
+def test_cj_discovery_uses_publisher_product_feed_api(monkeypatch):
     monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret")
     monkeypatch.setenv("CJ_COMPANY_ID", "12345")
     captured = {}
-
-    class Response:
-        status_code = 200
-        text = """<cj-api><advertisers total-matched="1"><advertiser><advertiser-id>88</advertiser-id><advertiser-name>Example</advertiser-name><program-url>https://example.com</program-url><relationship-status>notjoined</relationship-status><primary-category><parent>Software</parent><child>AI</child></primary-category></advertiser></advertisers></cj-api>"""
-        def raise_for_status(self): pass
-
-    def fake_get(url, **kwargs):
-        captured.update(url=url, **kwargs)
-        return Response()
-
-    monkeypatch.setattr(module.httpx, "get", fake_get)
+    def fake_request(query):
+        captured["query"] = query
+        return {"productFeeds": {"totalCount": 1, "count": 1, "resultList": [{
+            "adId": "feed-1", "feedName": "AI Tools Feed", "advertiserId": "88",
+            "productCount": 42, "advertiserCountry": "US", "advertiserName": "Example AI"
+        }]}}
+    monkeypatch.setattr("app.routers.affiliate_cj_products._request_cj", fake_request)
     response = client().get("/affiliate/discovery?provider=cj&q=AI")
     assert response.status_code == 200
     item = response.json()["items"][0]
-    assert item["name"] == "Example"
-    assert item["relationship_status"] == "notjoined"
-    assert item["category"] == ["Software", "AI"]
-    assert captured["headers"]["Authorization"] == "Bearer secret"
-    assert captured["params"]["requestor-cid"] == "12345"
-    assert "secret" not in response.text
+    assert item["name"] == "Example AI"
+    assert item["item_type"] == "product_feed"
+    assert item["product_count"] == 42
+    assert "productFeeds(companyId:" in captured["query"]
+    assert "advertiser-lookup.api.cj.com" not in captured["query"]
+
+
+def test_cj_discovery_filters_accessible_feeds_by_query(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret")
+    monkeypatch.setenv("CJ_COMPANY_ID", "12345")
+    monkeypatch.setattr("app.routers.affiliate_cj_products._request_cj", lambda query: {
+        "productFeeds": {"totalCount": 2, "resultList": [
+            {"adId": "1", "advertiserId": "11", "advertiserName": "AI Tools Co", "feedName": "Main"},
+            {"adId": "2", "advertiserId": "22", "advertiserName": "Home Goods", "feedName": "Kitchen"}
+        ]}
+    })
+    response = client().get("/affiliate/discovery?provider=cj&q=AI")
+    assert response.status_code == 200
+    assert [x["id"] for x in response.json()["items"]] == ["11"]
+
+
 
 
 def test_awin_feed_list_never_returns_feed_download_url(monkeypatch):
@@ -106,34 +117,3 @@ def test_cj_upstream_http_error_exposes_status_but_not_provider_body(monkeypatch
     assert "private provider detail" not in response.text
     assert "secret" not in response.text
 
-
-def test_cj_advertiser_lookup_prefers_explicit_requestor_cid(monkeypatch):
-    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret")
-    monkeypatch.setenv("CJ_COMPANY_ID", "company-123")
-    monkeypatch.setenv("CJ_REQUESTOR_CID", "publisher-456")
-    captured = {}
-
-    class Response:
-        status_code = 200
-        text = "<cj-api><advertisers total-matched=\"0\"></advertisers></cj-api>"
-        def raise_for_status(self): pass
-
-    def fake_get(url, **kwargs):
-        captured.update(url=url, **kwargs)
-        return Response()
-
-    monkeypatch.setattr(module.httpx, "get", fake_get)
-    response = client().get("/affiliate/discovery?provider=cj")
-    assert response.status_code == 200
-    assert captured["params"]["requestor-cid"] == "publisher-456"
-
-
-def test_cj_error_summary_extracts_xml_message_and_redacts_credentials():
-    response = httpx.Response(400, content=b"<cj-api><error-message>Invalid requestor CID 987654 for token abc-secret</error-message></cj-api>", headers={"content-type": "application/xml"})
-    summary = module._cj_error_summary(response, token="abc-secret", cid="987654")
-    assert summary == "Invalid requestor CID [redacted] for token [redacted]"
-
-
-def test_cj_error_summary_ignores_unstructured_provider_body():
-    response = httpx.Response(400, content=b"<html>bad request</html>")
-    assert module._cj_error_summary(response) is None

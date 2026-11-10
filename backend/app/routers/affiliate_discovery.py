@@ -59,50 +59,60 @@ def _safe_request_error(provider: str, response: httpx.Response | None = None, *
 
 
 def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
-    token = os.getenv("CJ_PERSONAL_ACCESS_TOKEN", "").strip()
-    cid = (os.getenv("CJ_REQUESTOR_CID", "").strip() or os.getenv("CJ_COMPANY_ID", "").strip())
-    if not token or not cid:
-        return {"provider": "cj", "configured": False, "items": [], "message": "CJ publisher token and company ID are required."}
-    params: dict[str, str | int] = {"requestor-cid": cid, "records-per-page": min(limit, 100), "page-number": 1}
-    if query.strip():
-        params["keywords"] = query.strip()[:120]
-    else:
-        params["advertiser-ids"] = "joined"
-    try:
-        response = httpx.get(CJ_LOOKUP_URL, params=params, headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"}, timeout=20.0)
-        response.raise_for_status()
-        root = ET.fromstring(response.text)
-    except httpx.HTTPStatusError as exc:
-        raise _safe_request_error("CJ", exc.response, token=token, cid=cid) from exc
-    except httpx.TimeoutException as exc:
-        logger.warning("CJ advertiser discovery timed out")
-        raise HTTPException(status_code=504, detail="CJ advertiser discovery timed out. Retry later.") from exc
-    except httpx.HTTPError as exc:
-        logger.warning("CJ advertiser discovery transport failure: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="Could not reach CJ advertiser discovery API. Check provider availability and retry.") from exc
-    except ET.ParseError as exc:
-        logger.warning("CJ advertiser discovery returned invalid XML")
-        raise HTTPException(status_code=502, detail="CJ advertiser discovery returned an invalid XML response. Check CJ API access and retry.") from exc
-    advertisers = root.find(".//advertisers")
+    """Discover feeds already accessible to this CJ publisher via Product Feed GraphQL.
+
+    The separate Advertiser Lookup REST API may deny a publisher CID even when
+    the Product Feed API is available. Use the same token/company credentials
+    as the Hub's CJ catalog and expose only feeds the publisher can already access.
+    """
+    from app.routers.affiliate_cj_products import _gql_string, _request_cj
+
+    # Product Feed API accepts companyId and returns only publisher-accessible feeds.
+    gql = (
+        "{ productFeeds(companyId: " + _gql_string(os.getenv("CJ_COMPANY_ID", "").strip())
+        + ") { totalCount count resultList { adId feedName advertiserId "
+        "productCount advertiserCountry lastUpdated advertiserName language currency "
+        "sourceFeedType } } }"
+    )
+    data = _request_cj(gql)
+    feeds = data.get("productFeeds")
+    if not isinstance(feeds, dict):
+        raise HTTPException(status_code=502, detail="CJ Product Feed API did not return product feed summaries.")
+    needle = query.casefold().strip()
     items: list[dict[str, Any]] = []
-    if advertisers is not None:
-        for node in advertisers.findall("advertiser"):
-            def value(name: str) -> str | None:
-                el = node.find(name)
-                return (el.text or "").strip() if el is not None and el.text else None
-            items.append({
-                "id": value("advertiser-id"),
-                "name": value("advertiser-name"),
-                "website": value("program-url"),
-                "relationship_status": value("relationship-status"),
-                "account_status": value("account-status"),
-                "category": [x.text.strip() for x in node.findall("./primary-category/*") if x.text],
-                "seven_day_epc": value("seven-day-epc"),
-                "three_month_epc": value("three-month-epc"),
-                "source": "cj",
-                "item_type": "advertiser",
-            })
-    return {"provider": "cj", "configured": True, "total_matched": int(advertisers.attrib.get("total-matched", len(items))) if advertisers is not None else 0, "items": items}
+    for row in feeds.get("resultList") or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("advertiserName") or "")
+        feed_name = str(row.get("feedName") or "")
+        if needle and needle not in f"{name} {feed_name} {row.get('sourceFeedType') or ''}".casefold():
+            continue
+        items.append({
+            "id": str(row.get("advertiserId") or row.get("adId") or ""),
+            "name": name or feed_name or "CJ advertiser product feed",
+            "website": None,
+            "relationship_status": "publisher_accessible_feed",
+            "account_status": None,
+            "category": [],
+            "feed_id": row.get("adId"),
+            "feed_name": feed_name,
+            "product_count": row.get("productCount"),
+            "region": row.get("advertiserCountry"),
+            "language": row.get("language"),
+            "currency": row.get("currency"),
+            "source": "cj",
+            "item_type": "product_feed",
+        })
+        if len(items) >= limit:
+            break
+    return {
+        "provider": "cj",
+        "configured": True,
+        "item_type": "product_feed",
+        "total_matched": feeds.get("totalCount", len(items)),
+        "items": items,
+        "note": "CJ Advertiser Lookup is not used. Results are product feeds already accessible to this publisher account.",
+    }
 
 
 def _awin_feeds(query: str, limit: int) -> dict[str, Any]:
