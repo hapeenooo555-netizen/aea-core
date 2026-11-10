@@ -87,7 +87,7 @@ def test_verify_queries_publisher_product_feeds(monkeypatch):
     assert payload["status"] == "connected"
     assert payload["accessible_feed_count"] == 3
     assert payload["feeds_in_sample"] == 3
-    assert 'productFeeds(companyId: "987654")' in captured["query"]
+    assert 'productFeeds(companyId: 987654)' in captured["query"]
     assert "partnerIds" not in captured["query"]
     assert "secret-placeholder" not in response.text
     assert "987654" not in response.text
