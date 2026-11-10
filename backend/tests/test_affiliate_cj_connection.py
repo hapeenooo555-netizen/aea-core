@@ -121,5 +121,5 @@ def test_verify_does_not_trust_company_id_from_request_body(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert 'productFeeds(companyId: "987654")' in captured["query"]
+    assert 'productFeeds(companyId: 987654)' in captured["query"]
     assert 'companyId: "111111"' not in captured["query"]
