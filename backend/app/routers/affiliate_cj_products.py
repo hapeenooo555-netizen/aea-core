@@ -85,19 +85,17 @@ def _gql_string(value: str) -> str:
 @router.get("/product-feeds")
 def list_cj_product_feeds(
     advertiser_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
-    limit: int = Query(default=50, ge=1, le=250),
-    offset: int = Query(default=0, ge=0),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
-    """List feed summaries for joined and non-joined advertisers."""
+    """List feed summaries for all accessible advertisers or one advertiser."""
     _, company_id = _credentials()
     partner_filter = f', partnerIds: [{_gql_string(advertiser_id)}]' if advertiser_id else ""
+    # CJ's documented publisher query supports companyId and partnerIds here.
     query = (
         "{ productFeeds(companyId: " + _gql_string(company_id)
-        + partner_filter + f", limit: {limit}, offset: {offset}) {{ "
-        "totalCount count resultList { adId feedName advertiserId productCount "
-        "advertiserCountry lastUpdated advertiserName language currency sourceFeedType "
-        "} } }"
+        + partner_filter + ") { totalCount count resultList { adId feedName advertiserId "
+        "productCount advertiserCountry lastUpdated advertiserName language currency "
+        "sourceFeedType } } }"
     )
     result = _request_cj(query).get("productFeeds")
     if not isinstance(result, dict):
@@ -109,9 +107,6 @@ def list_cj_product_feeds(
         "items": items,
         "count": result.get("count", len(items)),
         "total": result.get("totalCount", len(items)),
-        "limit": limit,
-        "offset": offset,
-        "next_offset": offset + len(items) if items else None,
         "read_only": True,
     }
 
@@ -121,40 +116,42 @@ def search_cj_products(
     q: str = Query(default="", max_length=120),
     advertiser_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
     pid: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
-    limit: int = Query(default=50, ge=1, le=250),
-    offset: int = Query(default=0, ge=0),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
-    """Search publisher-accessible CJ products and optionally create tracking links."""
+    """Search CJ shopping products and optionally return publisher tracking links.
+
+    CJ returns up to its documented default product page size. Filtering by
+    advertiser and keywords is applied to the returned page; no undocumented
+    pagination arguments are sent.
+    """
     _, company_id = _credentials()
-    args = [f"companyId: {_gql_string(company_id)}"]
-    if q.strip():
-        args.append(f"keywords: [{_gql_string(q.strip()[:120])}]")
-    if advertiser_id:
-        args.append(f"partnerIds: [{_gql_string(advertiser_id)}]")
-    args.extend([f"limit: {limit}", f"offset: {offset}"])
     link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if pid else ""
     query = (
-        "query { products(" + ", ".join(args) + ") { totalCount count resultList { "
-        "advertiserId catalogId id title description price { amount currency }"
-        + link_field + " } } }"
+        "query { products(companyId: " + _gql_string(company_id)
+        + ") { totalCount resultList { advertiserId catalogId id title description "
+        "price { amount currency }" + link_field + " } } }"
     )
     result = _request_cj(query).get("products")
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="CJ response did not contain product results.")
     items = result.get("resultList") or []
+    needle = q.casefold().strip()
+    if needle:
+        items = [
+            item for item in items
+            if needle in " ".join(str(item.get(key) or "") for key in ("title", "description")).casefold()
+        ]
+    if advertiser_id:
+        items = [item for item in items if str(item.get("advertiserId") or "") == advertiser_id]
     return {
         "network": "cj",
         "item_type": "product",
         "items": items,
-        "count": result.get("count", len(items)),
+        "count": len(items),
         "total": result.get("totalCount", len(items)),
-        "limit": limit,
-        "offset": offset,
-        "next_offset": offset + len(items) if items else None,
         "tracking_links_included": bool(pid),
         "read_only": True,
+        "filter_applied_locally": bool(q.strip() or advertiser_id),
     }
-
 
 __all__ = ["router"]
