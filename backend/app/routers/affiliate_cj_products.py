@@ -37,7 +37,7 @@ def _safe_cj_error(response: httpx.Response, token: str, company_id: str) -> str
     for secret in (token, company_id):
         if secret:
             message = message.replace(secret, "[redacted]")
-    message = re.sub(r"[^\\x20-\\x7e]", " ", message)
+    message = re.sub(r"[^\x20-\x7e]", " ", message)
     message = " ".join(message.split())[:240]
     return message or None
 
