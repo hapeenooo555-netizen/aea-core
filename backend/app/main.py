@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import database
-from app.routers import affiliate_cj_connection, affiliate_discovery, affiliate_automation, affiliate_digistore24_connection, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, chatplus, chatplus_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers
+from app.routers import affiliate_cj_connection, affiliate_cj_products, affiliate_discovery, affiliate_automation, affiliate_digistore24_connection, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, chatplus, chatplus_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers
 
 # Import supabase_client for test compatibility
 supabase_client = database.supabase_client
@@ -87,6 +87,7 @@ app.include_router(affiliate_digistore24_connection.router, tags=["digistore24-c
 app.include_router(affiliate_partnerize.router, tags=["affiliate-partnerize"])
 app.include_router(affiliate_automation.router, tags=["affiliate-automation"])
 app.include_router(affiliate_cj_connection.router, tags=["affiliate-cj"])
+app.include_router(affiliate_cj_products.router, tags=["affiliate-cj"])
 app.include_router(affiliate_discovery.router, tags=["affiliate-discovery"])
 app.include_router(chatplus.router, tags=["chatplus"])
 app.include_router(chatplus_pinterest.router, tags=["chatplus"])
