@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user_id
-from app.routers.affiliate_cj_products import _gql_string, _request_cj
+from app.routers.affiliate_cj_products import _request_cj
 
 router = APIRouter(prefix="/affiliate/cj", tags=["affiliate-cj"])
 CJ_TOKEN_ENV = "CJ_PERSONAL_ACCESS_TOKEN"
