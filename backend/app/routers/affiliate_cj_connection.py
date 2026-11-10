@@ -22,7 +22,11 @@ CJ_TOKEN_ENV = "CJ_PERSONAL_ACCESS_TOKEN"
 
 
 class CJVerifyRequest(BaseModel):
-    company_id: str = Field(min_length=1, max_length=32, pattern=r"^[0-9]+$")
+    # Optional for Hub callers: the publisher CID should normally come from
+    # the server environment, never from browser configuration.
+    company_id: str | None = Field(
+        default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"
+    )
 
 
 @router.get("/connection/status")
@@ -55,11 +59,24 @@ def cj_connection_status(
 
 @router.post("/connection/verify")
 def verify_cj_connection(
-    body: CJVerifyRequest,
+    body: CJVerifyRequest | None = None,
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """Verify the PAT against the publisher's own Promotional Properties query."""
     token = os.getenv(CJ_TOKEN_ENV, "").strip()
+    # Prefer the server-side publisher CID. The optional body field remains
+    # for backwards compatibility with existing authenticated clients.
+    company_id = os.getenv("CJ_COMPANY_ID", "").strip() or ((body.company_id if body else None) or "").strip()
+    if not company_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="CJ_COMPANY_ID is not configured on AEA Core.",
+        )
+    if not company_id.isdigit() or len(company_id) > 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="CJ_COMPANY_ID on AEA Core must contain 1 to 32 digits.",
+        )
     if not token:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -67,7 +84,7 @@ def verify_cj_connection(
         )
 
     query = (
-        '{ promotionalProperties(publisherId: "' + body.company_id
+        '{ promotionalProperties(publisherId: "' + company_id
         + '", status: ACTIVE, limit: 1, offset: 0) { totalCount } }'
     )
     try:
