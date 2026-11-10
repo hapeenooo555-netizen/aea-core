@@ -69,7 +69,7 @@ def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
 
     # Product Feed API accepts companyId and returns only publisher-accessible feeds.
     gql = (
-        "{ productFeeds(companyId: " + _gql_string(os.getenv("CJ_COMPANY_ID", "").strip())
+        "{ productFeeds(companyId: " + os.getenv("CJ_COMPANY_ID", "").strip()
         + ") { totalCount count resultList { adId feedName advertiserId "
         "productCount advertiserCountry lastUpdated advertiserName language currency "
         "sourceFeedType } } }"
