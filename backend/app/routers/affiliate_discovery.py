@@ -40,7 +40,7 @@ def _safe_request_error(provider: str, response: httpx.Response | None = None) -
 
 def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
     token = os.getenv("CJ_PERSONAL_ACCESS_TOKEN", "").strip()
-    cid = os.getenv("CJ_COMPANY_ID", "").strip()
+    cid = (os.getenv("CJ_REQUESTOR_CID", "").strip() or os.getenv("CJ_COMPANY_ID", "").strip())
     if not token or not cid:
         return {"provider": "cj", "configured": False, "items": [], "message": "CJ publisher token and company ID are required."}
     params: dict[str, str | int] = {"requestor-cid": cid, "records-per-page": min(limit, 100), "page-number": 1}
