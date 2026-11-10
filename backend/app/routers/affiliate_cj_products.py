@@ -116,6 +116,8 @@ def search_cj_products(
     q: str = Query(default="", max_length=120),
     advertiser_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
     pid: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
+    limit: int = Query(default=50, ge=1, le=10000),
+    offset: int = Query(default=1, ge=1),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """Search CJ shopping products and optionally return publisher tracking links.
@@ -128,7 +130,8 @@ def search_cj_products(
     link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if pid else ""
     query = (
         "query { products(companyId: " + _gql_string(company_id)
-        + ") { totalCount resultList { advertiserId catalogId id title description "
+        + f", limit: {limit}, offset: {offset})"
+        + " { totalCount count resultList { advertiserId catalogId id title description "
         "price { amount currency }" + link_field + " } } }"
     )
     result = _request_cj(query).get("products")
@@ -148,7 +151,11 @@ def search_cj_products(
         "item_type": "product",
         "items": items,
         "count": len(items),
+        "provider_count": result.get("count", len(result.get("resultList") or [])),
         "total": result.get("totalCount", len(items)),
+        "limit": limit,
+        "offset": offset,
+        "next_offset": offset + limit if offset + limit <= result.get("totalCount", 0) else None,
         "tracking_links_included": bool(pid),
         "read_only": True,
         "filter_applied_locally": bool(q.strip() or advertiser_id),
