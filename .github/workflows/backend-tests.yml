@@ -57,5 +57,4 @@ jobs:
           tests/test_p1_7b_employee_slice.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
-          tests/test_chatplus.py
-          PYTHONPATH=backend python -m pytest -q backend/tests/test_affiliate_cj_connection.py
+          tests/test_chatplus.py && PYTHONPATH=backend python -m pytest -q backend/tests/test_affiliate_cj_connection.py
