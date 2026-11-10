@@ -104,3 +104,65 @@ def test_verify_maps_provider_permission_error_to_403(monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+
+def test_verify_uses_server_company_id_without_request_body(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret-placeholder")
+    monkeypatch.setenv("CJ_COMPANY_ID", "987654")
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"promotionalProperties": {"totalCount": 2}}}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(url=url, headers=headers, json=json, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(module.httpx, "post", fake_post)
+    response = _client().post("/affiliate/cj/connection/verify")
+
+    assert response.status_code == 200
+    assert response.json()["authentication_verified"] is True
+    assert 'publisherId: "987654"' in captured["json"]["query"]
+    assert "987654" not in response.text
+
+
+def test_verify_requires_server_company_id_when_body_omitted(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret-placeholder")
+    monkeypatch.delenv("CJ_COMPANY_ID", raising=False)
+
+    response = _client().post("/affiliate/cj/connection/verify")
+
+    assert response.status_code == 503
+    assert "CJ_COMPANY_ID" in response.json()["detail"]
+
+
+def test_server_company_id_takes_precedence_over_request_body(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret-placeholder")
+    monkeypatch.setenv("CJ_COMPANY_ID", "987654")
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"promotionalProperties": {"totalCount": 0}}}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["query"] = json["query"]
+        return FakeResponse()
+
+    monkeypatch.setattr(module.httpx, "post", fake_post)
+    response = _client().post(
+        "/affiliate/cj/connection/verify", json={"company_id": "111111"}
+    )
+
+    assert response.status_code == 200
+    assert 'publisherId: "987654"' in captured["query"]
+    assert 'publisherId: "111111"' not in captured["query"]
