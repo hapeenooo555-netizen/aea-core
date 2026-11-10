@@ -7,7 +7,9 @@ tracking links; it is never required for read-only product discovery.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -17,6 +19,27 @@ from app.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/affiliate/cj", tags=["affiliate-cj"])
 CJ_PRODUCT_FEED_URL = "https://ads.api.cj.com/query"
+logger = logging.getLogger(__name__)
+
+
+def _safe_cj_error(response: httpx.Response, token: str, company_id: str) -> str | None:
+    """Extract a short provider diagnostic while redacting credentials and IDs."""
+    message = ""
+    try:
+        payload = response.json()
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if isinstance(errors, list):
+            message = "; ".join(str(item.get("message") or "") for item in errors if isinstance(item, dict))
+    except (ValueError, TypeError):
+        message = ""
+    if not message:
+        message = getattr(response, "text", "") or ""
+    for secret in (token, company_id):
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    message = re.sub(r"[^\x20-\x7e]", " ", message)
+    message = " ".join(message.split())[:240]
+    return message or None
 
 
 def _credentials() -> tuple[str, str]:
@@ -36,7 +59,7 @@ def _credentials() -> tuple[str, str]:
 
 
 def _request_cj(query: str) -> dict[str, Any]:
-    token, _ = _credentials()
+    token, company_id = _credentials()
     try:
         response = httpx.post(
             CJ_PRODUCT_FEED_URL,
@@ -51,7 +74,12 @@ def _request_cj(query: str) -> dict[str, Any]:
         if response.status_code == 401:
             raise HTTPException(status_code=401, detail="CJ rejected the configured Personal Access Token.")
         if response.status_code == 403:
-            raise HTTPException(status_code=403, detail="CJ denied Product Feed API access for this publisher.")
+            summary = _safe_cj_error(response, token, company_id)
+            logger.warning("CJ Product Feed API denied request (HTTP 403, provider_error=%s)", summary or "not-provided")
+            detail = "CJ denied Product Feed API access for this publisher."
+            if summary:
+                detail += f" CJ response: {summary}"
+            raise HTTPException(status_code=403, detail=detail)
         if response.status_code == 429:
             raise HTTPException(status_code=429, detail="CJ Product Feed API rate limit reached. Retry later.")
         if response.status_code >= 500:
