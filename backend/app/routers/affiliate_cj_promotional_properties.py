@@ -105,7 +105,7 @@ def list_promotional_properties(
         "... on PromotionalPropertyEmailDetails { emailAddress emailOpenRate emailMailingListSize } "
         "... on PromotionalPropertyMobileAppDetails { mobileAppName mobileAppDownloadInformation { mobileAppPlatform mobileAppDownloadLink } } "
         "... on PromotionalPropertyOtherDetails { otherDescription } "
-        "... on PromotionalPropertyBrowserExtensionDetails { browserExtensionName browserExtensionDescription } "
+        " ... on PromotionalPropertyBrowserExtensionDetails { browserExtensionName browserExtensionDescription browserExtensionDownloadInformation { browserExtensionBrowser browserExtensionDownloadLink } } "
         "... on PromotionalPropertyPaidSearchDetails { paidSearchEngineDescription } "
         "... on PromotionalPropertyPaidDisplayAdsDetails { paidDisplayAdsDescription } "
         "... on PromotionalPropertyServicesAndToolsDetails { servicesAndToolsMarketingSiteUrl } "
