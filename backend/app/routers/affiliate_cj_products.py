@@ -155,14 +155,29 @@ def search_cj_products(
     pagination arguments are sent.
     """
     _, company_id = _credentials()
-    link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if pid else ""
-    query = (
-        "query { products(companyId: " + _gql_string(company_id)
-        + f", limit: {limit}, offset: {offset})"
-        + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
-        "price { amount currency }" + link_field + " } } }"
-    )
-    result = _request_cj(query).get("products")
+    def build_query(include_tracking: bool) -> str:
+        link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if include_tracking and pid else ""
+        return (
+            "query { products(companyId: " + _gql_string(company_id)
+            + f", limit: {limit}, offset: {offset})"
+            + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
+            "price { amount currency }" + link_field + " } } }"
+        )
+
+    tracking_links_included = bool(pid)
+    tracking_link_error: str | None = None
+    try:
+        result = _request_cj(build_query(include_tracking=True)).get("products")
+    except HTTPException as exc:
+        # A publisher may be allowed to browse product details while CJ rejects
+        # link generation for a particular PID. Retry once without linkCode so
+        # the marketplace remains usable; never fabricate an affiliate URL.
+        if exc.status_code != 403 or not pid:
+            raise
+        tracking_links_included = False
+        tracking_link_error = "CJ denied tracking-link generation for the selected PID. Products were retried without affiliate links."
+        result = _request_cj(build_query(include_tracking=False)).get("products")
+
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="CJ response did not contain product results.")
     items = result.get("resultList") or []
@@ -184,7 +199,8 @@ def search_cj_products(
         "limit": limit,
         "offset": offset,
         "next_offset": offset + limit if offset + limit <= result.get("totalCount", 0) else None,
-        "tracking_links_included": bool(pid),
+        "tracking_links_included": tracking_links_included,
+        "tracking_link_error": tracking_link_error,
         "read_only": True,
         "filter_applied_locally": bool(q.strip() or advertiser_id),
     }
