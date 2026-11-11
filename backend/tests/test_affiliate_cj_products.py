@@ -102,3 +102,48 @@ def test_cj_product_api_permission_error_is_safe(monkeypatch):
 
     assert response.status_code == 403
     assert "secret-token" not in response.text
+
+
+
+def test_products_fall_back_to_untracked_results_when_pid_is_forbidden(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret-token")
+    monkeypatch.setenv("CJ_COMPANY_ID", "987654")
+    calls = []
+
+    def fake_request(query):
+        calls.append(query)
+        if len(calls) == 1:
+            raise module.HTTPException(status_code=403, detail="PID denied")
+        return {"products": {"totalCount": 1, "count": 1, "resultList": [
+            {"id": "p1", "advertiserId": "12", "title": "Allowed product",
+             "description": "Product details", "imageLink": "https://images.example/p1.jpg"}
+        ]}}
+
+    monkeypatch.setattr(module, "_request_cj", fake_request)
+    response = _client().get("/affiliate/cj/products?advertiser_id=12&pid=555")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["items"][0]["id"] == "p1"
+    assert payload["tracking_links_included"] is False
+    assert "denied" in payload["tracking_link_error"].lower()
+    assert "linkCode" in calls[0]
+    assert "linkCode" not in calls[1]
+
+
+def test_products_keep_forbidden_error_when_product_details_also_denied(monkeypatch):
+    monkeypatch.setenv("CJ_PERSONAL_ACCESS_TOKEN", "secret-token")
+    monkeypatch.setenv("CJ_COMPANY_ID", "987654")
+    calls = 0
+
+    def fake_request(query):
+        nonlocal calls
+        calls += 1
+        raise module.HTTPException(status_code=403, detail="CJ denied")
+
+    monkeypatch.setattr(module, "_request_cj", fake_request)
+    response = _client().get("/affiliate/cj/products?advertiser_id=12&pid=555")
+
+    assert response.status_code == 403
+    assert calls == 2
