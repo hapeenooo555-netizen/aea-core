@@ -122,6 +122,7 @@ def _update_p1_8_mission_state(
         "completed": "completed",
         "awaiting_human_intervention": "waiting_human",
         "approval_rejected": "failed",
+        "approval_expired": "cancelled",
         "publish_uncertain": "waiting_human",
     }.get(status_text)
     # A first publish resumes with "resumed"; it is only complete once the
@@ -167,8 +168,28 @@ async def list_approvals(
         limit=limit,
         client=client,
     )
-    # Filter to only current user's approvals for defense in depth
+    # Filter to only current user's approvals for defense in depth.
     user_approvals = [a for a in approvals if a.get("owner_id") == current_user_id]
+
+    # Listing approvals is also the reconciliation boundary for stale
+    # requests. Expiration is persisted by the gateway's atomic transition;
+    # then the associated P1-8 mission is cancelled so the dashboard cannot
+    # leave it looking runnable after its approval window has closed.
+    for approval in user_approvals:
+        if str(approval.get("status") or "").lower() != "pending":
+            continue
+        if not gateway.is_expired(approval.get("id")):
+            continue
+        expired = gateway.get_request(approval.get("id"), client=client) or approval
+        if expired.get("owner_id") == current_user_id and str(expired.get("status") or "").lower() == "expired":
+            _update_p1_8_mission_state(
+                expired,
+                {"status": "approval_expired", "approval_request_id": expired.get("id")},
+                current_user_id,
+                client,
+            )
+            approval.update(expired)
+
     return {"success": True, "approvals": user_approvals, "count": len(user_approvals)}
 
 
