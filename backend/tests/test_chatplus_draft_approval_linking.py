@@ -9,7 +9,10 @@ from app.routers import chatplus_pinterest as cp
 
 OWNER = "owner-1"
 ROWS = {
-    "workers": [{"id": "w1", "owner_id": OWNER}, {"id": "w-other", "owner_id": "owner-2"}],
+    "workers": [
+        {"id": "w1", "owner_id": OWNER, "role": "affiliate_marketing", "status": "active"},
+        {"id": "w-other", "owner_id": "owner-2", "role": "affiliate_marketing", "status": "active"},
+    ],
     "missions": [
         {"id": "m1", "owner_id": OWNER, "assigned_worker": "w1"},
         {"id": "m-wrong-worker", "owner_id": OWNER, "assigned_worker": "w9"},
@@ -58,6 +61,7 @@ class FakeOrchestration:
 
     def create_mission(self, **kwargs):
         created["mission"] = kwargs
+        ROWS["missions"].append({"id": "approval-mission-1", "owner_id": OWNER, "assigned_worker": None})
         return {"success": True, "mission": {"id": "approval-mission-1"}}
 
 
@@ -99,7 +103,7 @@ def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
     assert body["published"] is False
     assert created["approval"]["payload"]["source_mission_id"] == "m1"
     assert created["mission"]["metadata"]["source_worker_id"] == "w1"
-    assert ROWS["missions"][-1].get("assigned_worker") == "w1"
+    assert next(row for row in ROWS["missions"] if row["id"] == "approval-mission-1")["assigned_worker"] == "w1"
 
 
 def test_rejects_another_owners_worker(monkeypatch):
