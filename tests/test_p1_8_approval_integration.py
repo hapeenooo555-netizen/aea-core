@@ -99,3 +99,19 @@ def test_legacy_mission_with_objective_but_no_orchestration_key_is_not_updated()
         MissionOrchestrationService(owner_id).get_mission("legacy-with-objective")["status"]
         == "waiting_approval"
     )
+
+
+def test_expired_approval_cancels_waiting_p1_8_mission():
+    mission = _waiting_approval_mission("approval-owner-expired")
+
+    _update_p1_8_mission_state(
+        {"mission_id": mission["id"]},
+        {"status": "approval_expired", "approval_request_id": "expired-approval"},
+        "approval-owner-expired",
+        None,
+    )
+
+    updated = MissionOrchestrationService("approval-owner-expired").get_mission(mission["id"])
+    assert updated["status"] == "cancelled"
+    assert updated["result"]["status"] == "approval_expired"
+    assert updated["result"]["approval_request_id"] == "expired-approval"
