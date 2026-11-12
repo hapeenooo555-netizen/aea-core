@@ -131,8 +131,7 @@ def test_get_recent_memories_returns_backward_compatible_shape():
             "created_at": "2024-01-01T00:00:00Z",
         }
     ]
-    engine = AtlasMemoryEngine()
-    engine._client = client
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-1")
 
     memories = engine.get_recent_memories("worker-1", limit=5)
 
