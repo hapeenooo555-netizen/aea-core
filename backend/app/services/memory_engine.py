@@ -40,10 +40,12 @@ class AtlasMemoryEngine:
     ) -> dict[str, Any]:
         """Store a memory entry for a worker."""
 
+        effective_owner_id = owner_id if owner_id is not None else self._owner_id
+        if not effective_owner_id:
+            return {"success": False, "error": "owner_id is required to store memory"}
         if not self._client:
             return {"success": False, "error": "Supabase client is not available"}
 
-        effective_owner_id = owner_id if owner_id is not None else self._owner_id
         payload = self._to_storage_record(worker_id, memory_type, content, owner_id=effective_owner_id)
 
         try:
