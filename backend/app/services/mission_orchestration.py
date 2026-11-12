@@ -382,8 +382,112 @@ class MissionOrchestrationService:
             self.transition(mission_id, "retrying", result=result)
         elif status == "FAIL":
             self.transition(mission_id, "failed", result=result, error=result.get("error") or "Mission failed")
+        if status in {"COMPLETE", "FAIL"}:
+            self._record_verified_experience(mission, result, status)
         self._release_mission(mission_id, claim_token)
         return {"success": bool(result.get("success")), "mission": self.get_mission(mission_id), "execution": result, "selection_reason": selection_reason}
+
+    def _record_verified_experience(
+        self,
+        mission: dict[str, Any],
+        result: dict[str, Any],
+        execution_status: str,
+    ) -> None:
+        """Learn only from terminal outcomes backed by explicit connector evidence.
+
+        Employee completion by itself is not evidence of an external side effect.
+        The connector must return a verification envelope containing a positive
+        verification flag, source, reference, and timestamp. Memory writes are
+        owner-scoped and idempotent per mission/worker.
+        """
+        verification = result.get("verification") if isinstance(result, dict) else None
+        if not isinstance(verification, dict):
+            self._event(
+                "mission_outcome_unverified",
+                str(mission.get("id")),
+                {"execution_status": execution_status, "reason": "verification_evidence_missing"},
+            )
+            return
+
+        source = verification.get("source")
+        reference = verification.get("reference")
+        verified_at = verification.get("verified_at")
+        if (
+            verification.get("verified") is not True
+            or not isinstance(source, str) or not source.strip()
+            or not isinstance(reference, str) or not reference.strip()
+            or not isinstance(verified_at, str) or not verified_at.strip()
+        ):
+            self._event(
+                "mission_outcome_unverified",
+                str(mission.get("id")),
+                {"execution_status": execution_status, "reason": "verification_evidence_invalid"},
+            )
+            return
+
+        worker_id = mission.get("assigned_worker") or result.get("worker_id")
+        if not worker_id:
+            self._event(
+                "mission_outcome_unverified",
+                str(mission.get("id")),
+                {"execution_status": execution_status, "reason": "worker_id_missing"},
+            )
+            return
+
+        mission_id = str(mission.get("id") or "")
+        try:
+            existing = self.memory.get_recent_memories(str(worker_id), limit=100, owner_id=self.owner_id)
+            if any(
+                row.get("memory_type") == "mission_experience"
+                and row.get("mission_id") == mission_id
+                for row in existing
+            ):
+                return
+            outcome = "success" if execution_status == "COMPLETE" else "failure"
+            lesson = {
+                "mission_id": mission_id,
+                "task_domain": mission.get("domain") or "general",
+                "objective": mission.get("objective") or mission.get("title"),
+                "outcome": outcome,
+                "execution_status": execution_status,
+                "lesson": (
+                    "The verified operation completed successfully."
+                    if outcome == "success"
+                    else "The verified operation failed; inspect the recorded error before retrying."
+                ),
+                "error_classification": result.get("error_classification"),
+                "evidence": {
+                    "source": source.strip(),
+                    "reference": reference.strip(),
+                    "verified_at": verified_at.strip(),
+                },
+                "confidence": 0.9,
+            }
+            stored = self.memory.store_memory(
+                str(worker_id),
+                "mission_experience",
+                sanitize_payload(lesson),
+                owner_id=self.owner_id,
+            )
+            if not stored.get("success"):
+                self._event(
+                    "mission_experience_store_failed",
+                    mission_id,
+                    {"worker_id": str(worker_id), "error": stored.get("error", "memory write failed")},
+                )
+                return
+            self._event(
+                "mission_experience_recorded",
+                mission_id,
+                {"worker_id": str(worker_id), "outcome": outcome, "evidence_source": source.strip()},
+            )
+        except Exception:
+            # Learning must never break mission execution or lifecycle reporting.
+            self._event(
+                "mission_experience_store_failed",
+                mission_id,
+                {"worker_id": str(worker_id), "error": "experience recording failed"},
+            )
 
     def report(self) -> dict[str, Any]:
         missions = self.list_missions(limit=100)
