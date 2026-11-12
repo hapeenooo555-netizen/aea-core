@@ -87,3 +87,61 @@ def test_public_recorder_rejects_nonterminal_execution_status(monkeypatch):
         is False
     )
     assert calls == []
+
+
+
+def test_approval_resume_records_verified_pin_after_successful_publish(monkeypatch):
+    from app.services import mission_orchestration
+    from app.services.approval_resume_service import ApprovalResumeService
+
+    calls = []
+    scoped_client = object()
+
+    class FakeConnector:
+        platform = "pinterest"
+
+        def publish_content(self, worker_id, content, **kwargs):
+            assert worker_id == "worker-123"
+            assert kwargs["owner_id"] == "owner-123"
+            return {
+                "success": True,
+                "status": "published",
+                "pin_id": "provider-pin-456",
+                "published_at": "2026-11-13T08:00:00+00:00",
+            }
+
+    class FakeOrchestration:
+        def __init__(self, owner_id, client=None):
+            calls.append(("init", owner_id, client))
+
+        def record_verified_experience(self, mission_id, result, status):
+            calls.append(("record", mission_id, result, status))
+            return True
+
+    monkeypatch.setattr(
+        mission_orchestration,
+        "MissionOrchestrationService",
+        FakeOrchestration,
+    )
+
+    service = ApprovalResumeService(mission_client=scoped_client)
+    outcome = service._handle_publish_content(
+        approval_request_id="approval-123",
+        mission_id="mission-456",
+        worker_id="worker-123",
+        payload={"content": {"title": "Approved Pin"}},
+        connector=FakeConnector(),
+        current_user_id="owner-123",
+    )
+
+    assert outcome["status"] == "resumed"
+    assert outcome["pin_id"] == "provider-pin-456"
+    assert calls[0] == ("init", "owner-123", scoped_client)
+    assert calls[1][0:2] == ("record", "mission-456")
+    assert calls[1][2]["verification"] == {
+        "verified": True,
+        "source": "pinterest_api",
+        "reference": "provider-pin-456",
+        "verified_at": "2026-11-13T08:00:00+00:00",
+    }
+    assert calls[1][3] == "COMPLETE"
