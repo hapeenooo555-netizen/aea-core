@@ -43,8 +43,8 @@ class WorkerRuntime:
 
         self._owner_id = owner_id
         self._mission_engine = MissionEngine(client=client)
-        self._memory_engine = AtlasMemoryEngine()
-        self._decision_engine = AtlasDecisionEngine(owner_id=owner_id)
+        self._memory_engine = AtlasMemoryEngine(client=client, owner_id=owner_id)
+        self._decision_engine = AtlasDecisionEngine(owner_id=owner_id, memory_engine=self._memory_engine)
         self._action_engine = ActionEngine(owner_id=owner_id)
         self._approval_gateway = ApprovalGateway()
         self._connector_registry = connector_registry
