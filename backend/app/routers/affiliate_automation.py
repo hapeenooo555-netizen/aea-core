@@ -22,7 +22,6 @@ class ExternalPinterestDraftRequest(PinterestAutopilotRequest):
     affiliate_url: str = Field(min_length=8, max_length=2048)
     product_name: str | None = Field(default=None, max_length=200)
     product_description: str | None = Field(default=None, max_length=3000)
-    product_description: str | None = Field(default=None, max_length=3000)
 
 
 @router.post("/digistore24/pinterest-draft")
