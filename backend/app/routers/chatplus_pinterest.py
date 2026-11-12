@@ -164,14 +164,48 @@ def pinterest_draft_approval(
         requested_worker_id = request.worker_id
         if not requested_worker_id and source_mission:
             requested_worker_id = (
-                source_mission.get("worker_id")
-                or source_mission.get("assigned_worker")
+                source_mission.get("assigned_worker")
+                or source_mission.get("worker_id")
                 or source_mission.get("assigned_worker_id")
             )
-        if requested_worker_id:
-            if not _owned_row(client, "workers", requested_worker_id, owner_id):
-                raise HTTPException(status_code=404, detail="Selected worker was not found for this account")
-            selected_worker_id = requested_worker_id
+
+        # The Hub may omit worker_id when creating a Pin draft. Resolve the
+        # sole active affiliate/Pinterest employee for this authenticated owner;
+        # never guess when multiple eligible employees exist.
+        if not requested_worker_id:
+            active_workers = (
+                client.table("workers")
+                .select("*")
+                .eq("owner_id", owner_id)
+                .eq("status", "active")
+                .limit(20)
+                .execute()
+                .data or []
+            )
+            eligible_workers = [
+                worker for worker in active_workers
+                if any(
+                    term in str(worker.get("role") or "").lower()
+                    for term in ("affiliate", "pinterest")
+                )
+            ]
+            if len(eligible_workers) == 1:
+                requested_worker_id = str(eligible_workers[0]["id"])
+            elif len(eligible_workers) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="More than one active affiliate/Pinterest employee is available. Select the employee for this Pin.",
+                )
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="No active affiliate/Pinterest employee is assigned to this account. Activate an employee before creating a Pin approval.",
+                )
+
+        selected_worker = _owned_row(client, "workers", requested_worker_id, owner_id)
+        if not selected_worker or str(selected_worker.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=404, detail="Selected active worker was not found for this account")
+        selected_worker_id = requested_worker_id
 
         if source_mission and selected_worker_id:
             mission_worker_id = (
@@ -216,13 +250,13 @@ def pinterest_draft_approval(
             try:
                 assigned = (
                     client.table("missions")
-                    .update({"worker_id": selected_worker_id})
+                     .update({"assigned_worker": selected_worker_id})
                     .eq("id", mission_id)
                     .eq("owner_id", owner_id)
                     .execute()
                 )
                 rows = assigned.data or []
-                if not rows or rows[0].get("worker_id") != selected_worker_id:
+                if not rows or str(rows[0].get("assigned_worker") or "") != selected_worker_id:
                     raise HTTPException(
                         status_code=503,
                         detail="Pinterest approval mission was created, but its worker assignment could not be verified",
@@ -232,7 +266,7 @@ def pinterest_draft_approval(
             except Exception as exc:
                 raise HTTPException(
                     status_code=503,
-                    detail="Pinterest approval mission worker assignment failed",
+                    detail="Pinterest approval mission assigned_worker persistence failed",
                 ) from exc
 
         gateway = ApprovalGateway(client=client)
