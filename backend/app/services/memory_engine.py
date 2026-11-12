@@ -40,10 +40,12 @@ class AtlasMemoryEngine:
     ) -> dict[str, Any]:
         """Store a memory entry for a worker."""
 
+        effective_owner_id = owner_id if owner_id is not None else self._owner_id
+        if not effective_owner_id:
+            return {"success": False, "error": "owner_id is required to store memory"}
         if not self._client:
             return {"success": False, "error": "Supabase client is not available"}
 
-        effective_owner_id = owner_id if owner_id is not None else self._owner_id
         payload = self._to_storage_record(worker_id, memory_type, content, owner_id=effective_owner_id)
 
         try:
@@ -53,11 +55,12 @@ class AtlasMemoryEngine:
         except Exception as exc:  # pragma: no cover - defensive runtime handling
             return {"success": False, "error": str(exc)}
 
-    def get_recent_memories(self, worker_id: str, limit: int = 10, client: Any | None = None) -> list[dict[str, Any]]:
-        """Retrieve the most recent memory entries for a worker."""
+    def get_recent_memories(self, worker_id: str, limit: int = 10, client: Any | None = None, owner_id: str | None = None) -> list[dict[str, Any]]:
+        """Retrieve recent memories scoped to the authenticated owner and worker."""
 
         db_client = client if client is not None else self._client
-        if not db_client:
+        effective_owner_id = owner_id if owner_id is not None else self._owner_id
+        if not db_client or not effective_owner_id:
             return []
 
         try:
@@ -65,6 +68,7 @@ class AtlasMemoryEngine:
                 db_client.table("agent_memory_entries")
                 .select("*")
                 .eq("worker_id", worker_id)
+                .eq("owner_id", effective_owner_id)
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
@@ -74,15 +78,16 @@ class AtlasMemoryEngine:
         except Exception:  # pragma: no cover - defensive runtime handling
             return []
 
-    def search_memories(self, keyword: str, client: Any | None = None) -> list[dict[str, Any]]:
-        """Search memory entries by keyword."""
+    def search_memories(self, keyword: str, client: Any | None = None, owner_id: str | None = None) -> list[dict[str, Any]]:
+        """Search only the calling owner's memory entries."""
 
         db_client = client if client is not None else self._client
-        if not db_client:
+        effective_owner_id = owner_id if owner_id is not None else self._owner_id
+        if not db_client or not effective_owner_id:
             return []
 
         try:
-            response = db_client.table("agent_memory_entries").select("*").execute()
+            response = db_client.table("agent_memory_entries").select("*").eq("owner_id", effective_owner_id).execute()
             rows = response.data or []
         except Exception:  # pragma: no cover - defensive runtime handling
             return []
@@ -106,15 +111,18 @@ class AtlasMemoryEngine:
 
         return matched_rows
 
-    def delete_memory(self, memory_id: str, client: Any | None = None) -> dict[str, Any]:
-        """Delete a memory entry by identifier."""
+    def delete_memory(self, memory_id: str, client: Any | None = None, owner_id: str | None = None) -> dict[str, Any]:
+        """Delete a memory entry only when its owner is explicitly scoped."""
 
         db_client = client if client is not None else self._client
+        effective_owner_id = owner_id if owner_id is not None else self._owner_id
+        if not effective_owner_id:
+            return {"success": False, "memory_id": memory_id, "error": "owner_id is required to delete memory"}
         if not db_client:
             return {"success": False, "memory_id": memory_id, "error": "Supabase client is not available"}
 
         try:
-            response = db_client.table("agent_memory_entries").delete().eq("id", memory_id).execute()
+            response = db_client.table("agent_memory_entries").delete().eq("id", memory_id).eq("owner_id", effective_owner_id).execute()
             return {"success": True, "memory_id": memory_id, "deleted": bool(response.data)}
         except Exception as exc:  # pragma: no cover - defensive runtime handling
             return {"success": False, "memory_id": memory_id, "error": str(exc)}

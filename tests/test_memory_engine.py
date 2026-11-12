@@ -56,6 +56,7 @@ class FakeQuery:
             row = {
                 "id": "entry-1",
                 "worker_id": self._payload["worker_id"],
+                "owner_id": self._payload.get("owner_id"),
                 "mission_id": self._payload.get("mission_id"),
                 "memory_type": self._payload["memory_type"],
                 "content": self._payload.get("content") or {},
@@ -68,8 +69,7 @@ class FakeQuery:
 
         if self._operation == "select":
             rows = list(self._client.rows)
-            if self._filters:
-                column, value = self._filters[0]
+            for column, value in self._filters:
                 rows = [row for row in rows if row.get(column) == value]
             if self._order:
                 rows = sorted(rows, key=lambda item: item.get(self._order[0], ""), reverse=self._order[1])
@@ -78,10 +78,11 @@ class FakeQuery:
             return FakeResponse(rows)
 
         if self._operation == "delete":
-            memory_id = self._filters[0][1] if self._filters else None
-            if memory_id is not None:
-                self._client.rows = [row for row in self._client.rows if row.get("id") != memory_id]
-            return FakeResponse([{"id": memory_id}])
+            filters = dict(self._filters)
+            before = len(self._client.rows)
+            self._client.rows = [row for row in self._client.rows if not all(row.get(column) == value for column, value in filters.items())]
+            deleted = len(self._client.rows) < before
+            return FakeResponse([{"id": filters.get("id")}] if deleted else [])
 
         return FakeResponse([])
 
@@ -98,8 +99,7 @@ class FakeSupabaseClient:
 
 def test_store_memory_uses_agent_memory_entries_and_defaults():
     client = FakeSupabaseClient()
-    engine = AtlasMemoryEngine()
-    engine._client = client
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-1")
 
     response = engine.store_memory(
         "worker-1",
@@ -122,6 +122,7 @@ def test_get_recent_memories_returns_backward_compatible_shape():
         {
             "id": "entry-2",
             "worker_id": "worker-1",
+            "owner_id": "owner-1",
             "mission_id": "mission-9",
             "memory_type": "summary",
             "content": {"text": "hello"},
@@ -130,8 +131,7 @@ def test_get_recent_memories_returns_backward_compatible_shape():
             "created_at": "2024-01-01T00:00:00Z",
         }
     ]
-    engine = AtlasMemoryEngine()
-    engine._client = client
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-1")
 
     memories = engine.get_recent_memories("worker-1", limit=5)
 
@@ -145,12 +145,42 @@ def test_get_recent_memories_returns_backward_compatible_shape():
 
 def test_delete_memory_uses_agent_memory_entries_table():
     client = FakeSupabaseClient()
-    client.rows = [{"id": "entry-3", "worker_id": "worker-1"}]
-    engine = AtlasMemoryEngine()
-    engine._client = client
+    client.rows = [{"id": "entry-3", "worker_id": "worker-1", "owner_id": "owner-1"}]
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-1")
 
     result = engine.delete_memory("entry-3")
 
     assert result["success"] is True
     assert client.table_name == "agent_memory_entries"
     assert client.rows == []
+
+
+def test_memory_reads_are_owner_scoped():
+    client = FakeSupabaseClient()
+    client.rows = [
+        {"id": "a", "worker_id": "worker-1", "owner_id": "owner-a", "memory_type": "note", "content": {"text": "shared keyword"}, "metadata": {}},
+        {"id": "b", "worker_id": "worker-1", "owner_id": "owner-b", "memory_type": "note", "content": {"text": "shared keyword"}, "metadata": {}},
+    ]
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-a")
+    assert [row["id"] for row in engine.get_recent_memories("worker-1")] == ["a"]
+    assert [row["id"] for row in engine.search_memories("shared keyword")] == ["a"]
+
+
+def test_memory_reads_fail_closed_without_owner_scope():
+    client = FakeSupabaseClient()
+    client.rows = [{"id": "a", "worker_id": "worker-1", "owner_id": "owner-a", "memory_type": "note", "content": {"text": "secret"}, "metadata": {}}]
+    engine = AtlasMemoryEngine(client=client)
+    assert engine.get_recent_memories("worker-1") == []
+    assert engine.search_memories("secret") == []
+    assert engine.store_memory("worker-1", "note", {"text": "no owner"})["success"] is False
+    assert engine.delete_memory("a")["success"] is False
+
+
+def test_memory_delete_cannot_delete_another_owners_entry():
+    client = FakeSupabaseClient()
+    client.rows = [{"id": "a", "worker_id": "worker-1", "owner_id": "owner-a"}]
+    engine = AtlasMemoryEngine(client=client, owner_id="owner-b")
+    result = engine.delete_memory("a")
+    assert result["success"] is True
+    assert result["deleted"] is False
+    assert client.rows[0]["owner_id"] == "owner-a"

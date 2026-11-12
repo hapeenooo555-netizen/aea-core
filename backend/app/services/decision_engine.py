@@ -40,7 +40,7 @@ class AtlasDecisionEngine:
         """
 
         self._provider = provider or get_llm_provider()
-        self._memory_engine = memory_engine or AtlasMemoryEngine()
+        self._memory_engine = memory_engine or AtlasMemoryEngine(owner_id=owner_id)
         self._owner_id = owner_id
         self._memory_context_limit = int(os.getenv("MEMORY_CONTEXT_LIMIT", "5") or "5")
         self._worker_rules: dict[str, str] = {
