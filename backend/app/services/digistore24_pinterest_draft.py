@@ -259,7 +259,7 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
             self.in_h1 = False
             self.in_jsonld = False
             self.description_depth = 0
-            self._description_tag_depth = 0
+            self._description_tags: list[str] = []
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
             values = {key.lower(): value for key, value in attrs if value}
@@ -285,7 +285,7 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
                 )
             ):
                 self.description_depth += 1
-                self._description_tag_depth += 1
+                self._description_tags.append(tag)
 
         def handle_endtag(self, tag: str) -> None:
             tag = tag.lower()
@@ -295,9 +295,9 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
                 self.in_h1 = False
             elif tag == "script":
                 self.in_jsonld = False
-            elif self._description_tag_depth:
+            elif tag in self._description_tags:
+                self._description_tags.remove(tag)
                 self.description_depth = max(0, self.description_depth - 1)
-                self._description_tag_depth -= 1
 
         def handle_data(self, data: str) -> None:
             value = " ".join(data.split())
