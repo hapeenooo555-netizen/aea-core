@@ -302,3 +302,23 @@ def test_external_pinterest_drafts_returns_three_core_generated_options(monkeypa
     assert result["image_url"] == "https://cdn.vendor.example/toolkit.png"
     assert result["published"] is False
     assert result["requires_explicit_approval"] is True
+
+
+def test_external_pinterest_drafts_make_repeated_titles_distinct(monkeypatch):
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+    monkeypatch.setattr(draft, "_generate_copy", lambda product, *, niche, language: {
+        "title": "Boost Your Small Business with the AI & Automation Toolkit",
+        "description": "A useful toolkit for productivity. I may earn a commission through this affiliate link.",
+    })
+    result = draft.build_external_pinterest_drafts(
+        affiliate_url="https://marketplace.iotsystemsgrowth.com/toolkit-digistore/",
+        product_name="Small Business AI & Automation Toolkit",
+        product_description="Automate repetitive small-business workflows.",
+        niche="AI tools and business automation",
+        language="English",
+    )
+    titles = [pin["title"] for pin in result["pins"]]
+    assert len(set(titles)) == 3
+    assert titles[0] == "Boost Your Small Business with the AI & Automation Toolkit"
+    assert titles[1].startswith("Save Time with ")
+    assert titles[2].startswith("Grow Your Business with ")
