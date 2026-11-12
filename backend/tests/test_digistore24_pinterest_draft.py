@@ -422,3 +422,35 @@ def test_vendor_product_details_uses_related_canonical_page_when_affiliate_page_
         "description": "A toolkit to automate small business workflows.",
         "image_url": "https://cdn.example/small-business-toolkit.png",
     }
+
+
+def test_known_toolkit_uses_user_confirmed_product_facts_and_artwork(monkeypatch):
+    destination = (
+        "https://marketplace.iotsystemsgrowth.com/"
+        "small-business-ai-automation-toolkit-digistore/"
+        "#aff=hapeenooo333cff7&cam="
+    )
+    monkeypatch.setattr(
+        draft,
+        "_vendor_product_details",
+        lambda url: (_ for _ in ()).throw(
+            RuntimeError("Vendor landing page does not expose static metadata")
+        ),
+    )
+    monkeypatch.setattr(draft, "_generate_copy", _fake_copy)
+
+    result = draft.build_external_pinterest_draft(
+        affiliate_url=destination,
+        niche="AI tools and business automation",
+        language="English",
+    )
+
+    assert result["success"] is True
+    assert result["product"]["name"] == "Small Business AI & Automation Toolkit"
+    assert result["draft"]["destination_url"] == destination
+    assert result["draft"]["image_url"] == (
+        "https://iotsystemsgrowth.com/wp-content/uploads/2026/08/AI_Readiness_Preview.png"
+    )
+    assert result["draft"]["image_source"] == "user_confirmed_vendor_artwork"
+    assert result["requires_explicit_approval"] is True
+    assert result["published"] is False
