@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user_id
 from app.services.digistore24_marketplace import Digistore24MarketplaceError
-from app.services.digistore24_pinterest_draft import build_digistore24_pinterest_draft, build_external_pinterest_draft
+from app.services.digistore24_pinterest_draft import build_digistore24_pinterest_draft, build_external_pinterest_draft, build_external_pinterest_drafts
 
 router = APIRouter(prefix="/affiliate/automation", tags=["affiliate-automation"])
 
@@ -21,6 +21,8 @@ class PinterestAutopilotRequest(BaseModel):
 class ExternalPinterestDraftRequest(PinterestAutopilotRequest):
     affiliate_url: str = Field(min_length=8, max_length=2048)
     product_name: str | None = Field(default=None, max_length=200)
+    product_description: str | None = Field(default=None, max_length=3000)
+    product_description: str | None = Field(default=None, max_length=3000)
 
 
 @router.post("/digistore24/pinterest-draft")
@@ -49,6 +51,27 @@ def create_external_pinterest_draft(
         return build_external_pinterest_draft(
             affiliate_url=body.affiliate_url,
             product_name=body.product_name,
+            product_description=body.product_description,
+            niche=body.niche,
+            language=body.language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/pinterest-drafts")
+def create_external_pinterest_drafts(
+    body: ExternalPinterestDraftRequest,
+    _owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Generate three editable Pin copy options using AEA Core's configured LLM."""
+    try:
+        return build_external_pinterest_drafts(
+            affiliate_url=body.affiliate_url,
+            product_name=body.product_name,
+            product_description=body.product_description,
             niche=body.niche,
             language=body.language,
         )

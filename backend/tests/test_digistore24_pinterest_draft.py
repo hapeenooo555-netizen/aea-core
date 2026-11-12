@@ -277,3 +277,28 @@ def test_vendor_product_image_accepts_twitter_image_metadata(monkeypatch):
         "https://marketplace.iotsystemsgrowth.com/product-digistore/",
         "Small Business AI & Automation Toolkit",
     ) == "https://cdn.example/toolkit-image"
+
+
+def test_external_pinterest_drafts_returns_three_core_generated_options(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+
+    def fake_copy(product, *, niche, language):
+        calls.append(niche)
+        return {"title": f"Option {len(calls)}", "description": "I may earn a commission through this affiliate link."}
+
+    monkeypatch.setattr(draft, "_generate_copy", fake_copy)
+    result = draft.build_external_pinterest_drafts(
+        affiliate_url="https://marketplace.iotsystemsgrowth.com/toolkit-digistore/",
+        product_name="Small Business AI & Automation Toolkit",
+        product_description="Automate repetitive small-business workflows.",
+        niche="AI tools and business automation",
+        language="English",
+    )
+    assert len(result["pins"]) == 3
+    assert [pin["title"] for pin in result["pins"]] == ["Option 1", "Option 2", "Option 3"]
+    assert len(calls) == 3
+    assert result["image_url"] == "https://cdn.vendor.example/toolkit.png"
+    assert result["published"] is False
+    assert result["requires_explicit_approval"] is True
