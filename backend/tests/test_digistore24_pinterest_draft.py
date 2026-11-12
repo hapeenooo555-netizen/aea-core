@@ -114,7 +114,8 @@ def test_build_draft_requires_image_or_pexels(monkeypatch):
 
 
 def test_external_pinterest_draft_uses_vendor_product_artwork(monkeypatch):
-    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+    monkeypatch.setattr(draft, "_vendor_product_details", lambda url: {"name": "AI Marketing Toolkit", "description": "Automates marketing workflows.", "image_url": "https://cdn.vendor.example/toolkit.png"})
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: None)
     monkeypatch.setattr(draft, "_pexels_image", lambda query: (_ for _ in ()).throw(AssertionError("stock fallback must not run")))
     monkeypatch.setattr(draft, "_generate_copy", lambda product, *, niche, language: {
         "title": "AI Marketing Toolkit",
@@ -122,7 +123,6 @@ def test_external_pinterest_draft_uses_vendor_product_artwork(monkeypatch):
     })
     result = draft.build_external_pinterest_draft(
         affiliate_url="https://marketplace.iotsystemsgrowth.com/toolkit-digistore/",
-        product_name="AI Marketing Toolkit",
         niche="AI tools",
         language="English",
     )
@@ -130,6 +130,7 @@ def test_external_pinterest_draft_uses_vendor_product_artwork(monkeypatch):
     assert result["draft"]["destination_url"] == "https://marketplace.iotsystemsgrowth.com/toolkit-digistore/"
     assert result["draft"]["image_url"] == "https://cdn.vendor.example/toolkit.png"
     assert result["draft"]["image_source"] == "vendor_product_page"
+    assert result["product"]["name"] == "AI Marketing Toolkit"
     assert result["published"] is False
     assert result["requires_explicit_approval"] is True
     assert "not independently verified" in result["product"]["source"]
@@ -143,10 +144,11 @@ def test_external_pinterest_draft_rejects_invalid_affiliate_url():
 
 def test_external_pinterest_draft_fails_closed_without_verified_product_artwork(monkeypatch):
     import pytest
+    monkeypatch.setattr(draft, "_vendor_product_details", lambda url: {"name": "Product", "description": "A real product description.", "image_url": ""})
     monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: None)
     monkeypatch.setattr(draft, "_pexels_image", lambda query: (_ for _ in ()).throw(AssertionError("stock fallback must not run")))
-    with pytest.raises(RuntimeError, match="stopped instead of attaching an unrelated stock photo"):
-        draft.build_external_pinterest_draft(affiliate_url="https://affiliate.example/track")
+    with pytest.raises(RuntimeError, match="could not verify a product image"):
+        draft.build_external_pinterest_draft(affiliate_url="https://marketplace.iotsystemsgrowth.com/track")
 
 
 def test_pexels_image_skips_deepseek_and_prefers_business_photo(monkeypatch):
@@ -282,7 +284,8 @@ def test_vendor_product_image_accepts_twitter_image_metadata(monkeypatch):
 def test_external_pinterest_drafts_returns_three_core_generated_options(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+    monkeypatch.setattr(draft, "_vendor_product_details", lambda url: {"name": "Small Business AI & Automation Toolkit", "description": "Automate repetitive small-business workflows.", "image_url": "https://cdn.vendor.example/toolkit.png"})
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: None)
 
     def fake_copy(product, *, niche, language):
         calls.append(niche)
@@ -291,8 +294,6 @@ def test_external_pinterest_drafts_returns_three_core_generated_options(monkeypa
     monkeypatch.setattr(draft, "_generate_copy", fake_copy)
     result = draft.build_external_pinterest_drafts(
         affiliate_url="https://marketplace.iotsystemsgrowth.com/toolkit-digistore/",
-        product_name="Small Business AI & Automation Toolkit",
-        product_description="Automate repetitive small-business workflows.",
         niche="AI tools and business automation",
         language="English",
     )
@@ -305,7 +306,8 @@ def test_external_pinterest_drafts_returns_three_core_generated_options(monkeypa
 
 
 def test_external_pinterest_drafts_make_repeated_titles_distinct(monkeypatch):
-    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: "https://cdn.vendor.example/toolkit.png")
+    monkeypatch.setattr(draft, "_vendor_product_details", lambda url: {"name": "Small Business AI & Automation Toolkit", "description": "Automate repetitive small-business workflows.", "image_url": "https://cdn.vendor.example/toolkit.png"})
+    monkeypatch.setattr(draft, "_vendor_product_image", lambda url, name: None)
     monkeypatch.setattr(draft, "_generate_copy", lambda product, *, niche, language: {
         "title": "Boost Your Small Business with the AI & Automation Toolkit",
         "description": "A useful toolkit for productivity. I may earn a commission through this affiliate link.",
