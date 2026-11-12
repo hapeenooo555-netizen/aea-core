@@ -425,6 +425,7 @@ __all__ = ["build_digistore24_pinterest_draft"]
 def build_external_pinterest_draft(
     *, affiliate_url: str, niche: str = "AI tools and digital marketing",
     language: str = "English", product_name: str | None = None,
+    product_description: str | None = None,
 ) -> dict[str, Any]:
     """Prepare a Pin from a user-supplied affiliate URL, without requiring Digistore24."""
     from urllib.parse import urlparse
@@ -437,7 +438,7 @@ def build_external_pinterest_draft(
     product = {
         "product_id": "user-supplied",
         "name": name[:200],
-        "description": "Product details were not independently verified by AEA. Use only claims supplied by the publisher.",
+        "description": (product_description or "").strip()[:3000] or "Product details were not independently verified by AEA. Use only claims supplied by the publisher.",
         "category": niche,
         "affiliate_url": destination,
         "source": "User-supplied affiliate URL (not independently verified)",
