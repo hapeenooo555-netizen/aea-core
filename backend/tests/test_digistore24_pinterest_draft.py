@@ -380,3 +380,45 @@ def test_vendor_product_details_falls_back_to_semantic_html(monkeypatch):
     assert result["name"] == "Small Business AI and Automation Toolkit"
     assert result["description"] == "Automate repetitive admin and marketing tasks for a small business."
     assert result["image_url"] == ""
+
+
+def test_vendor_product_details_uses_related_canonical_page_when_affiliate_page_is_thin(monkeypatch):
+    requested = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        requested.append(url)
+        if url.endswith("-digistore/"):
+            return FakeResponse("<html><head><title>Marketplace listing</title></head><body></body></html>")
+        return FakeResponse("""
+        <html><head><script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"Product",
+         "name":"Small Business AI and Automation Toolkit",
+         "description":"A toolkit to automate small business workflows.",
+         "image":"https://cdn.example/small-business-toolkit.png"}
+        </script></head><body></body></html>
+        """)
+
+    monkeypatch.setattr(draft.httpx, "get", fake_get)
+    result = draft._vendor_product_details(
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-digistore/"
+    )
+
+    assert requested == [
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-digistore/",
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-clickbank/",
+    ]
+    assert result == {
+        "name": "Small Business AI and Automation Toolkit",
+        "description": "A toolkit to automate small business workflows.",
+        "image_url": "https://cdn.example/small-business-toolkit.png",
+    }

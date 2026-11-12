@@ -339,63 +339,106 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
                     found.setdefault(key, val)
         return found
 
-    current_url = product_url
-    response = None
-    for _ in range(4):
-        current = urlparse(current_url)
-        if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
-            raise ValueError("Vendor page redirected outside the approved vendor domain.")
-        response = httpx.get(
-            current_url,
-            headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
-            timeout=8.0,
-            follow_redirects=False,
+    # The Digistore-labelled listing for this vendor may be a thin landing
+    # page while the corresponding ClickBank-labelled product page contains
+    # the canonical description and Product JSON-LD. Inspect both pages for
+    # product facts, but never replace the original affiliate destination.
+    page_urls = [product_url]
+    product_path = parsed.path
+    if product_path.rstrip("/").endswith("-digistore"):
+        page_urls.append(
+            parsed._replace(
+                path=product_path.rstrip("/")[:-len("-digistore")] + "-clickbank/"
+            ).geturl()
         )
-        if response.status_code not in {301, 302, 303, 307, 308}:
-            response.raise_for_status()
-            break
-        location = response.headers.get("location")
-        if not location:
-            raise RuntimeError("Vendor page redirect did not include a destination.")
-        current_url = urljoin(current_url, location)
-    else:
-        raise RuntimeError("Vendor page redirected too many times.")
 
-    parser = ProductMetadataParser()
-    parser.feed(response.text[:1_000_000])
-    meta = parser.meta
-    schema: dict[str, str] = {}
-    for raw_jsonld in parser.jsonld_parts:
-        try:
-            parsed_jsonld = json.loads(raw_jsonld)
-        except (TypeError, ValueError):
-            continue
-        candidate = product_schema(parsed_jsonld)
-        for key, value in candidate.items():
-            schema.setdefault(key, value)
+    candidates: list[dict[str, str]] = []
+    for page_url in page_urls:
+        current_url = page_url
+        response = None
+        for _ in range(4):
+            current = urlparse(current_url)
+            if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
+                raise ValueError("Vendor page redirected outside the approved vendor domain.")
+            response = httpx.get(
+                current_url,
+                headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
+                timeout=8.0,
+                follow_redirects=False,
+            )
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                response.raise_for_status()
+                break
+            location = response.headers.get("location")
+            if not location:
+                raise RuntimeError("Vendor page redirect did not include a destination.")
+            current_url = urljoin(current_url, location)
+        else:
+            raise RuntimeError("Vendor page redirected too many times.")
 
-    # Prefer explicit Product schema and social metadata; use semantic HTML
-    # only when publishers omit those standard fields.
-    name = (
-        schema.get("name")
-        or meta.get("og:title")
-        or meta.get("twitter:title")
-        or " ".join(parser.h1_parts)
-        or " ".join(parser.title_parts)
-    ).strip()
-    description = (
-        schema.get("description")
-        or meta.get("og:description")
-        or meta.get("description")
-        or meta.get("twitter:description")
-        or " ".join(parser.description_parts)
-    ).strip()
-    image = (
-        schema.get("image")
-        or meta.get("og:image")
-        or meta.get("twitter:image")
-        or ""
-    ).strip()
+        parser = ProductMetadataParser()
+        parser.feed(response.text[:1_000_000])
+        meta = parser.meta
+        schema: dict[str, str] = {}
+        for raw_jsonld in parser.jsonld_parts:
+            try:
+                parsed_jsonld = json.loads(raw_jsonld)
+            except (TypeError, ValueError):
+                continue
+            candidate = product_schema(parsed_jsonld)
+            for key, value in candidate.items():
+                schema.setdefault(key, value)
+
+        name = (
+            schema.get("name")
+            or meta.get("og:title")
+            or meta.get("twitter:title")
+            or " ".join(parser.h1_parts)
+            or " ".join(parser.title_parts)
+        ).strip()
+        description = (
+            schema.get("description")
+            or meta.get("og:description")
+            or meta.get("description")
+            or meta.get("twitter:description")
+            or " ".join(parser.description_parts)
+        ).strip()
+        image = (
+            schema.get("image")
+            or meta.get("og:image")
+            or meta.get("twitter:image")
+            or ""
+        ).strip()
+        image_url = urljoin(current_url, image) if image else ""
+        image_parsed = urlparse(image_url) if image_url else None
+        if image_url and (
+            image_parsed.scheme != "https"
+            or not image_parsed.hostname
+            or image_parsed.username
+            or image_parsed.password
+        ):
+            image_url = ""
+        candidates.append({
+            "name": name[:200],
+            "description": description[:3000],
+            "image_url": image_url,
+        })
+
+    # Prefer the supplied affiliate landing page when it has full facts;
+    # otherwise use the related vendor product page as a factual source.
+    complete = next(
+        (item for item in candidates if item["name"] and item["description"]),
+        candidates[0] if candidates else {"name": "", "description": "", "image_url": ""},
+    )
+    if not complete["image_url"]:
+        complete["image_url"] = next(
+            (item["image_url"] for item in candidates if item["image_url"]),
+            "",
+        )
+    name = complete["name"]
+    description = complete["description"]
+    image_url = complete["image_url"]
+
     if not name or not description:
         raise RuntimeError(
             "AEA could not extract both a product name and description from the vendor page. "
