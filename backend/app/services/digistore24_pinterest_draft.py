@@ -484,9 +484,26 @@ def build_external_pinterest_drafts(
         "affiliate_url": affiliate_url.strip(),
         "source": "User-supplied affiliate URL (not independently verified)",
     }
-    pins = [base["draft"]]
-    for angle in ("practical benefits and workflow", "time-saving and operational efficiency"):
-        pins.append(_generate_copy(product, niche=f"{niche}; creative angle: {angle}", language=language))
+    angle_specs = (
+        ("productivity", "practical productivity benefits and streamlined workflows", "Boost Productivity with"),
+        ("time_saving", "saving time by automating repetitive daily tasks", "Save Time with"),
+        ("business_growth", "helping small businesses operate smarter and focus on growth", "Grow Your Business with"),
+    )
+    pins: list[dict[str, str]] = []
+    for angle_key, angle_prompt, _title_prefix in angle_specs:
+        pins.append(_generate_copy(product, niche=f"{niche}; {angle_key}: {angle_prompt}", language=language))
+
+    # Models can ignore angle instructions; replace duplicate titles with
+    # distinct, benefit-led alternatives grounded in the supplied product name.
+    title_prefixes = [spec[2] for spec in angle_specs]
+    seen_titles: set[str] = set()
+    safe_name = (product["name"] or "AI Automation Toolkit").strip()
+    for index, pin in enumerate(pins):
+        normalized_title = " ".join(pin["title"].casefold().split())
+        if normalized_title in seen_titles:
+            pin["title"] = f"{title_prefixes[index]} {safe_name}"[:100].rstrip()
+            normalized_title = " ".join(pin["title"].casefold().split())
+        seen_titles.add(normalized_title)
     return {
         "success": True,
         "product": base["product"],
