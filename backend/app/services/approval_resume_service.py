@@ -72,6 +72,7 @@ class ApprovalResumeService:
         connector_registry: Any | None = None,
         human_intervention_manager: HumanInterventionManager | None = None,
         worker_runtime: Any | None = None,
+        mission_client: Any | None = None,
     ) -> None:
         """Initialize the resume service.
 
@@ -94,6 +95,9 @@ class ApprovalResumeService:
         )
         self._connector_registry = connector_registry
         self._worker_runtime = worker_runtime
+        # Authenticated, user-scoped database client used only for mission
+        # experience and lead metadata reads/writes after connector actions.
+        self._mission_client = mission_client
         # Idempotency cache: approval IDs whose resume has already completed
         # in this process. The cache is purely an optimization; state-level
         # guards in the stores ensure correctness across restarts.
@@ -699,7 +703,7 @@ class ApprovalResumeService:
                     "reference": pin_id.strip(),
                     "verified_at": result.get("published_at") or datetime.now(timezone.utc).isoformat(),
                 }
-                orchestration = MissionOrchestrationService(current_user_id)
+                orchestration = MissionOrchestrationService(current_user_id, client=self._mission_client)
                 orchestration.record_verified_experience(
                     mission_id,
                     experience_result,
