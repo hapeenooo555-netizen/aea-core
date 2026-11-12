@@ -324,3 +324,59 @@ def test_external_pinterest_drafts_make_repeated_titles_distinct(monkeypatch):
     assert titles[0].startswith("Boost Productivity with ")
     assert titles[1].startswith("Save Time with ")
     assert titles[2].startswith("Grow Your Business with ")
+
+
+def test_vendor_product_details_extracts_jsonld_product_metadata(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+        text = """
+        <html><head>
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"Product",
+         "name":"Small Business AI Toolkit",
+         "description":"A toolkit for automating small business workflows.",
+         "image":"https://cdn.example/toolkit.png"}
+        </script>
+        </head><body><h1>Fallback heading</h1></body></html>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    result = draft._vendor_product_details(
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-digistore/"
+    )
+    assert result == {
+        "name": "Small Business AI Toolkit",
+        "description": "A toolkit for automating small business workflows.",
+        "image_url": "https://cdn.example/toolkit.png",
+    }
+
+
+def test_vendor_product_details_falls_back_to_semantic_html(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+        text = """
+        <html><head><title>Vendor page</title></head>
+        <body>
+          <h1>Small Business AI and Automation Toolkit</h1>
+          <div class="woocommerce-product-details__short-description">
+            <p>Automate repetitive admin and marketing tasks for a small business.</p>
+          </div>
+          <img src="https://cdn.example/toolkit.png" alt="Product artwork">
+        </body></html>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(draft.httpx, "get", lambda *args, **kwargs: FakeResponse())
+    result = draft._vendor_product_details(
+        "https://marketplace.iotsystemsgrowth.com/small-business-ai-automation-toolkit-digistore/"
+    )
+    assert result["name"] == "Small Business AI and Automation Toolkit"
+    assert result["description"] == "Automate repetitive admin and marketing tasks for a small business."
+    assert result["image_url"] == ""
