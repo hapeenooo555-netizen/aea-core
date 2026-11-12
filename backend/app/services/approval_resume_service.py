@@ -676,6 +676,43 @@ class ApprovalResumeService:
                 worker_id=worker_id,
             )
 
+        # Approved Pinterest publishing happens after the original mission
+        # has paused at WAIT_FOR_APPROVAL. Feed only provider-confirmed Pin IDs
+        # into the same owner-scoped experience recorder used by normal runs.
+        pin_id = result.get("pin_id")
+        publish_status = result.get("status")
+        if (
+            connector.platform == "pinterest"
+            and mission_id
+            and current_user_id
+            and isinstance(pin_id, str)
+            and pin_id.strip()
+            and publish_status in {"published", "duplicate_record", "duplicate"}
+        ):
+            try:
+                from .mission_orchestration import MissionOrchestrationService
+
+                experience_result = dict(result)
+                experience_result["verification"] = {
+                    "verified": True,
+                    "source": "pinterest_api",
+                    "reference": pin_id.strip(),
+                    "verified_at": result.get("published_at") or datetime.now(timezone.utc).isoformat(),
+                }
+                orchestration = MissionOrchestrationService(current_user_id)
+                orchestration.record_verified_experience(
+                    mission_id,
+                    experience_result,
+                    "COMPLETE",
+                )
+            except Exception:
+                # Learning is best-effort and must never turn a confirmed
+                # external publish into a reported publishing failure.
+                logger.exception(
+                    "Failed to record verified Pinterest experience for mission %s",
+                    mission_id,
+                )
+
         lead_id = payload.get("lead_id")
         if lead_id and current_user_id and sanitized_content.get("channel") == "whatsapp":
             try:
