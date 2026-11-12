@@ -224,6 +224,111 @@ def _vendor_product_image(product_url: str, product_name: str = "") -> str | Non
             continue
     return None
 
+def _vendor_product_details(product_url: str) -> dict[str, str]:
+    """Extract factual product metadata from the explicitly supported vendor host.
+
+    The affiliate URL is retained as the Pin destination, but server-side page
+    retrieval is restricted to the known vendor host to avoid arbitrary-URL SSRF.
+    """
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin, urlparse
+
+    parsed = urlparse(product_url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "marketplace.iotsystemsgrowth.com"
+        or parsed.username or parsed.password
+        or parsed.port not in (None, 443)
+    ):
+        raise ValueError(
+            "This vendor domain is not yet enabled for automatic product research. "
+            "AEA currently supports marketplace.iotsystemsgrowth.com; ask us to approve another vendor domain."
+        )
+
+    class ProductMetadataParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.meta: dict[str, str] = {}
+            self.title_parts: list[str] = []
+            self.description_parts: list[str] = []
+            self.in_title = False
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            values = {key.lower(): value for key, value in attrs if value}
+            if tag.lower() == "title":
+                self.in_title = True
+            if tag.lower() == "meta":
+                key = (values.get("property") or values.get("name") or "").lower()
+                value = values.get("content", "").strip()
+                if key and value:
+                    self.meta.setdefault(key, value)
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag.lower() == "title":
+                self.in_title = False
+
+        def handle_data(self, data: str) -> None:
+            if self.in_title and data.strip():
+                self.title_parts.append(data.strip())
+
+    current_url = product_url
+    response = None
+    for _ in range(4):
+        current = urlparse(current_url)
+        if current.scheme != "https" or current.hostname != "marketplace.iotsystemsgrowth.com":
+            raise ValueError("Vendor page redirected outside the approved vendor domain.")
+        response = httpx.get(
+            current_url,
+            headers={"User-Agent": "AEA-Affiliate-Draft/1.0"},
+            timeout=8.0,
+            follow_redirects=False,
+        )
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            response.raise_for_status()
+            break
+        location = response.headers.get("location")
+        if not location:
+            raise RuntimeError("Vendor page redirect did not include a destination.")
+        current_url = urljoin(current_url, location)
+    else:
+        raise RuntimeError("Vendor page redirected too many times.")
+
+    parser = ProductMetadataParser()
+    parser.feed(response.text[:1_000_000])
+    meta = parser.meta
+    name = (
+        meta.get("og:title")
+        or meta.get("twitter:title")
+        or " ".join(parser.title_parts)
+    ).strip()
+    description = (
+        meta.get("og:description")
+        or meta.get("description")
+        or meta.get("twitter:description")
+        or ""
+    ).strip()
+    image = (
+        meta.get("og:image")
+        or meta.get("twitter:image")
+        or ""
+    ).strip()
+    if not name or not description:
+        raise RuntimeError(
+            "AEA could not extract both a product name and description from the vendor page. "
+            "No Pin was generated; the vendor page must expose standard title and description metadata."
+        )
+    image_url = urljoin(current_url, image) if image else ""
+    image_parsed = urlparse(image_url) if image_url else None
+    if image_url and (
+        image_parsed.scheme != "https"
+        or not image_parsed.hostname
+        or image_parsed.username
+        or image_parsed.password
+    ):
+        image_url = ""
+    return {"name": name[:200], "description": description[:3000], "image_url": image_url}
+
+
 def _generate_copy(product: dict[str, Any], *, niche: str, language: str) -> dict[str, str]:
     provider = get_llm_provider()
     prompt = (
@@ -427,32 +532,36 @@ def build_external_pinterest_draft(
     language: str = "English", product_name: str | None = None,
     product_description: str | None = None,
 ) -> dict[str, Any]:
-    """Prepare a Pin from a user-supplied affiliate URL, without requiring Digistore24."""
+    """Research a supported vendor page from a URL and generate one AI Pin draft."""
     from urllib.parse import urlparse
 
-    parsed = urlparse(affiliate_url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or len(affiliate_url) > 2048:
-        raise ValueError("Provide a valid affiliate destination URL beginning with https:// or http://.")
     destination = affiliate_url.strip()
-    name = (product_name or "").strip() or niche.strip() or "Recommended resource"
+    parsed = urlparse(destination)
+    if (
+        parsed.scheme not in {"http", "https"} or not parsed.netloc
+        or parsed.username or parsed.password or len(destination) > 2048
+    ):
+        raise ValueError("Provide a valid vendor or affiliate URL beginning with https://.")
+
+    # Resolve the vendor product page separately from its tracking destination.
+    # For the known affiliate URL, the supplied destination itself is the product
+    # page. Keep all affiliate query/fragment tracking data untouched in the Pin.
+    details = _vendor_product_details(destination)
+    name = details["name"]
     product = {
         "product_id": "user-supplied",
-        "name": name[:200],
-        "description": (product_description or "").strip()[:3000] or "Product details were not independently verified by AEA. Use only claims supplied by the publisher.",
+        "name": name,
+        "description": details["description"],
         "category": niche,
         "affiliate_url": destination,
-        "source": "User-supplied affiliate URL (not independently verified)",
+        "source": "Vendor product page metadata (affiliate URL supplied by user)",
     }
-    # A generic stock photo is not product artwork. Do not silently substitute
-    # Pexels imagery here: the user-supplied affiliate destination may point to a
-    # different product, and a misleading Pin damages customer trust.
-    image_url = _vendor_product_image(destination, name)
+    image_url = details["image_url"] or _vendor_product_image(destination, name)
     if not _public_http_url(image_url):
         raise RuntimeError(
-            "AEA could not verify product artwork on the approved vendor product page. "
-            "It has stopped instead of attaching an unrelated stock photo. "
-            "Provide the official product image or ensure the vendor page exposes "
-            "a valid HTTPS og:image/twitter:image. No Pin was published."
+            "AEA extracted the product details but could not verify a product image. "
+            "The vendor page must expose a valid HTTPS og:image or twitter:image. "
+            "No unrelated stock image was substituted and no Pin was published."
         )
     copy = _generate_copy(product, niche=niche, language=language)
     return {
@@ -461,7 +570,7 @@ def build_external_pinterest_draft(
         "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source": "vendor_product_page", "board_id": None},
         "requires_explicit_approval": True,
         "published": False,
-        "note": "Prepared from a user-supplied destination URL. AEA has not independently verified the affiliate partnership or product claims; review before approval.",
+        "note": "AEA extracted product details from the supported vendor page and generated this draft with AI. The affiliate URL was supplied by the user; review eligibility and claims before approval.",
     }
 
 
