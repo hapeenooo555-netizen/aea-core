@@ -88,6 +88,7 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
         approval_gateway=ApprovalGateway(client=client),
         connector_registry=registry,
         human_intervention_manager=HumanInterventionManager(client=client),
+        mission_client=client,
     )
 
 

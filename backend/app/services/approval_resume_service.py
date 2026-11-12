@@ -72,6 +72,7 @@ class ApprovalResumeService:
         connector_registry: Any | None = None,
         human_intervention_manager: HumanInterventionManager | None = None,
         worker_runtime: Any | None = None,
+        mission_client: Any | None = None,
     ) -> None:
         """Initialize the resume service.
 
@@ -94,6 +95,9 @@ class ApprovalResumeService:
         )
         self._connector_registry = connector_registry
         self._worker_runtime = worker_runtime
+        # Authenticated, user-scoped database client used only for mission
+        # experience and lead metadata reads/writes after connector actions.
+        self._mission_client = mission_client
         # Idempotency cache: approval IDs whose resume has already completed
         # in this process. The cache is purely an optimization; state-level
         # guards in the stores ensure correctness across restarts.
@@ -675,6 +679,43 @@ class ApprovalResumeService:
                 platform=connector.platform,
                 worker_id=worker_id,
             )
+
+        # Approved Pinterest publishing happens after the original mission
+        # has paused at WAIT_FOR_APPROVAL. Feed only provider-confirmed Pin IDs
+        # into the same owner-scoped experience recorder used by normal runs.
+        pin_id = result.get("pin_id")
+        publish_status = result.get("status")
+        if (
+            connector.platform == "pinterest"
+            and mission_id
+            and current_user_id
+            and isinstance(pin_id, str)
+            and pin_id.strip()
+            and publish_status in {"published", "duplicate_record", "duplicate"}
+        ):
+            try:
+                from .mission_orchestration import MissionOrchestrationService
+
+                experience_result = dict(result)
+                experience_result["verification"] = {
+                    "verified": True,
+                    "source": "pinterest_api",
+                    "reference": pin_id.strip(),
+                    "verified_at": result.get("published_at") or datetime.now(timezone.utc).isoformat(),
+                }
+                orchestration = MissionOrchestrationService(current_user_id, client=self._mission_client)
+                orchestration.record_verified_experience(
+                    mission_id,
+                    experience_result,
+                    "COMPLETE",
+                )
+            except Exception:
+                # Learning is best-effort and must never turn a confirmed
+                # external publish into a reported publishing failure.
+                logger.exception(
+                    "Failed to record verified Pinterest experience for mission %s",
+                    mission_id,
+                )
 
         lead_id = payload.get("lead_id")
         if lead_id and current_user_id and sanitized_content.get("channel") == "whatsapp":

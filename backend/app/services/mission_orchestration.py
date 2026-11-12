@@ -387,6 +387,26 @@ class MissionOrchestrationService:
         self._release_mission(mission_id, claim_token)
         return {"success": bool(result.get("success")), "mission": self.get_mission(mission_id), "execution": result, "selection_reason": selection_reason}
 
+    def record_verified_experience(
+        self,
+        mission_id: str,
+        result: dict[str, Any],
+        execution_status: str = "COMPLETE",
+    ) -> bool:
+        """Record a verified outcome for an existing owner-scoped mission.
+
+        This public entry point also supports work completed asynchronously
+        after an approval pause. The mission is always reloaded through this
+        service's owner filter before any memory write is attempted.
+        """
+        mission = self.get_mission(mission_id)
+        if not mission or mission.get("owner_id") != self.owner_id:
+            return False
+        if execution_status not in {"COMPLETE", "FAIL"}:
+            return False
+        self._record_verified_experience(mission, result, execution_status)
+        return True
+
     def _record_verified_experience(
         self,
         mission: dict[str, Any],
