@@ -654,6 +654,24 @@ __all__ = ["build_digistore24_pinterest_draft"]
 
 
 
+# Product facts and artwork confirmed from the vendor page by the user.
+# Match the exact vendor slug; never apply these facts to arbitrary URLs.
+_KNOWN_VENDOR_PRODUCTS: dict[str, dict[str, str]] = {
+    "/small-business-ai-automation-toolkit-digistore/": {
+        "name": "Small Business AI & Automation Toolkit",
+        "description": (
+            "A complete four-tool, browser-based planning and assessment bundle for small businesses. "
+            "It includes AI Business Readiness & Opportunity Assessment Pro, Business Process Automation "
+            "Audit & Planner Pro, AI Customer Service & Lead Follow-Up Planner Pro, and AI Marketing & "
+            "Content Workflow Planner Pro. The tools help business owners assess AI readiness, identify "
+            "automation opportunities, plan customer follow-up, and organize content workflows. The toolkit "
+            "is a set of planning tools; it is not an autonomous AI agent and does not independently operate "
+            "business processes. The vendor page displays a one-time price of $99."
+        ),
+        "image_url": "https://iotsystemsgrowth.com/wp-content/uploads/2026/08/AI_Readiness_Preview.png",
+    },
+}
+
 def build_external_pinterest_draft(
     *, affiliate_url: str, niche: str = "AI tools and digital marketing",
     language: str = "English", product_name: str | None = None,
@@ -673,7 +691,16 @@ def build_external_pinterest_draft(
     # Resolve the vendor product page separately from its tracking destination.
     # For the known affiliate URL, the supplied destination itself is the product
     # page. Keep all affiliate query/fragment tracking data untouched in the Pin.
-    details = _vendor_product_details(destination)
+    known_product = _KNOWN_VENDOR_PRODUCTS.get(parsed.path.rstrip("/") + "/")
+    try:
+        details = _vendor_product_details(destination)
+    except RuntimeError:
+        # This exact vendor landing page is JS-rendered; use only user-confirmed facts.
+        if not known_product:
+            raise
+        details = dict(known_product)
+    if known_product:
+        details = {**details, **known_product}
     name = details["name"]
     product = {
         "product_id": "user-supplied",
@@ -681,7 +708,7 @@ def build_external_pinterest_draft(
         "description": details["description"],
         "category": niche,
         "affiliate_url": destination,
-        "source": "Vendor product page metadata (affiliate URL supplied by user)",
+        "source": "Vendor page facts and product artwork confirmed by user" if known_product else "Vendor product page metadata (affiliate URL supplied by user)",
     }
     image_url = details["image_url"] or _vendor_product_image(destination, name)
     if not _public_http_url(image_url):
@@ -694,7 +721,7 @@ def build_external_pinterest_draft(
     return {
         "success": True,
         "product": {"id": "user-supplied", "name": name, "source": product["source"], "affiliate_url": destination},
-        "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source": "vendor_product_page", "board_id": None},
+        "draft": {**copy, "destination_url": destination, "image_url": image_url, "image_source": "user_confirmed_vendor_artwork" if known_product else "vendor_product_page", "board_id": None},
         "requires_explicit_approval": True,
         "published": False,
         "note": "AEA extracted product details from the supported vendor page and generated this draft with AI. The affiliate URL was supplied by the user; review eligibility and claims before approval.",
