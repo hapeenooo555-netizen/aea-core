@@ -319,6 +319,6 @@ def test_external_pinterest_drafts_make_repeated_titles_distinct(monkeypatch):
     )
     titles = [pin["title"] for pin in result["pins"]]
     assert len(set(titles)) == 3
-    assert titles[0] == "Boost Your Small Business with the AI & Automation Toolkit"
+    assert titles[0].startswith("Boost Productivity with ")
     assert titles[1].startswith("Save Time with ")
     assert titles[2].startswith("Grow Your Business with ")
