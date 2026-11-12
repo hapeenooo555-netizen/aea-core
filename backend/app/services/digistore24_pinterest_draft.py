@@ -246,30 +246,98 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
         )
 
     class ProductMetadataParser(HTMLParser):
+        """Extract product facts from metadata, JSON-LD and semantic HTML."""
+
         def __init__(self) -> None:
             super().__init__()
             self.meta: dict[str, str] = {}
             self.title_parts: list[str] = []
+            self.h1_parts: list[str] = []
             self.description_parts: list[str] = []
+            self.jsonld_parts: list[str] = []
             self.in_title = False
+            self.in_h1 = False
+            self.in_jsonld = False
+            self.description_depth = 0
+            self._description_tag_depth = 0
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
             values = {key.lower(): value for key, value in attrs if value}
-            if tag.lower() == "title":
+            tag = tag.lower()
+            if tag == "title":
                 self.in_title = True
-            if tag.lower() == "meta":
-                key = (values.get("property") or values.get("name") or "").lower()
+            elif tag == "h1":
+                self.in_h1 = True
+            if tag == "script" and values.get("type", "").lower() == "application/ld+json":
+                self.in_jsonld = True
+            if tag == "meta":
+                key = (values.get("property") or values.get("name") or values.get("itemprop") or "").lower()
                 value = values.get("content", "").strip()
                 if key and value:
                     self.meta.setdefault(key, value)
+            classes = values.get("class", "").casefold().replace("_", "-")
+            itemprop = values.get("itemprop", "").casefold()
+            if itemprop == "description" or any(
+                marker in classes for marker in (
+                    "product-description", "product__description",
+                    "woocommerce-product-details__short-description",
+                    "short-description", "product-summary",
+                )
+            ):
+                self.description_depth += 1
+                self._description_tag_depth += 1
 
         def handle_endtag(self, tag: str) -> None:
-            if tag.lower() == "title":
+            tag = tag.lower()
+            if tag == "title":
                 self.in_title = False
+            elif tag == "h1":
+                self.in_h1 = False
+            elif tag == "script":
+                self.in_jsonld = False
+            elif self._description_tag_depth:
+                self.description_depth = max(0, self.description_depth - 1)
+                self._description_tag_depth -= 1
 
         def handle_data(self, data: str) -> None:
-            if self.in_title and data.strip():
-                self.title_parts.append(data.strip())
+            value = " ".join(data.split())
+            if not value:
+                return
+            if self.in_title:
+                self.title_parts.append(value)
+            if self.in_h1:
+                self.h1_parts.append(value)
+            if self.in_jsonld:
+                self.jsonld_parts.append(data)
+            elif self.description_depth:
+                self.description_parts.append(value)
+
+    def product_schema(value: Any) -> dict[str, str]:
+        """Find Product facts in JSON-LD graphs without trusting arbitrary scripts."""
+        found: dict[str, str] = {}
+        if isinstance(value, list):
+            for item in value:
+                candidate = product_schema(item)
+                for key, val in candidate.items():
+                    found.setdefault(key, val)
+        elif isinstance(value, dict):
+            kind = value.get("@type")
+            kinds = kind if isinstance(kind, list) else [kind]
+            if any(str(item).casefold() == "product" for item in kinds):
+                for key in ("name", "description", "image"):
+                    raw = value.get(key)
+                    if isinstance(raw, list):
+                        raw = next((item for item in raw if isinstance(item, str)), None)
+                    if isinstance(raw, dict):
+                        raw = raw.get("url") or raw.get("contentUrl")
+                    if isinstance(raw, str) and raw.strip():
+                        found[key] = raw.strip()
+            graph = value.get("@graph")
+            if graph is not None:
+                nested = product_schema(graph)
+                for key, val in nested.items():
+                    found.setdefault(key, val)
+        return found
 
     current_url = product_url
     response = None
@@ -296,19 +364,35 @@ def _vendor_product_details(product_url: str) -> dict[str, str]:
     parser = ProductMetadataParser()
     parser.feed(response.text[:1_000_000])
     meta = parser.meta
+    schema: dict[str, str] = {}
+    for raw_jsonld in parser.jsonld_parts:
+        try:
+            parsed_jsonld = json.loads(raw_jsonld)
+        except (TypeError, ValueError):
+            continue
+        candidate = product_schema(parsed_jsonld)
+        for key, value in candidate.items():
+            schema.setdefault(key, value)
+
+    # Prefer explicit Product schema and social metadata; use semantic HTML
+    # only when publishers omit those standard fields.
     name = (
-        meta.get("og:title")
+        schema.get("name")
+        or meta.get("og:title")
         or meta.get("twitter:title")
+        or " ".join(parser.h1_parts)
         or " ".join(parser.title_parts)
     ).strip()
     description = (
-        meta.get("og:description")
+        schema.get("description")
+        or meta.get("og:description")
         or meta.get("description")
         or meta.get("twitter:description")
-        or ""
+        or " ".join(parser.description_parts)
     ).strip()
     image = (
-        meta.get("og:image")
+        schema.get("image")
+        or meta.get("og:image")
         or meta.get("twitter:image")
         or ""
     ).strip()
