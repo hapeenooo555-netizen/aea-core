@@ -11,8 +11,8 @@ OWNER = "owner-1"
 ROWS = {
     "workers": [{"id": "w1", "owner_id": OWNER}, {"id": "w-other", "owner_id": "owner-2"}],
     "missions": [
-        {"id": "m1", "owner_id": OWNER, "worker_id": "w1"},
-        {"id": "m-wrong-worker", "owner_id": OWNER, "worker_id": "w9"},
+        {"id": "m1", "owner_id": OWNER, "assigned_worker": "w1"},
+        {"id": "m-wrong-worker", "owner_id": OWNER, "assigned_worker": "w9"},
         {"id": "m-other", "owner_id": "owner-2", "worker_id": "w-other"},
     ],
 }
@@ -32,8 +32,15 @@ class Query:
     def limit(self, _):
         return self
 
+    def update(self, values):
+        self.update_values = values
+        return self
+
     def execute(self):
         data = [r for r in self.rows if all(r.get(k) == v for k, v in self.filters.items())]
+        if hasattr(self, "update_values"):
+            for row in data:
+                row.update(self.update_values)
         return type("R", (), {"data": data})()
 
 
@@ -92,6 +99,7 @@ def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
     assert body["published"] is False
     assert created["approval"]["payload"]["source_mission_id"] == "m1"
     assert created["mission"]["metadata"]["source_worker_id"] == "w1"
+    assert ROWS["missions"][-1].get("assigned_worker") == "w1"
 
 
 def test_rejects_another_owners_worker(monkeypatch):
