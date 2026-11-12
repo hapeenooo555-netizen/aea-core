@@ -191,3 +191,60 @@ def test_authenticated_employee_api_ignores_forged_owner_and_supports_report():
     finally:
         app.dependency_overrides.pop(get_current_user_id, None)
         app.dependency_overrides.pop(get_user_scoped_client, None)
+
+
+class FakeExperienceMemory:
+    def __init__(self):
+        self.rows = []
+        self.writes = []
+
+    def get_recent_memories(self, worker_id, limit=10, owner_id=None, **kwargs):
+        assert owner_id == "experience-owner"
+        return [row for row in self.rows if row["worker_id"] == worker_id][:limit]
+
+    def store_memory(self, worker_id, memory_type, content, owner_id=None):
+        assert owner_id == "experience-owner"
+        row = {"worker_id": worker_id, "memory_type": memory_type, "mission_id": content.get("mission_id"), "content": content}
+        self.rows.append(row)
+        self.writes.append(row)
+        return {"success": True, "memory": row}
+
+
+def test_employee_completion_without_connector_evidence_is_not_learned():
+    memory = FakeExperienceMemory()
+    orchestration = MissionOrchestrationService("experience-owner", memory_engine=memory)
+    mission = {"id": "mission-unverified", "assigned_worker": "worker-1", "domain": "affiliate_jobs", "objective": "Publish a Pin"}
+    orchestration._record_verified_experience(mission, {"success": True, "status": "COMPLETE"}, "COMPLETE")
+    assert memory.writes == []
+    assert any(event["event_type"] == "mission_outcome_unverified" for event in orchestration.events())
+
+
+def test_verified_outcome_is_stored_once_and_scoped_to_owner_worker():
+    memory = FakeExperienceMemory()
+    orchestration = MissionOrchestrationService("experience-owner", memory_engine=memory)
+    mission = {"id": "mission-verified", "assigned_worker": "worker-1", "domain": "affiliate_jobs", "objective": "Publish a Pin"}
+    result = {
+        "success": True,
+        "status": "COMPLETE",
+        "verification": {
+            "verified": True,
+            "source": "pinterest_api",
+            "reference": "pin-123",
+            "verified_at": "2026-11-13T10:00:00Z",
+        },
+    }
+    orchestration._record_verified_experience(mission, result, "COMPLETE")
+    orchestration._record_verified_experience(mission, result, "COMPLETE")
+    assert len(memory.writes) == 1
+    lesson = memory.writes[0]["content"]
+    assert lesson["outcome"] == "success"
+    assert lesson["evidence"]["reference"] == "pin-123"
+    assert memory.writes[0]["worker_id"] == "worker-1"
+
+
+def test_failure_without_verification_evidence_does_not_create_lesson():
+    memory = FakeExperienceMemory()
+    orchestration = MissionOrchestrationService("experience-owner", memory_engine=memory)
+    mission = {"id": "mission-failed-unverified", "assigned_worker": "worker-1", "domain": "affiliate_jobs"}
+    orchestration._record_verified_experience(mission, {"success": False, "error": "timeout"}, "FAIL")
+    assert memory.writes == []
