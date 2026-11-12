@@ -493,17 +493,12 @@ def build_external_pinterest_drafts(
     for angle_key, angle_prompt, _title_prefix in angle_specs:
         pins.append(_generate_copy(product, niche=f"{niche}; {angle_key}: {angle_prompt}", language=language))
 
-    # Models can ignore angle instructions; replace duplicate titles with
-    # distinct, benefit-led alternatives grounded in the supplied product name.
-    title_prefixes = [spec[2] for spec in angle_specs]
-    seen_titles: set[str] = set()
+    # Enforce three distinct benefit-led headlines even when the LLM returns
+    # near-duplicates (e.g. articles such as "the" / "an" differ only slightly).
+    # Descriptions remain model-generated for each requested creative angle.
     safe_name = (product["name"] or "AI Automation Toolkit").strip()
     for index, pin in enumerate(pins):
-        normalized_title = " ".join(pin["title"].casefold().split())
-        if normalized_title in seen_titles:
-            pin["title"] = f"{title_prefixes[index]} {safe_name}"[:100].rstrip()
-            normalized_title = " ".join(pin["title"].casefold().split())
-        seen_titles.add(normalized_title)
+        pin["title"] = f"{angle_specs[index][2]} {safe_name}"[:100].rstrip()
     return {
         "success": True,
         "product": base["product"],
