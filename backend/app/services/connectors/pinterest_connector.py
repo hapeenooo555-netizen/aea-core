@@ -1000,22 +1000,71 @@ class PinterestConnector(BaseConnector):
                     json=pin_payload,
                 )
             provider_status = publish_response.status_code
+            try:
+                provider_body = publish_response.json()
+            except ValueError:
+                provider_body = {}
+
+            # Preserve only Pinterest's safe, actionable error fields. Never
+            # return or persist request headers, tokens, or an unfiltered body.
+            provider_error: dict[str, Any] = {}
+            if isinstance(provider_body, dict):
+                provider_code = provider_body.get("code")
+                provider_message = provider_body.get("message") or provider_body.get("error")
+                if provider_code is not None:
+                    provider_error["code"] = str(provider_code)[:80]
+                if provider_message is not None:
+                    provider_error["message"] = str(provider_message)[:500]
+                provider_details = provider_body.get("details")
+                if isinstance(provider_details, str) and provider_details.strip():
+                    provider_error["details"] = provider_details.strip()[:500]
+                elif isinstance(provider_details, dict):
+                    safe_details = {
+                        str(key)[:80]: str(value)[:200]
+                        for key, value in provider_details.items()
+                        if str(key).lower() not in {"access_token", "refresh_token", "token", "authorization", "password", "client_secret"}
+                        and isinstance(value, (str, int, float, bool))
+                    }
+                    if safe_details:
+                        provider_error["details"] = safe_details
+
             if provider_status not in (200, 201):
                 if 400 <= provider_status < 500:
                     # Pinterest refused the request; no Pin was created.
-                    _settle(STATUS_FAILED, content={**sanitized_content, "provider_status": provider_status})
+                    _settle(
+                        STATUS_FAILED,
+                        content={
+                            **sanitized_content,
+                            "provider_status": provider_status,
+                            "provider_error": provider_error,
+                        },
+                    )
+                    reason = provider_error.get("message") or provider_error.get("details")
+                    error = f"Pinterest rejected pin creation (HTTP {provider_status})"
+                    if reason:
+                        error = f"{error}: {reason}"
                     return {
                         "success": False,
                         "status": "publish_failed",
-                        "error": "Pinterest rejected pin creation",
+                        "error": error,
                         "provider_status": provider_status,
+                        "provider_error": provider_error,
                     }
-                _settle(STATUS_UNCERTAIN, content={**sanitized_content, "provider_status": provider_status})
-                return self._uncertain_result(operation_key, approval_request_id, provider_status=provider_status)
-            try:
-                provider_pin = publish_response.json()
-            except ValueError:
-                provider_pin = {}
+                _settle(
+                    STATUS_UNCERTAIN,
+                    content={
+                        **sanitized_content,
+                        "provider_status": provider_status,
+                        "provider_error": provider_error,
+                    },
+                )
+                return self._uncertain_result(
+                    operation_key,
+                    approval_request_id,
+                    provider_status=provider_status,
+                    provider_error=provider_error,
+                )
+            provider_pin = provider_body if isinstance(provider_body, dict) else {}
         except (httpx.TimeoutException, httpx.HTTPError):
             if not pin_request_sent:
                 _settle(STATUS_FAILED)
