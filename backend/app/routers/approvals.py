@@ -225,8 +225,36 @@ async def approve_approval(
         current_user_id=current_user_id,
     )
     _update_p1_8_mission_state(approval, resume_result, current_user_id, client)
+
+    # Persist connector execution separately from human approval. An approved
+    # request is not proof that Meta accepted or delivered a WhatsApp message.
+    try:
+        from datetime import datetime, timezone
+        import logging
+
+        existing_metadata = approval.get("metadata") if isinstance(approval, dict) else {}
+        execution_metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
+        execution_metadata["execution"] = {
+            "status": resume_result.get("status"),
+            "action_type": resume_result.get("action_type"),
+            "platform": resume_result.get("platform"),
+            "error": resume_result.get("error"),
+            "result": resume_result.get("result"),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        client.table("approval_requests").update(
+            {"metadata": execution_metadata}
+        ).eq("id", approval_id).eq("owner_id", current_user_id).execute()
+        approval["metadata"] = execution_metadata
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to persist approval execution outcome for %s", approval_id
+        )
+
     return {
-        "success": True,
+        "success": resume_result.get("status") not in {
+            "resume_failed", "approval_not_found", "approval_unauthorized"
+        },
         "approval": approval,
         "resume": resume_result,
     }
