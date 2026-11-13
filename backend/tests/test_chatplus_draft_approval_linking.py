@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.routers import approvals as approvals_router
-from app.routers import chatplus_pinterest as cp
+from app.routers import affiliate_pinterest as cp
 
 OWNER = "owner-1"
 ROWS = {
@@ -94,7 +94,7 @@ def make_client(monkeypatch):
 
 def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
     created.clear()
-    res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m1"})
+    res = make_client(monkeypatch).post("/affiliate/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m1"})
     assert res.status_code == 201
     body = res.json()
     assert body["approval_request_id"] == "appr-1"
@@ -107,22 +107,22 @@ def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
 
 
 def test_rejects_another_owners_worker(monkeypatch):
-    res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json={**DRAFT, "worker_id": "w-other"})
+    res = make_client(monkeypatch).post("/affiliate/pinterest/draft-approval", json={**DRAFT, "worker_id": "w-other"})
     assert res.status_code == 404
 
 
 def test_rejects_another_owners_mission(monkeypatch):
-    res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m-other"})
+    res = make_client(monkeypatch).post("/affiliate/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m-other"})
     assert res.status_code == 404
 
 
 def test_rejects_mission_of_a_different_worker(monkeypatch):
-    res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m-wrong-worker"})
+    res = make_client(monkeypatch).post("/affiliate/pinterest/draft-approval", json={**DRAFT, "worker_id": "w1", "mission_id": "m-wrong-worker"})
     assert res.status_code == 422
 
 
 def test_works_without_selection(monkeypatch):
-    res = make_client(monkeypatch).post("/chatplus/pinterest/draft-approval", json=DRAFT)
+    res = make_client(monkeypatch).post("/affiliate/pinterest/draft-approval", json=DRAFT)
     assert res.status_code == 201
     assert res.json()["source_mission_id"] is None
 
