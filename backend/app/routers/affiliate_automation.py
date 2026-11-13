@@ -14,7 +14,7 @@ router = APIRouter(prefix="/affiliate/automation", tags=["affiliate-automation"]
 
 
 class PinterestAutopilotRequest(BaseModel):
-    niche: str = Field(default="AI tools and digital marketing", min_length=2, max_length=120)
+    niche: str = Field(default="Marketplace", min_length=2, max_length=120)
     language: str = Field(default="English", min_length=2, max_length=40)
 
 
@@ -32,7 +32,7 @@ class MarketplacePinterestDraftRequest(BaseModel):
     product_description: str = Field(default="", max_length=3000)
     product_image_url: str = Field(min_length=8, max_length=2048)
     provider: str = Field(min_length=2, max_length=40)
-    niche: str = Field(default="AI tools and business automation", min_length=2, max_length=120)
+    niche: str = Field(default="Marketplace", min_length=2, max_length=120)
     language: str = Field(default="English", min_length=2, max_length=40)
 
 
