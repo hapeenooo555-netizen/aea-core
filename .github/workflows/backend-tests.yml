@@ -57,4 +57,9 @@ jobs:
           tests/test_p1_7b_employee_slice.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
-PYTHONPATH=backend python -m pytest -q backend/tests/test_affiliate_cj_connection.py && PYTHONPATH=backend python -m pytest -q backend/tests/test_affiliate_cj_promotional_properties.py
+      - name: Run affiliate network and Pinterest approval tests
+        run: >-
+          PYTHONPATH=backend python -m pytest -q
+          backend/tests/test_affiliate_cj_connection.py
+          backend/tests/test_affiliate_cj_promotional_properties.py
+          backend/tests/test_chatplus_draft_approval_linking.py
