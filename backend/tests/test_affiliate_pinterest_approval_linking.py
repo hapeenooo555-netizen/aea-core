@@ -151,3 +151,10 @@ def test_first_publish_with_pin_id_completes_mission(monkeypatch):
 
 def test_resumed_without_pin_id_does_not_complete(monkeypatch):
     assert _transition_for(monkeypatch, {"status": "resumed", "result": {}}) is None
+
+
+def test_resume_failed_marks_approval_mission_failed(monkeypatch):
+    assert _transition_for(
+        monkeypatch,
+        {"status": "resume_failed", "error": "Pinterest rejected pin creation"},
+    ) == "failed"
