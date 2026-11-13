@@ -21,7 +21,6 @@ router = APIRouter(prefix="/affiliate/research", tags=["affiliate-research"])
 
 @router.get("/digistore24")
 async def research_digistore24(
-    niche: list[str] = Query(default=["AI tools", "digital marketing", "software"], max_length=8),
     limit: int = Query(default=10, ge=1, le=25),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
@@ -31,7 +30,7 @@ async def research_digistore24(
         # The developer key is only for creating/retrieving user API keys.
         api_key = load_connected_api_key(_owner_id)
         client = Digistore24MarketplaceClient(api_key=api_key)
-        return client.research(target_niches=tuple(niche), limit=limit)
+        return client.research(target_niches=(), limit=limit)
     except Digistore24ConnectionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Digistore24MarketplaceError as exc:
