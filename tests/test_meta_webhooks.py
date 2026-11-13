@@ -193,3 +193,62 @@ def test_meta_webhook_reports_qualification_failure_without_claiming_follow_up(m
     assert lead["qualification"] is None
     assert lead["follow_up_status"] == "qualification_failed"
 
+
+def test_meta_dashboard_sample_is_acknowledged_without_creating_a_lead(monkeypatch):
+    monkeypatch.setenv("META_APP_SECRET", "test-secret")
+    monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", json.dumps({"real-phone-id": OWNER_ID}))
+    monkeypatch.setattr(
+        "app.routers.meta_webhooks.get_supabase_service_client",
+        lambda: None,
+    )
+    payload = {
+        "entry": [{
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "16505551111",
+                        "phone_number_id": "123456123",
+                    },
+                    "contacts": [{"wa_id": "16315551181"}],
+                    "messages": [{
+                        "id": "ABGGF1A5Fpa",
+                        "from": "16315551181",
+                        "type": "text",
+                        "text": {"body": "this is a text message"},
+                    }],
+                },
+            }],
+        }],
+    }
+    app = FastAPI()
+    app.include_router(router)
+    response = _signed_post(TestClient(app), payload)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "processed": 0,
+        "ignored": 1,
+        "leads": [],
+    }
+
+
+def test_meta_webhook_still_rejects_real_unknown_phone_number(monkeypatch):
+    monkeypatch.setenv("META_APP_SECRET", "test-secret")
+    monkeypatch.setenv("META_PHONE_NUMBER_OWNER_MAP", json.dumps({"configured-phone": OWNER_ID}))
+    monkeypatch.setattr(
+        "app.routers.meta_webhooks.get_supabase_service_client",
+        lambda: object(),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    response = _signed_post(
+        TestClient(app),
+        _message_payload(phone_number_id="real-unknown-phone"),
+    )
+
+    assert response.status_code == 503
+    assert "No owner is configured" in response.json()["detail"]
+
