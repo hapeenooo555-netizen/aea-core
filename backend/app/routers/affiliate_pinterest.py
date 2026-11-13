@@ -85,19 +85,34 @@ def pinterest_verification(owner_id: str = Depends(get_current_user_id)) -> dict
 
 
 @router.delete("/connection")
-def disconnect_pinterest(owner_id: str = Depends(get_current_user_id)) -> dict[str, Any]:
-    """Remove the authenticated owner's stored Pinterest OAuth credentials."""
+def disconnect_pinterest(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Remove the authenticated owner's encrypted credentials and connection metadata."""
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
     try:
         from app.services.pinterest_token_vault import delete_tokens
-        deleted = delete_tokens(owner_id=owner_id)
+        credentials_removed = delete_tokens(owner_id=owner_id)
+        # Keep the worker runtime's connection status consistent with the vault.
+        metadata_result = (
+            client.table("platform_connections")
+            .delete()
+            .eq("owner_id", owner_id)
+            .eq("platform", "pinterest")
+            .execute()
+        )
+        metadata_removed = bool(metadata_result.data)
         return {
             "success": True,
             "disconnected": True,
-            "credentials_removed": deleted,
-            "message": "AEA removed the stored Pinterest authorization. Revoke AEA in Pinterest connected-app settings as well if you want to revoke the provider grant immediately.",
+            "credentials_removed": credentials_removed,
+            "connection_metadata_removed": metadata_removed,
+            "message": "AEA removed its stored Pinterest authorization and connection record. Also revoke AEA from Pinterest connected-app settings to revoke the provider grant.",
         }
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Pinterest authorization could not be removed from the credential vault") from exc
+        raise HTTPException(status_code=503, detail="Pinterest authorization could not be fully removed") from exc
 
 
 
