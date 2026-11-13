@@ -59,7 +59,21 @@ def pinterest_verification(owner_id: str = Depends(get_current_user_id)) -> dict
         if stored.get("expired"):
             raise HTTPException(status_code=409, detail="Pinterest access token has expired; reconnect Pinterest")
         result = verify_account_and_boards(stored["access_token"])
-        return {"success": True, "account": result["account"], "boards": result["boards"], "published": False}
+        # Safe OAuth evidence: expose granted scopes and timestamps, never tokens.
+        return {
+            "success": True,
+            "account": result["account"],
+            "boards": result["boards"],
+            "oauth": {
+                "provider": "Pinterest",
+                "status": "authorized",
+                "scopes": stored.get("scopes") or [],
+                "authorized_at": stored.get("updated_at"),
+                "expires_at": stored.get("expires_at"),
+                "token_stored_server_side": True,
+            },
+            "published": False,
+        }
     except HTTPException:
         raise
     except PinterestVerificationError as exc:
@@ -68,6 +82,22 @@ def pinterest_verification(owner_id: str = Depends(get_current_user_id)) -> dict
         raise HTTPException(status_code=code, detail=message) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Pinterest credential vault is unavailable") from exc
+
+
+@router.delete("/connection")
+def disconnect_pinterest(owner_id: str = Depends(get_current_user_id)) -> dict[str, Any]:
+    """Remove the authenticated owner's stored Pinterest OAuth credentials."""
+    try:
+        from app.services.pinterest_token_vault import delete_tokens
+        deleted = delete_tokens(owner_id=owner_id)
+        return {
+            "success": True,
+            "disconnected": True,
+            "credentials_removed": deleted,
+            "message": "AEA removed the stored Pinterest authorization. Revoke AEA in Pinterest connected-app settings as well if you want to revoke the provider grant immediately.",
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Pinterest authorization could not be removed from the credential vault") from exc
 
 
 
