@@ -176,7 +176,7 @@ class PinterestConnector(BaseConnector):
             Dictionary with account state.
         """
         if worker_id and not self._is_explicit_worker_id(worker_id):
-            # ChatPlus may pass the authenticated AEA owner UUID here, while
+            # AEA Hub may pass the authenticated AEA owner UUID here, while
             # worker IDs are a separate namespace. OAuth callback stores tokens
             # by owner_id, so check that owner-scoped vault before rejecting this
             # identifier as a non-worker. Never return token material to callers.
@@ -241,7 +241,7 @@ class PinterestConnector(BaseConnector):
 
             # The OAuth callback may have saved the credential successfully even
             # if the platform_connections row is absent. Check the owner-scoped
-            # vault before telling ChatPlus that setup is required.
+            # vault before telling AEA Hub that setup is required.
             try:
                 from ..pinterest_token_vault import get_access_token
 
