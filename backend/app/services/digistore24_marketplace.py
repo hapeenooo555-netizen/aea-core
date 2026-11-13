@@ -174,7 +174,7 @@ class Digistore24MarketplaceClient:
             raise Digistore24MarketplaceError("Digistore24 marketplace detail response had an unexpected format.")
         return record
 
-    def research(self, *, target_niches: tuple[str, ...] = ("AI tools", "digital marketing", "software"), limit: int = 10) -> dict[str, Any]:
+    def research(self, *, target_niches: tuple[str, ...] = (), limit: int = 10) -> dict[str, Any]:
         entries = self.list_entries(limit=250)
         normalized = [normalize_marketplace_entry(entry) for entry in entries]
         result = rank_marketplace_products(normalized, target_niches=target_niches, limit=limit)
