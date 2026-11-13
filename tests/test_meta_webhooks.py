@@ -120,6 +120,15 @@ def test_meta_webhook_persists_lead_with_explicit_owner(monkeypatch):
                 },
             }
 
+        def suggest_follow_up(self, lead_id):
+            assert lead_id == "lead-123"
+            return {
+                "success": True,
+                "status": "waiting_approval",
+                "message": "Please share your quantity, gauge and delivery location.",
+                "approval_request_id": "approval-123",
+            }
+
     monkeypatch.setattr("app.routers.meta_webhooks.HapeBrothersMarketingOS", FakeMarketingOS)
     app = FastAPI()
     app.include_router(router)
@@ -130,7 +139,8 @@ def test_meta_webhook_persists_lead_with_explicit_owner(monkeypatch):
     assert data["processed"] == 1
     assert data["leads"][0]["lead_id"] == "lead-123"
     assert data["leads"][0]["qualification"]["tier"] == "high"
-    assert data["leads"][0]["follow_up_status"] == "not_started"
+    assert data["leads"][0]["follow_up_status"] == "waiting_approval"
+    assert data["leads"][0]["follow_up"]["approval_request_id"] == "approval-123"
 
 
 def test_meta_webhook_fails_closed_without_service_client(monkeypatch):
