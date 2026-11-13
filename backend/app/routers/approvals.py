@@ -123,6 +123,7 @@ def _update_p1_8_mission_state(
         "awaiting_human_intervention": "waiting_human",
         "approval_rejected": "failed",
         "approval_expired": "cancelled",
+        "resume_failed": "failed",
         "publish_uncertain": "waiting_human",
     }.get(status_text)
     # A first publish resumes with "resumed"; it is only complete once the
