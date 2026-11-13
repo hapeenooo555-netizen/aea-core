@@ -454,3 +454,48 @@ def test_known_toolkit_uses_user_confirmed_product_facts_and_artwork(monkeypatch
     assert result["draft"]["image_source"] == "user_confirmed_vendor_artwork"
     assert result["requires_explicit_approval"] is True
     assert result["published"] is False
+
+
+
+def test_marketplace_draft_uses_selected_product_and_user_tracking_url(monkeypatch):
+    monkeypatch.setattr(draft, "_generate_copy", _fake_copy)
+    result = draft.build_marketplace_pinterest_draft(
+        affiliate_url="https://tracking.example/click?aff=abc",
+        product_url="https://vendor.example/product",
+        product_name="AI Marketing Toolkit",
+        product_description="Automates marketing tasks.",
+        product_image_url="https://cdn.example/toolkit.jpg",
+        provider="cj",
+    )
+    assert result["success"] is True
+    assert result["product"]["affiliate_url"] == "https://tracking.example/click?aff=abc"
+    assert result["product"]["product_url"] == "https://vendor.example/product"
+    assert result["draft"]["destination_url"] == "https://tracking.example/click?aff=abc"
+    assert result["draft"]["image_url"] == "https://cdn.example/toolkit.jpg"
+    assert result["requires_explicit_approval"] is True
+    assert result["published"] is False
+    assert result["product"]["promotion_status"] == "user_confirmed_not_provider_verified"
+
+
+def test_marketplace_draft_rejects_non_https_affiliate_url(monkeypatch):
+    import pytest
+    with pytest.raises(ValueError, match="approved affiliate tracking URL"):
+        draft.build_marketplace_pinterest_draft(
+            affiliate_url="http://tracking.example/click",
+            product_url="https://vendor.example/product",
+            product_name="AI Marketing Toolkit",
+            product_image_url="https://cdn.example/toolkit.jpg",
+            provider="cj",
+        )
+
+
+def test_marketplace_draft_rejects_missing_product_artwork(monkeypatch):
+    import pytest
+    with pytest.raises(ValueError, match="product image"):
+        draft.build_marketplace_pinterest_draft(
+            affiliate_url="https://tracking.example/click",
+            product_url="https://vendor.example/product",
+            product_name="AI Marketing Toolkit",
+            product_image_url="not-a-url",
+            provider="cj",
+        )
