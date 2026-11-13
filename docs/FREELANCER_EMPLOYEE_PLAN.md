@@ -50,7 +50,7 @@ Add authenticated, owner-scoped endpoints only after inspecting existing router 
 - create a project plan
 - run QA and prepare a delivery package
 - list project status and earnings
-Use the existing ChatPlus/dashboard patterns rather than creating a second independent application. Include explicit statuses: draft, needs_review, approved, in_progress, qa_failed, ready_for_delivery, delivered, cancelled, blocked.
+Use the existing AEA Hub/dashboard patterns rather than creating a second independent application. Include explicit statuses: draft, needs_review, approved, in_progress, qa_failed, ready_for_delivery, delivered, cancelled, blocked.
 
 ## Marketplace integration policy
 - Treat each marketplace as an optional connector with its own capability flags and authorization status.
