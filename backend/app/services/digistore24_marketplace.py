@@ -45,8 +45,8 @@ def normalize_marketplace_entry(entry: dict[str, Any]) -> dict[str, Any]:
     product_id = _first(entry, "main_product_id", "mainProductId", "product_id", "productId")
     name = _first(entry, "headline", "name", "title")
     # Only use a URL actually supplied by the API record. Do not invent a deep link.
-    source_url = _first(entry, "url", "marketplace_url", "sales_page_url", "product_url")
-    commission = _as_number(_first(entry, "affiliate_share", "affiliateShare", "commission_rate"))
+    source_url = _first(entry, "url", "marketplace_url", "marketplaceUrl", "sales_page_url", "salesPageUrl", "product_url", "productUrl")
+    commission = _as_number(_first(entry, "affiliate_share", "affiliateShare", "commission_rate", "commissionRate"))
     epc = _as_number(_first(entry, "stats_affiliate_profit_visitor", "statsAffiliateProfitVisitor", "earnings_per_click"))
     conversion = _as_number(_first(entry, "stats_conversion_rate", "statsConversionRate", "conversion_rate"))
     cancellation = _as_number(_first(entry, "stats_cancel_rate", "statsCancelRate", "cancellation_rate"))
