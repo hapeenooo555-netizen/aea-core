@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.routers import approvals as approvals_router
 from app.routers import affiliate_pinterest as cp
+from app.services.approval_resume_service import ApprovalResumeService
 
 OWNER = "owner-1"
 ROWS = {
@@ -158,3 +159,34 @@ def test_resume_failed_marks_approval_mission_failed(monkeypatch):
         monkeypatch,
         {"status": "resume_failed", "error": "Pinterest rejected pin creation"},
     ) == "failed"
+
+
+
+def test_publish_failure_preserves_safe_pinterest_rejection_details():
+    class Connector:
+        platform = "pinterest"
+
+        def publish_content(self, *_args, **_kwargs):
+            return {
+                "success": False,
+                "status": "publish_failed",
+                "error": "Pinterest rejected pin creation (HTTP 403): app_not_authorized",
+                "provider_status": 403,
+                "provider_error": {"code": 2, "message": "The application is not authorized"},
+            }
+
+    service = ApprovalResumeService(
+        approval_gateway=object(),
+        connector_registry=object(),
+    )
+    outcome = service._handle_publish_content(
+        approval_request_id="approval-1",
+        mission_id="mission-1",
+        worker_id="worker-1",
+        payload={"content": {"title": "Test"}},
+        connector=Connector(),
+        current_user_id="owner-1",
+    )
+    assert outcome["status"] == "resume_failed"
+    assert outcome["provider_status"] == 403
+    assert outcome["provider_error"]["code"] == 2
