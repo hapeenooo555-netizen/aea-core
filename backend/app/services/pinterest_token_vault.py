@@ -90,3 +90,15 @@ def get_access_token(*, owner_id: str) -> dict[str, Any] | None:
         except ValueError:
             pass
     return {**row, "access_token": token, "expired": False}
+
+
+def delete_tokens(*, owner_id: str) -> bool:
+    """Delete the authenticated owner's encrypted Pinterest credentials.
+
+    This removes AEA's stored authorization. It does not delete Pins already
+    published to Pinterest; users may also revoke the app in Pinterest settings.
+    """
+    if not owner_id:
+        return False
+    response = _service_client().table(TABLE).delete().eq("owner_id", owner_id).execute()
+    return bool(response.data)
