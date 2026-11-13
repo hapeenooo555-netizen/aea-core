@@ -209,7 +209,16 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                         mission_result.get("qualification")
                         or qualification_result.get("qualification")
                     )
-                    follow_up_status = "not_started"
+                    follow_up = service.suggest_follow_up(lead_id)
+                    if follow_up.get("success"):
+                        follow_up_status = follow_up.get("status", "waiting_approval")
+                        follow_up_payload = {
+                            "message": follow_up.get("message"),
+                            "approval_request_id": follow_up.get("approval_request_id"),
+                        }
+                    else:
+                        follow_up_status = "approval_failed"
+                        follow_up_payload = {"error": follow_up.get("error", "Follow-up approval could not be created")}
                 processed += 1
                 leads.append(
                     {
@@ -219,6 +228,7 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
                         "phone_number_id": phone_number_id,
                         "qualification": qualification_payload,
                         "follow_up_status": follow_up_status,
+                        "follow_up": follow_up_payload if qualification_result.get("success") else None,
                     }
                 )
 
