@@ -62,4 +62,4 @@ jobs:
           PYTHONPATH=backend python -m pytest -q
           backend/tests/test_affiliate_cj_connection.py
           backend/tests/test_affiliate_cj_promotional_properties.py
-          backend/tests/test_chatplus_draft_approval_linking.py
+          backend/tests/test_affiliate_pinterest_approval_linking.py
