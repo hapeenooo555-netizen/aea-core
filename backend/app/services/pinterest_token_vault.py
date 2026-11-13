@@ -70,7 +70,7 @@ def get_access_token(*, owner_id: str) -> dict[str, Any] | None:
         return None
     response = (
         _service_client().table(TABLE)
-        .select("encrypted_access_token,encrypted_refresh_token,token_type,expires_at,scopes,external_account_id,display_name")
+        .select("encrypted_access_token,encrypted_refresh_token,token_type,expires_at,scopes,external_account_id,display_name,updated_at")
         .eq("owner_id", owner_id).limit(1).execute()
     )
     rows = response.data or []
