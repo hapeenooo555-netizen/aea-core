@@ -678,6 +678,8 @@ class ApprovalResumeService:
                 action_type="publish_content",
                 platform=connector.platform,
                 worker_id=worker_id,
+                provider_status=result.get("provider_status"),
+                provider_error=result.get("provider_error"),
             )
 
         # Approved Pinterest publishing happens after the original mission
