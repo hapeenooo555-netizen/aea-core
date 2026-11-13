@@ -727,7 +727,7 @@ class MissionExecutionService:
                 # which only returns executions matching this owner_id. The
                 # mission_steps schema is keyed by execution_id and does not
                 # contain owner_id; filtering on that nonexistent column
-                # breaks the live ChatPlus state endpoint.
+                # breaks the live mission state endpoint.
                 response = (
                     client.table(STEP_TABLE)
                     .select("*")
