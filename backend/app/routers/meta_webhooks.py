@@ -25,6 +25,33 @@ def _verify_signature(raw_body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(signature[7:], expected)
 
 
+def _is_meta_dashboard_sample(payload: dict[str, Any]) -> bool:
+    """Recognize Meta's documented dashboard sample, never real customer traffic."""
+    sample_messages = 0
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            if change.get("field") != "messages":
+                continue
+            value = change.get("value") or {}
+            metadata = value.get("metadata") or {}
+            if (
+                str(metadata.get("phone_number_id") or "") != "123456123"
+                or str(metadata.get("display_phone_number") or "") != "16505551111"
+            ):
+                return False
+            messages = value.get("messages") or []
+            if not messages:
+                return False
+            for message in messages:
+                if (
+                    str(message.get("from") or "") != "16315551181"
+                    or not str(message.get("id") or "").startswith("ABGG")
+                ):
+                    return False
+                sample_messages += 1
+    return sample_messages > 0
+
+
 def _resolve_owner_id(phone_number_id: str | None) -> str | None:
     """Resolve a configured tenant UUID; never cross-fallback between Meta assets."""
     raw_map = os.getenv("META_PHONE_NUMBER_OWNER_MAP", "").strip()
@@ -94,6 +121,19 @@ async def receive_meta_webhook(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid webhook JSON") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    # Meta's dashboard "Send to server" fixture uses documented placeholder
+    # assets and sender IDs. Acknowledge that signed sample without creating a
+    # customer lead or requiring a tenant mapping. Real, unmapped assets still
+    # fail closed below.
+    if _is_meta_dashboard_sample(payload):
+        sample_count = sum(
+            len(change.get("value", {}).get("messages") or [])
+            for entry in payload.get("entry", [])
+            for change in entry.get("changes", [])
+            if change.get("field") == "messages"
+        )
+        return {"success": True, "processed": 0, "ignored": sample_count, "leads": []}
 
     client = get_supabase_service_client()
     if client is None:
