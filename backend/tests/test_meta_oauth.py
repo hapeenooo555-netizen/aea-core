@@ -24,6 +24,6 @@ def test_start_whatsapp_embedded_signup_uses_its_own_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_owner_mismatch_rejected_after_state_consumption(monkeypatch):
-    monkeypatch.setattr(meta_oauth.vault,"consume_oauth_state",lambda state,purpose:{"owner_id":"owner-A","purpose":purpose})
+    monkeypatch.setattr(meta_oauth.vault,"consume_oauth_state",lambda state,purpose,expected_owner_id=None:{"owner_id":"owner-A","purpose":purpose})
     with pytest.raises(MetaOAuthError,match="does not belong"):
         await meta_oauth.complete_flow("s"*43,"code","facebook_login","owner-B")
