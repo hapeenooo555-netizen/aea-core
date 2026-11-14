@@ -19,7 +19,7 @@ class CompleteRequest(BaseModel):
 
 @router.get("/config")
 async def config(owner_id:str=Depends(get_current_user_id)):
-    return {"facebook_login_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_FACEBOOK_LOGIN_CONFIG_ID") and os.getenv("META_OAUTH_REDIRECT_URI")),"whatsapp_embedded_signup_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID") and os.getenv("META_OAUTH_REDIRECT_URI")),"connected":vault.connection_status(owner_id).get("connected",False)}
+    return {"facebook_login_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_FACEBOOK_LOGIN_CONFIG_ID") and os.getenv("META_OAUTH_REDIRECT_URI")),"whatsapp_embedded_signup_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID")),"connected":vault.connection_status(owner_id).get("connected",False)}
 
 @router.post("/start")
 async def start(request:StartRequest,owner_id:str=Depends(get_current_user_id)):
