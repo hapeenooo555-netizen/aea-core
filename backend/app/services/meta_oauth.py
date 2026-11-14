@@ -22,13 +22,16 @@ def graph_version() -> str:
 
 def start_flow(owner_id: str, purpose: str) -> dict:
     app_id=_required("META_APP_ID")
-    redirect_uri=_required("META_OAUTH_REDIRECT_URI")
-    if not redirect_uri.startswith("https://"): raise MetaOAuthError("Meta OAuth redirect URI must use HTTPS.")
     config_env={"facebook_login":"META_FACEBOOK_LOGIN_CONFIG_ID","whatsapp_embedded_signup":"META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID"}
     if purpose not in config_env: raise MetaOAuthError("Unsupported Meta authorization flow.")
     config_id=_required(config_env[purpose])
+    result={"purpose":purpose,"app_id":app_id,"config_id":config_id,"graph_api_version":graph_version()}
+    if purpose == "facebook_login":
+        redirect_uri=_required("META_OAUTH_REDIRECT_URI")
+        if not redirect_uri.startswith("https://"): raise MetaOAuthError("Meta OAuth redirect URI must use HTTPS.")
+        result["redirect_uri"]=redirect_uri
     state=vault.create_oauth_state(owner_id,purpose)
-    result={"purpose":purpose,"state":state,"app_id":app_id,"config_id":config_id,"redirect_uri":redirect_uri,"graph_api_version":graph_version()}
+    result["state"]=state
     if purpose=="facebook_login":
         params=urlencode({"client_id":app_id,"redirect_uri":redirect_uri,"state":state,"config_id":config_id,"response_type":"code","override_default_response_type":"true"})
         result["authorization_url"]=f"https://www.facebook.com/{graph_version()}/dialog/oauth?{params}"
