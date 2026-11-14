@@ -105,6 +105,8 @@ def consume_oauth_state(state: str, purpose: str | None = None, expected_owner_i
         )
         if purpose:
             query = query.eq("purpose", purpose)
+        if expected_owner_id:
+            query = query.eq("owner_id", expected_owner_id)
         response = query.select("owner_id,purpose,expires_at").execute()
         rows = getattr(response, "data", None) or []
     except Exception as exc:
