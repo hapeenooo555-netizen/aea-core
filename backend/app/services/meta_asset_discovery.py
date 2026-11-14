@@ -28,7 +28,7 @@ async def _edge(client: httpx.AsyncClient,url: str,token: str,max_pages: int=20)
         url=next_url
     raise MetaAssetDiscoveryError("Meta asset list exceeded the pagination safety limit.")
 
-async def discover_assets(owner_id: str,purpose: str) -> dict[str,Any]:
+async def discover_assets(owner_id: str,purpose: str,*,waba_id: str|None=None,phone_number_id: str|None=None) -> dict[str,Any]:
     if purpose not in {"facebook_login","whatsapp_embedded_signup"}: raise MetaAssetDiscoveryError("Unsupported Meta asset discovery purpose.")
     token=vault.load_access_token(owner_id,purpose)
     base=f"https://graph.facebook.com/{graph_version()}"
@@ -43,19 +43,21 @@ async def discover_assets(owner_id: str,purpose: str) -> dict[str,Any]:
                 pages.append({"id":str(page_id),"name":page.get("name"),"category":page.get("category"),"tasks":page.get("tasks") or []})
                 ig=page.get("instagram_business_account")
                 if isinstance(ig,dict) and ig.get("id"): instagram.append({"id":str(ig["id"]),"username":ig.get("username"),"page_id":str(page_id),"page_name":page.get("name")})
-        business_rows=await _edge(client,f"{base}/me/businesses?fields=id,name",token)
-        businesses=[{"id":str(b["id"]),"name":b.get("name")} for b in business_rows if b.get("id")]
-        if purpose=="whatsapp_embedded_signup":
-            # Embedded Signup reports the created/selected WABA and phone in the
-            # SDK completion message; Graph lookup confirms accessible account data.
-            for business in businesses:
-                for edge_name in ("owned_whatsapp_business_accounts","client_whatsapp_business_accounts"):
-                    wabas=await _edge(client,f"{base}/{business['id']}/{edge_name}?fields=id,name",token)
-                    for waba in wabas:
-                        waba_id=waba.get("id")
-                        if not waba_id: continue
-                        phones=await _edge(client,f"{base}/{waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status",token)
-                        whatsapp.append({"waba_id":str(waba_id),"name":waba.get("name"),"business_id":business["id"],"relationship":edge_name,"phone_numbers":[{"id":str(p["id"]),"display_phone_number":p.get("display_phone_number"),"verified_name":p.get("verified_name"),"quality_rating":p.get("quality_rating"),"code_verification_status":p.get("code_verification_status")} for p in phones if p.get("id")]})
+            business_rows=await _edge(client,f"{base}/me/businesses?fields=id,name",token)
+            businesses=[{"id":str(b["id"]),"name":b.get("name")} for b in business_rows if b.get("id")]
+        elif waba_id:
+            if not isinstance(waba_id,str) or not waba_id.isdigit() or len(waba_id)>32:
+                raise MetaAssetDiscoveryError("WhatsApp Business Account ID is invalid.")
+            waba=await _get_json(client,f"{base}/{waba_id}?fields=id,name",token)
+            returned_id=str(waba.get("id") or "")
+            if returned_id!=waba_id: raise MetaAssetDiscoveryError("Meta did not confirm the requested WhatsApp Business Account.")
+            phones=await _edge(client,f"{base}/{waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status",token)
+            phone_assets=[{"id":str(p["id"]),"display_phone_number":p.get("display_phone_number"),"verified_name":p.get("verified_name"),"quality_rating":p.get("quality_rating"),"code_verification_status":p.get("code_verification_status")} for p in phones if p.get("id")]
+            if phone_number_id and not any(p["id"]==str(phone_number_id) for p in phone_assets):
+                raise MetaAssetDiscoveryError("The phone number returned by Embedded Signup was not found under the authorized WABA.")
+            whatsapp=[{"waba_id":returned_id,"name":waba.get("name"),"phone_numbers":phone_assets}]
+        else:
+            raise MetaAssetDiscoveryError("WhatsApp Embedded Signup did not return a WABA ID. Complete signup and retry asset discovery.")
     assets={"facebook_pages":pages,"instagram_accounts":instagram,"whatsapp_accounts":whatsapp,"business_portfolios":businesses}
     vault.update_connection_assets(owner_id,assets,purpose)
     return {"meta_user":{"id":me.get("id"),"name":me.get("name")},"assets":assets,"discovered":True,"purpose":purpose}
