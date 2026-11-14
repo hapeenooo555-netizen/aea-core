@@ -17,6 +17,9 @@ class CompleteRequest(BaseModel):
     state:str=Field(min_length=32,max_length=256)
     code:str=Field(min_length=1,max_length=4096)
 
+class AssetsRefreshRequest(BaseModel):
+    purpose:Literal["facebook_login","whatsapp_embedded_signup"]|None=None
+
 @router.get("/config")
 async def config(owner_id:str=Depends(get_current_user_id)):
     return {"facebook_login_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_FACEBOOK_LOGIN_CONFIG_ID") and os.getenv("META_OAUTH_REDIRECT_URI")),"whatsapp_embedded_signup_configured":bool(os.getenv("META_APP_ID") and os.getenv("META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID")),"connected":vault.connection_status(owner_id).get("connected",False)}
@@ -53,9 +56,14 @@ async def disconnect(owner_id:str=Depends(get_current_user_id)):
 
 
 @router.post("/assets/refresh")
-async def refresh_assets(owner_id:str=Depends(get_current_user_id)):
-    try:
-        result=await discover_assets(owner_id)
-        return {"success":True,**result}
-    except (MetaAssetDiscoveryError,vault.MetaCredentialError) as exc:
-        raise HTTPException(status_code=502,detail=str(exc)) from exc
+async def refresh_assets(request:AssetsRefreshRequest|None=None,owner_id:str=Depends(get_current_user_id)):
+    purposes=[request.purpose] if request and request.purpose else ["facebook_login","whatsapp_embedded_signup"]
+    results={}; errors={}
+    for purpose in purposes:
+        try:
+            results[purpose]=await discover_assets(owner_id,purpose)
+        except (MetaAssetDiscoveryError,vault.MetaCredentialError) as exc:
+            errors[purpose]=str(exc)
+    if not results:
+        raise HTTPException(status_code=502,detail={"message":"No Meta assets could be refreshed.","flows":errors})
+    return {"success":not errors,"flows":results,"errors":errors}
