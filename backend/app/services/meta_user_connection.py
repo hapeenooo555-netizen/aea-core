@@ -90,7 +90,7 @@ def create_oauth_state(owner_id: str, purpose: str = "facebook_login") -> str:
     return state
 
 
-def consume_oauth_state(state: str, purpose: str | None = None) -> dict[str, str]:
+def consume_oauth_state(state: str, purpose: str | None = None, expected_owner_id: str | None = None) -> dict[str, str]:
     """Atomically consume an unexpired state; only one callback can win."""
     state_hash = hash_oauth_state(state)
     now = datetime.now(timezone.utc).isoformat()
