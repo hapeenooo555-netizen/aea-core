@@ -39,8 +39,9 @@ class MetaMarketingConnector(BaseConnector):
         return ConnectorCapabilities(
             platform="meta",
             account_status=True,
-            connect_account=True,
-            disconnect_account=True,
+            # OAuth credential storage and per-user revocation are not implemented yet.
+            connect_account=False,
+            disconnect_account=False,
             publish_content=True,
             human_intervention_capable=True,
         )
@@ -55,17 +56,42 @@ class MetaMarketingConnector(BaseConnector):
 
     def health_check(self) -> dict[str, Any]:
         configured = bool(os.getenv("META_ACCESS_TOKEN"))
-        return {"platform": self.platform, "status": "configured" if configured else "not_configured", "details": {"facebook": bool(os.getenv("META_PAGE_ID")), "instagram": bool(os.getenv("META_IG_USER_ID")), "whatsapp": bool(os.getenv("META_WA_PHONE_NUMBER_ID"))}}
+        targets = {"facebook": bool(os.getenv("META_PAGE_ID")), "instagram": bool(os.getenv("META_IG_USER_ID")), "whatsapp": bool(os.getenv("META_WA_PHONE_NUMBER_ID"))}
+        return {
+            "platform": self.platform,
+            "status": "server_configured_unverified" if configured else "not_configured",
+            "connection_type": "shared_server_environment",
+            "user_oauth_supported": False,
+            "details": targets,
+        }
 
     def get_account_status(self) -> dict[str, Any]:
         h = self.health_check()
-        return {"status": "connected" if h["status"] == "configured" else "not_started", "details": h["details"]}
+        return {
+            "status": "not_started",
+            "configuration_status": h["status"],
+            "connection_type": h["connection_type"],
+            "user_oauth_supported": False,
+            "details": h["details"],
+        }
 
     def connect_account(self, worker_id: str, auth_data: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
-        return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "connected", "account": {"page_id": auth_data.get("page_id"), "instagram_user_id": auth_data.get("instagram_user_id"), "whatsapp_phone_number_id": auth_data.get("whatsapp_phone_number_id")}}
+        return {
+            "success": False,
+            "platform": self.platform,
+            "worker_id": worker_id,
+            "status": "oauth_not_implemented",
+            "error": "Meta per-user OAuth credential storage is not implemented; no account was connected.",
+        }
 
     def disconnect_account(self, worker_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
-        return {"success": True, "platform": self.platform, "worker_id": worker_id, "status": "disconnected"}
+        return {
+            "success": False,
+            "platform": self.platform,
+            "worker_id": worker_id,
+            "status": "oauth_not_implemented",
+            "error": "Meta per-user credential revocation is not implemented; no credentials were changed.",
+        }
 
     def publish_content(self, worker_id: str, content: dict[str, Any], *, idempotency_key: str | None = None, owner_id: str | None = None) -> dict[str, Any]:
         channel = str(content.get("channel") or "").lower()
