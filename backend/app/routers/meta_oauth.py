@@ -41,8 +41,13 @@ async def facebook_callback(code:str|None=None,state:str|None=None,error:str|Non
     hub=os.getenv("AEA_HUB_URL","https://aea-affiliate-hub-web.onrender.com").rstrip("/")
     if error or not code or not state:return RedirectResponse(f"{hub}/settings/integrations?meta=authorization_error",status_code=303)
     try:
-        result=await complete_flow(state,code,"facebook_login")
-        return RedirectResponse(f"{hub}/settings/integrations?meta=authorized",status_code=303)
+        result=await complete_flow(state,code,"facebook_login",include_owner_id=True)
+        try:
+            await discover_assets(result["owner_id"],"facebook_login")
+            outcome="authorized"
+        except (MetaAssetDiscoveryError,vault.MetaCredentialError):
+            outcome="authorized_assets_pending"
+        return RedirectResponse(f"{hub}/settings/integrations?meta={outcome}",status_code=303)
     except (MetaOAuthError,vault.MetaCredentialError):
         return RedirectResponse(f"{hub}/settings/integrations?meta=connection_error",status_code=303)
 
