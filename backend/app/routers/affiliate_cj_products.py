@@ -143,66 +143,109 @@ def list_cj_product_feeds(
 def search_cj_products(
     q: str = Query(default="", max_length=120),
     advertiser_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
+    expected_count: int = Query(default=0, ge=0, le=1000000),
     pid: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
     limit: int = Query(default=50, ge=1, le=10000),
     offset: int = Query(default=1, ge=1),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
-    """Search CJ shopping products and optionally return publisher tracking links.
+    """Search CJ products; when advertiser_id is supplied, scan provider pages
+    until the requested advertiser's matching products are collected.
 
-    CJ returns up to its documented default product page size. Filtering by
-    advertiser and keywords is applied to the returned page; no undocumented
-    pagination arguments are sent.
+    CJ's documented product query supports offset/limit pagination up to 10,000
+    records per query. The advertiser filter is applied across provider pages,
+    not just to one arbitrary page. Scanning is bounded and reports incomplete
+    results rather than silently claiming the feed is exhausted.
     """
     _, company_id = _credentials()
-    def build_query(include_tracking: bool) -> str:
+    page_limit = 10000 if advertiser_id else limit
+    max_scan_pages = 100
+
+    def build_query(include_tracking: bool, page_offset: int) -> str:
         link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if include_tracking and pid else ""
         return (
             "query { products(companyId: " + _gql_string(company_id)
-            + f", limit: {limit}, offset: {offset})"
+            + f", limit: {page_limit}, offset: {page_offset})"
             + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
             "price { amount currency }" + link_field + " } } }"
         )
 
     tracking_links_included = bool(pid)
     tracking_link_error: str | None = None
-    try:
-        result = _request_cj(build_query(include_tracking=True)).get("products")
-    except HTTPException as exc:
-        # A publisher may be allowed to browse product details while CJ rejects
-        # link generation for a particular PID. Retry once without linkCode so
-        # the marketplace remains usable; never fabricate an affiliate URL.
-        if exc.status_code != 403 or not pid:
-            raise
-        tracking_links_included = False
-        tracking_link_error = "CJ denied tracking-link generation for the selected PID. Products were retried without affiliate links."
-        result = _request_cj(build_query(include_tracking=False)).get("products")
-
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="CJ response did not contain product results.")
-    items = result.get("resultList") or []
+    scanned_pages = 0
+    scanned_records = 0
+    matched: list[dict[str, Any]] = []
+    provider_total = 0
+    provider_exhausted = False
+    scan_offset = 1
     needle = q.casefold().strip()
-    if needle:
-        items = [
-            item for item in items
-            if needle in " ".join(str(item.get(key) or "") for key in ("title", "description")).casefold()
-        ]
-    if advertiser_id:
-        items = [item for item in items if str(item.get("advertiserId") or "") == advertiser_id]
+    target_end = offset + limit - 1
+    target_count = expected_count
+
+    while scanned_pages < (max_scan_pages if advertiser_id else 1):
+        def fetch_page(include_tracking: bool) -> dict[str, Any]:
+            return _request_cj(build_query(include_tracking, scan_offset)).get("products") or {}
+
+        try:
+            result = fetch_page(True)
+        except HTTPException as exc:
+            if exc.status_code != 403 or not pid:
+                raise
+            tracking_links_included = False
+            tracking_link_error = "CJ denied tracking-link generation for the selected PID. Products were retried without affiliate links."
+            result = fetch_page(False)
+
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=502, detail="CJ response did not contain product results.")
+        page_items = result.get("resultList") or []
+        provider_total = int(result.get("totalCount") or provider_total or 0)
+        scanned_pages += 1
+        scanned_records += len(page_items)
+
+        for item in page_items:
+            if advertiser_id and str(item.get("advertiserId") or "") != advertiser_id:
+                continue
+            if needle and needle not in " ".join(str(item.get(key) or "") for key in ("title", "description")).casefold():
+                continue
+            matched.append(item)
+
+        if not advertiser_id:
+            provider_exhausted = len(page_items) == 0 or scan_offset + len(page_items) > provider_total
+            break
+
+        # If the feed summary supplied productCount, stop once that many products
+        # have been found; otherwise scan until the provider reports exhaustion.
+        if target_count and len([x for x in matched if advertiser_id and str(x.get("advertiserId") or "") == advertiser_id]) >= target_count and not needle:
+            provider_exhausted = True
+            break
+        if not page_items or scan_offset + len(page_items) > provider_total:
+            provider_exhausted = True
+            break
+        scan_offset += len(page_items)
+
+    scan_incomplete = bool(advertiser_id and not provider_exhausted and scanned_pages >= max_scan_pages)
+    page_items = matched[offset - 1: target_end]
+    matched_total = target_count if target_count else (len(matched) if provider_exhausted else None)
+    has_more = (matched_total is not None and target_end < matched_total) or (matched_total is None and len(matched) >= target_end)
     return {
         "network": "cj",
         "item_type": "product",
-        "items": items,
-        "count": len(items),
-        "provider_count": result.get("count", len(result.get("resultList") or [])),
-        "total": result.get("totalCount", len(items)),
+        "items": page_items,
+        "count": len(page_items),
+        "provider_count": scanned_records,
+        "provider_total": provider_total,
+        "total": matched_total,
         "limit": limit,
         "offset": offset,
-        "next_offset": offset + limit if offset + limit <= result.get("totalCount", 0) else None,
+        "next_offset": target_end + 1 if has_more else None,
         "tracking_links_included": tracking_links_included,
         "tracking_link_error": tracking_link_error,
         "read_only": True,
         "filter_applied_locally": bool(q.strip() or advertiser_id),
+        "advertiser_filter_scanned_across_pages": bool(advertiser_id),
+        "scanned_pages": scanned_pages,
+        "scanned_records": scanned_records,
+        "scan_incomplete": scan_incomplete,
     }
 
 __all__ = ["router"]

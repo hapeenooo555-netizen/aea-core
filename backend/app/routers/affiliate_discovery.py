@@ -88,7 +88,8 @@ def _cj_advertisers(query: str, limit: int) -> dict[str, Any]:
         if needle and needle not in f"{name} {feed_name} {row.get('sourceFeedType') or ''}".casefold():
             continue
         items.append({
-            "id": str(row.get("advertiserId") or row.get("adId") or ""),
+            "id": str(row.get("adId") or ""),
+            "advertiser_id": str(row.get("advertiserId") or ""),
             "name": name or feed_name or "CJ advertiser product feed",
             "website": None,
             "relationship_status": "publisher_accessible_feed",
