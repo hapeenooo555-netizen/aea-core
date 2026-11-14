@@ -31,14 +31,14 @@ async def test_asset_discovery_maps_pages_instagram_and_whatsapp(monkeypatch):
       async def __aenter__(self): return fake
       async def __aexit__(self,*a): pass
     monkeypatch.setattr(discovery.httpx,"AsyncClient",ClientFactory)
-    monkeypatch.setattr(discovery.vault,"load_access_token",lambda owner:"secret-token")
+    monkeypatch.setattr(discovery.vault,"load_access_token",lambda owner,purpose:"secret-token")
     saved={}
-    monkeypatch.setattr(discovery.vault,"update_connection_assets",lambda owner,assets:saved.update(owner=owner,assets=assets))
-    result=await discovery.discover_assets("owner-1")
+    monkeypatch.setattr(discovery.vault,"update_connection_assets",lambda owner,assets,purpose:saved.update(owner=owner,assets=assets,purpose=purpose))
+    result=await discovery.discover_assets("owner-1","whatsapp_embedded_signup")
     assert result["assets"]["facebook_pages"][0]["id"]=="page-1"
     assert result["assets"]["instagram_accounts"][0]["id"]=="ig-1"
     assert result["assets"]["whatsapp_accounts"][0]["phone_numbers"][0]["id"]=="phone-1"
-    assert saved["owner"]=="owner-1"
+    assert saved["owner"]=="owner-1"\n    assert saved["purpose"]=="whatsapp_embedded_signup"
 
 @pytest.mark.asyncio
 async def test_asset_discovery_rejects_external_pagination_url(monkeypatch):
