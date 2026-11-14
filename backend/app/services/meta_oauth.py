@@ -37,7 +37,7 @@ def start_flow(owner_id: str, purpose: str) -> dict:
         result["authorization_url"]=f"https://www.facebook.com/{graph_version()}/dialog/oauth?{params}"
     return result
 
-async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: str | None=None) -> dict:
+async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: str | None=None, *, include_owner_id: bool=False) -> dict:
     if not isinstance(code,str) or not code.strip() or len(code)>4096: raise MetaOAuthError("Meta authorization code is invalid.")
     state_owner=vault.consume_oauth_state(state,purpose,expected_owner_id=expected_owner_id)
     owner_id=state_owner["owner_id"]
@@ -67,4 +67,7 @@ async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: 
     if isinstance(scopes,str): scopes=[x.strip() for x in scopes.split(",") if x.strip()]
     if not isinstance(scopes,list): scopes=[]
     vault.store_connection(owner_id,token,purpose=purpose,token_expires_at=expires_at,granted_scopes=[str(x) for x in scopes])
-    return {"connected":True,"meta_user_id":me.get("id") if isinstance(me,dict) else None,"display_name":me.get("name") if isinstance(me,dict) else None,"asset_discovery":"pending","purpose":purpose}
+    result={"connected":True,"meta_user_id":me.get("id") if isinstance(me,dict) else None,"display_name":me.get("name") if isinstance(me,dict) else None,"asset_discovery":"pending","purpose":purpose}
+    if include_owner_id:
+        result["owner_id"]=owner_id
+    return result
