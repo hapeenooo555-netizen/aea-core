@@ -66,5 +66,5 @@ async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: 
     scopes=payload.get("granted_scopes") or payload.get("scope") or []
     if isinstance(scopes,str): scopes=[x.strip() for x in scopes.split(",") if x.strip()]
     if not isinstance(scopes,list): scopes=[]
-    vault.store_connection(owner_id,token,token_expires_at=expires_at,granted_scopes=[str(x) for x in scopes])
+    vault.store_connection(owner_id,token,purpose=purpose,token_expires_at=expires_at,granted_scopes=[str(x) for x in scopes])
     return {"connected":True,"meta_user_id":me.get("id") if isinstance(me,dict) else None,"display_name":me.get("name") if isinstance(me,dict) else None,"asset_discovery":"pending","purpose":purpose}
