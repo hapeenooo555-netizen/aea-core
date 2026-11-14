@@ -16,7 +16,7 @@ def test_start_requires_config_and_fails_closed(monkeypatch):
     with pytest.raises(MetaOAuthError):meta_oauth.start_flow("owner-1","facebook_login")
 
 def test_start_whatsapp_embedded_signup_uses_its_own_config(monkeypatch):
-    monkeypatch.setenv("META_APP_ID","app-123");monkeypatch.setenv("META_OAUTH_REDIRECT_URI","https://api.example.com/callback");monkeypatch.setenv("META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID","wa-config")
+    monkeypatch.setenv("META_APP_ID","app-123");monkeypatch.delenv("META_OAUTH_REDIRECT_URI",raising=False);monkeypatch.setenv("META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID","wa-config")
     monkeypatch.setattr(meta_oauth.vault,"create_oauth_state",lambda owner,purpose:"w"*43)
     result=meta_oauth.start_flow("owner-1","whatsapp_embedded_signup")
     assert result["config_id"]=="wa-config"
