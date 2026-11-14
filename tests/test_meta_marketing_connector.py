@@ -12,13 +12,17 @@ def test_meta_connector_has_three_channel_capabilities() -> None:
     caps = MetaMarketingConnector().capabilities.to_dict()
     assert caps["platform"] == "meta"
     assert caps["publish_content"] is True
+    assert caps["connect_account"] is False
+    assert caps["disconnect_account"] is False
 
 
 def test_meta_connector_does_not_expose_token(monkeypatch) -> None:
     monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
     result = MetaMarketingConnector().get_account_status()
     assert "secret" not in str(result)
-    assert result["status"] == "connected"
+    assert result["status"] == "not_started"
+    assert result["configuration_status"] == "server_configured_unverified"
+    assert result["user_oauth_supported"] is False
 
 
 def test_meta_publish_requires_configuration(monkeypatch) -> None:
