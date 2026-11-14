@@ -113,6 +113,7 @@ def _gql_string(value: str) -> str:
 @router.get("/product-feeds")
 def list_cj_product_feeds(
     advertiser_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
+    ad_id: str | None = Query(default=None, min_length=1, max_length=32, pattern=r"^[0-9]+$"),
     _owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """List feed summaries for all accessible advertisers or one advertiser."""
@@ -157,17 +158,18 @@ def search_cj_products(
     _, company_id = _credentials()
     def build_query(include_tracking: bool) -> str:
         link_field = f" linkCode(pid: {_gql_string(pid)}) {{ clickUrl }}" if include_tracking and pid else ""
+        feed_filter = f", adIds: [{ad_id}]" if ad_id else ""
         return (
-            "query { products(companyId: " + _gql_string(company_id)
-            + f", limit: {limit}, offset: {offset})"
+            "query { shoppingProducts(companyId: " + _gql_string(company_id)
+            + feed_filter + f", limit: {limit}, offset: {offset})"
             + " { totalCount count resultList { advertiserId catalogId id title description imageLink "
-            "price { amount currency }" + link_field + " } } }"
+            + "price { amount currency }" + link_field + " } } }"
         )
 
     tracking_links_included = bool(pid)
     tracking_link_error: str | None = None
     try:
-        result = _request_cj(build_query(include_tracking=True)).get("products")
+        result = _request_cj(build_query(include_tracking=True)).get("shoppingProducts")
     except HTTPException as exc:
         # A publisher may be allowed to browse product details while CJ rejects
         # link generation for a particular PID. Retry once without linkCode so
@@ -176,7 +178,7 @@ def search_cj_products(
             raise
         tracking_links_included = False
         tracking_link_error = "CJ denied tracking-link generation for the selected PID. Products were retried without affiliate links."
-        result = _request_cj(build_query(include_tracking=False)).get("products")
+        result = _request_cj(build_query(include_tracking=False)).get("shoppingProducts")
 
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="CJ response did not contain product results.")
@@ -187,7 +189,7 @@ def search_cj_products(
             item for item in items
             if needle in " ".join(str(item.get(key) or "") for key in ("title", "description")).casefold()
         ]
-    if advertiser_id:
+    if advertiser_id and not ad_id:
         items = [item for item in items if str(item.get("advertiserId") or "") == advertiser_id]
     return {
         "network": "cj",
@@ -202,7 +204,8 @@ def search_cj_products(
         "tracking_links_included": tracking_links_included,
         "tracking_link_error": tracking_link_error,
         "read_only": True,
-        "filter_applied_locally": bool(q.strip() or advertiser_id),
+        "filter_applied_locally": bool(q.strip() or (advertiser_id and not ad_id)),
+        "feed_scoped": bool(ad_id),
     }
 
 __all__ = ["router"]
