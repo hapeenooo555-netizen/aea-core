@@ -38,6 +38,8 @@ async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: 
     if not isinstance(code,str) or not code.strip() or len(code)>4096: raise MetaOAuthError("Meta authorization code is invalid.")
     state_owner=vault.consume_oauth_state(state,purpose,expected_owner_id=expected_owner_id)
     owner_id=state_owner["owner_id"]
+    if expected_owner_id and owner_id != expected_owner_id:
+        raise MetaOAuthError("Meta OAuth state does not belong to the authenticated owner.")
     app_id=_required("META_APP_ID"); secret=_required("META_APP_SECRET")
     redirect_uri=_required("META_OAUTH_REDIRECT_URI"); base=f"https://graph.facebook.com/{graph_version()}"
     try:
