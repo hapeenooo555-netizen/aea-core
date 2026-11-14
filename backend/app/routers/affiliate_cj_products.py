@@ -83,7 +83,16 @@ def _request_cj(query: str) -> dict[str, Any]:
         if response.status_code == 429:
             raise HTTPException(status_code=429, detail="CJ Product Feed API rate limit reached. Retry later.")
         if response.status_code >= 500:
-            raise HTTPException(status_code=502, detail="CJ Product Feed API is temporarily unavailable.")
+            summary = _safe_cj_error(response, token, company_id)
+            logger.warning(
+                "CJ Product Feed API upstream failure (HTTP %s, provider_error=%s)",
+                response.status_code,
+                summary or "not-provided",
+            )
+            detail = "CJ Product Feed API is temporarily unavailable."
+            if summary:
+                detail += f" CJ response: {summary}"
+            raise HTTPException(status_code=502, detail=detail)
         response.raise_for_status()
         payload = response.json()
     except HTTPException:
@@ -152,13 +161,13 @@ def search_cj_products(
     """Search CJ products; when advertiser_id is supplied, scan provider pages
     until the requested advertiser's matching products are collected.
 
-    CJ's documented product query supports offset/limit pagination up to 10,000
-    records per query. The advertiser filter is applied across provider pages,
+    Product requests are capped at 1,000 records per provider page to avoid
+    oversized upstream responses. The advertiser filter is applied across pages,
     not just to one arbitrary page. Scanning is bounded and reports incomplete
     results rather than silently claiming the feed is exhausted.
     """
     _, company_id = _credentials()
-    page_limit = 10000 if advertiser_id else limit
+    page_limit = min(limit, 1000)
     max_scan_pages = 100
 
     def build_query(include_tracking: bool, page_offset: int) -> str:
