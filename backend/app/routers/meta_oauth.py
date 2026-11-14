@@ -34,12 +34,12 @@ async def complete(request:CompleteRequest,owner_id:str=Depends(get_current_user
 @router.get("/facebook/callback")
 async def facebook_callback(code:str|None=None,state:str|None=None,error:str|None=None):
     hub=os.getenv("AEA_HUB_URL","https://aea-affiliate-hub-web.onrender.com").rstrip("/")
-    if error or not code or not state:return RedirectResponse(f"{hub}/?meta=authorization_error",status_code=303)
+    if error or not code or not state:return RedirectResponse(f"{hub}/settings/integrations?meta=authorization_error",status_code=303)
     try:
         result=await complete_flow(state,code,"facebook_login")
-        return RedirectResponse(f"{hub}/?meta=connected&asset_discovery=pending",status_code=303)
+        return RedirectResponse(f"{hub}/settings/integrations?meta=authorized",status_code=303)
     except (MetaOAuthError,vault.MetaCredentialError):
-        return RedirectResponse(f"{hub}/?meta=connection_error",status_code=303)
+        return RedirectResponse(f"{hub}/settings/integrations?meta=connection_error",status_code=303)
 
 @router.get("/status")
 async def status_route(owner_id:str=Depends(get_current_user_id)):
