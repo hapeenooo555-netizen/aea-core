@@ -11,6 +11,11 @@ create table if not exists public.meta_user_connections (
   primary key (owner_id, purpose)
 );
 
+-- Upgrade safely if an earlier single-token table definition already exists.
+alter table public.meta_user_connections add column if not exists purpose text not null default 'facebook_login';
+alter table public.meta_user_connections drop constraint if exists meta_user_connections_pkey;
+alter table public.meta_user_connections add constraint meta_user_connections_pkey primary key (owner_id, purpose);
+
 alter table public.meta_user_connections enable row level security;
 revoke all on table public.meta_user_connections from public, anon, authenticated;
 grant select, insert, update, delete on table public.meta_user_connections to service_role;
