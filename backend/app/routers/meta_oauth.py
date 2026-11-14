@@ -19,6 +19,8 @@ class CompleteRequest(BaseModel):
 
 class AssetsRefreshRequest(BaseModel):
     purpose:Literal["facebook_login","whatsapp_embedded_signup"]|None=None
+    waba_id:str|None=Field(default=None,min_length=1,max_length=32,pattern=r"^[0-9]+$")
+    phone_number_id:str|None=Field(default=None,min_length=1,max_length=32,pattern=r"^[0-9]+$")
 
 @router.get("/config")
 async def config(owner_id:str=Depends(get_current_user_id)):
@@ -61,7 +63,7 @@ async def refresh_assets(request:AssetsRefreshRequest|None=None,owner_id:str=Dep
     results={}; errors={}
     for purpose in purposes:
         try:
-            results[purpose]=await discover_assets(owner_id,purpose)
+            results[purpose]=await discover_assets(owner_id,purpose,waba_id=request.waba_id if request and purpose=="whatsapp_embedded_signup" else None,phone_number_id=request.phone_number_id if request and purpose=="whatsapp_embedded_signup" else None)
         except (MetaAssetDiscoveryError,vault.MetaCredentialError) as exc:
             errors[purpose]=str(exc)
     if not results:
