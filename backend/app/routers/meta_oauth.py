@@ -8,6 +8,7 @@ from pydantic import BaseModel,Field
 from app.dependencies import get_current_user_id
 from app.services import meta_user_connection as vault
 from app.services.meta_oauth import MetaOAuthError,complete_flow,start_flow
+from app.services.meta_asset_discovery import MetaAssetDiscoveryError,discover_assets
 router=APIRouter(prefix="/meta/oauth",tags=["meta-oauth"])
 class StartRequest(BaseModel):
     purpose:Literal["facebook_login","whatsapp_embedded_signup"]
@@ -49,3 +50,12 @@ async def status_route(owner_id:str=Depends(get_current_user_id)):
 async def disconnect(owner_id:str=Depends(get_current_user_id)):
     try:vault.disconnect_owner(owner_id);return {"success":True,"connected":False,"scope":"local_credentials_only"}
     except vault.MetaCredentialError as exc:raise HTTPException(status_code=503,detail=str(exc)) from exc
+
+
+@router.post("/assets/refresh")
+async def refresh_assets(owner_id:str=Depends(get_current_user_id)):
+    try:
+        result=await discover_assets(owner_id)
+        return {"success":True,**result}
+    except (MetaAssetDiscoveryError,vault.MetaCredentialError) as exc:
+        raise HTTPException(status_code=502,detail=str(exc)) from exc
