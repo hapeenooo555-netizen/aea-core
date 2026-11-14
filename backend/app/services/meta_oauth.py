@@ -44,11 +44,12 @@ async def complete_flow(state: str, code: str, purpose: str, expected_owner_id: 
     if expected_owner_id and owner_id != expected_owner_id:
         raise MetaOAuthError("Meta OAuth state does not belong to the authenticated owner.")
     app_id=_required("META_APP_ID"); secret=_required("META_APP_SECRET")
-    redirect_uri=_required("META_OAUTH_REDIRECT_URI"); base=f"https://graph.facebook.com/{graph_version()}"
+    base=f"https://graph.facebook.com/{graph_version()}"
     token_params={"client_id":app_id,"client_secret":secret,"code":code}
     # Facebook Login uses the configured redirect URI; WhatsApp Embedded Signup
     # returns its authorization code through FB.login and exchanges it without one.
     if purpose == "facebook_login":
+        redirect_uri=_required("META_OAUTH_REDIRECT_URI")
         token_params["redirect_uri"]=redirect_uri
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
