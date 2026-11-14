@@ -205,3 +205,18 @@ def disconnect_owner(owner_id: str) -> bool:
         return True
     except Exception as exc:
         raise MetaCredentialError("Could not disconnect the Meta account.") from exc
+
+
+def update_connection_assets(owner_id: str, assets: dict[str, Any]) -> None:
+    """Replace discovered asset metadata without changing encrypted credentials."""
+    if not owner_id:
+        raise MetaCredentialError("Authenticated owner is required.")
+    allowed = {"facebook_pages", "instagram_accounts", "whatsapp_accounts", "business_portfolios"}
+    safe_assets = {key: assets.get(key, []) for key in allowed}
+    try:
+        _service_client().table("meta_user_connections").update({
+            "assets": json.loads(json.dumps(safe_assets)),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("owner_id", owner_id).execute()
+    except Exception as exc:
+        raise MetaCredentialError("Could not save discovered Meta assets.") from exc
