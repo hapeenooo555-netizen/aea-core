@@ -11,7 +11,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
@@ -610,6 +610,54 @@ async def generate_video_project_batch(
         "results": results,
         "notice": "Only the selected scenes were submitted. Check provider usage and costs; this endpoint does not assemble a final MP4.",
     }
+
+
+def _srt_timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+@router.get("/projects/{project_id}/subtitles.srt")
+def export_video_project_subtitles(
+    project_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> Response:
+    """Export scene narration as a timed SRT subtitle track for a video editor."""
+    db = _db(client)
+    projects = _rows(db.table("video_projects").select(
+        "id,target_duration_seconds"
+    ).eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    scenes = _rows(db.table("video_project_scenes").select(
+        "scene_number,narration,duration_seconds"
+    ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute())
+    if not scenes:
+        raise HTTPException(status_code=409, detail="This video project has no scenes to subtitle.")
+    cursor_ms = 0
+    cues: list[str] = []
+    for scene in scenes:
+        narration = str(scene.get("narration") or "").strip()
+        duration_ms = int(scene.get("duration_seconds") or 0) * 1000
+        if narration and duration_ms > 0:
+            # A cue per scene gives editors a reliable first-pass timed subtitle track.
+            start = cursor_ms
+            end = cursor_ms + duration_ms
+            cues.append(
+                f"{len(cues) + 1}\\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\\n{narration}"
+            )
+        cursor_ms += duration_ms
+    if not cues:
+        raise HTTPException(status_code=409, detail="No scene narration is available to export as subtitles.")
+    content = "\\n\\n".join(cues) + "\\n"
+    return Response(
+        content=content,
+        media_type="application/x-subrip; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="aea-video-{project_id}.srt"'},
+    )
 
 
 __all__ = ["router"]
