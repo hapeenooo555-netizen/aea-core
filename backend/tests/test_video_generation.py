@@ -277,7 +277,7 @@ def test_scene_narration_signed_url_is_owner_scoped():
     assert response.status_code == 404
 
 
-def test_scene_narration_rejects_over_model_limit(monkeypatch):
+def test_scene_narration_accepts_eleven_v3_maximum_length(monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
@@ -287,11 +287,11 @@ def test_scene_narration_rejects_over_model_limit(monkeypatch):
         "id": scene_id,
         "project_id": project_id,
         "owner_id": "user-1",
-        "narration": "a" * 3001,
+        "narration": "a" * 5001,
     }]
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
         json={"voice_id": "voice-test"},
     )
     assert response.status_code == 422
-    assert "3,000 characters" in response.json()["detail"]
+    assert "5,000 characters" in response.json()["detail"]
