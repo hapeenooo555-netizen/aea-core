@@ -21,8 +21,8 @@ RUNWAY_VERSION = "2024-11-06"
 
 
 class VideoGenerationRequest(BaseModel):
-    prompt: str = Field(min_length=10, max_length=1800)
-    duration_seconds: int = Field(default=5, ge=4, le=10)
+    prompt: str = Field(min_length=1, max_length=1000)
+    duration_seconds: int = Field(default=5, ge=2, le=10)
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
     model: Literal["gen4.5", "gen4_turbo"] = "gen4.5"
     model_config = ConfigDict(extra="forbid")
