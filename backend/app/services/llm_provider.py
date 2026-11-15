@@ -128,17 +128,21 @@ class KiloGatewayLLMProvider(BaseLLMProvider):
 
     def generate(self, prompt: str, system_prompt: str | None = None) -> dict[str, Any]:
         try:
-            if not self.api_key:
-                return self._error_response("Missing KILO_API_KEY")
+            # Kilo permits anonymous access to free models; paid models require a key.
+            if not self.api_key and self.model != "kilo-auto/free" and not self.model.endswith(":free"):
+                return self._error_response("Missing KILO_API_KEY for a non-free Kilo model")
             import httpx
 
             messages: list[dict[str, str]] = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
             response = httpx.post(
                 f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers=headers,
                 json={"model": self.model, "messages": messages, "temperature": 0.3},
                 timeout=90.0,
             )
