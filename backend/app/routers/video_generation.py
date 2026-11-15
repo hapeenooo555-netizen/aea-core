@@ -700,17 +700,17 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=409, detail="This scene has no narration text.")
     if len(narration) > 3000:
         raise HTTPException(status_code=422, detail="Eleven v3 supports up to 3,000 characters per request. Split this scene narration before generating audio.")
-    delivery = {
-        "natural": "Speak naturally and clearly, with a conversational pace.",
-        "warm": "Use a warm, reassuring and friendly storytelling delivery.",
-        "dramatic": "Use expressive dramatic storytelling, with natural pauses and emotional emphasis.",
-        "documentary": "Use a composed, confident documentary narrator delivery.",
+    delivery_style = {
+        "natural": 0.25,
+        "warm": 0.4,
+        "dramatic": 0.65,
+        "documentary": 0.2,
     }[body.delivery]
     payload = {
         "text": narration,
         "model_id": body.model_id,
         "language_code": body.language_code,
-        "voice_settings": {"stability": 0.48, "similarity_boost": 0.78, "style": 0.35, "use_speaker_boost": True},
+        "voice_settings": {"stability": 0.48, "similarity_boost": 0.78, "style": delivery_style, "use_speaker_boost": True},
     }
     try:
         async with httpx.AsyncClient(timeout=90.0) as http:
