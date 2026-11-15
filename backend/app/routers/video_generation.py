@@ -514,4 +514,101 @@ def plan_video_project_from_prompt(
     }
 
 
+class VideoBatchGenerationRequest(BaseModel):
+    scene_ids: list[UUID] = Field(min_length=1, max_length=20)
+
+
+@router.post("/projects/{project_id}/generate-batch", status_code=status.HTTP_202_ACCEPTED)
+async def generate_video_project_batch(
+    project_id: UUID,
+    body: VideoBatchGenerationRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Start a bounded batch of scene tasks; users explicitly opt into paid generation."""
+    db = _db(client)
+    projects = _rows(db.table("video_projects").select(
+        "id,owner_id,aspect_ratio,status"
+    ).eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    project = projects[0]
+    if len(set(body.scene_ids)) != len(body.scene_ids):
+        raise HTTPException(status_code=422, detail="scene_ids must be unique.")
+    scenes_response = db.table("video_project_scenes").select(
+        "id,owner_id,visual_prompt,duration_seconds,status,generation_job_id,scene_number"
+    ).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+    by_id = {str(scene["id"]): scene for scene in _rows(scenes_response)}
+    missing = [str(scene_id) for scene_id in body.scene_ids if str(scene_id) not in by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail="One or more scenes were not found in this project.")
+    selected = [by_id[str(scene_id)] for scene_id in body.scene_ids]
+    already_started = [str(scene["id"]) for scene in selected if scene.get("generation_job_id")]
+    if already_started:
+        raise HTTPException(status_code=409, detail="Some selected scenes already have generation jobs.")
+    headers = _headers()
+    results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=45.0) as http:
+        for scene in selected:
+            payload = {
+                "model": "gen4.5",
+                "promptText": scene["visual_prompt"],
+                "ratio": _ratio(project["aspect_ratio"]),
+                "duration": scene["duration_seconds"],
+            }
+            try:
+                response = await http.post(f"{RUNWAY_BASE_URL}/text_to_video", headers=headers, json=payload)
+            except httpx.HTTPError:
+                results.append({"scene_id": scene["id"], "status": "provider_error"})
+                continue
+            if response.status_code not in (200, 201):
+                results.append({"scene_id": scene["id"], "status": "provider_rejected", "http_status": response.status_code})
+                continue
+            try:
+                provider_data = response.json()
+            except ValueError:
+                results.append({"scene_id": scene["id"], "status": "invalid_provider_response"})
+                continue
+            task_id = provider_data.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                results.append({"scene_id": scene["id"], "status": "missing_task_id"})
+                continue
+            job_id = str(uuid4())
+            job = {
+                "id": job_id,
+                "owner_id": owner_id,
+                "provider": "runway",
+                "provider_task_id": task_id,
+                "model": "gen4.5",
+                "prompt": scene["visual_prompt"],
+                "duration_seconds": scene["duration_seconds"],
+                "aspect_ratio": project["aspect_ratio"],
+                "status": "pending",
+                "provider_response": provider_data,
+            }
+            try:
+                saved = db.table("video_generation_jobs").insert(job).execute()
+                if not _rows(saved):
+                    raise RuntimeError("Job not persisted")
+                updated = db.table("video_project_scenes").update({
+                    "generation_job_id": job_id,
+                    "status": "generating",
+                }).eq("id", str(scene["id"])).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+                if not _rows(updated):
+                    raise RuntimeError("Scene update not persisted")
+            except Exception:
+                results.append({"scene_id": scene["id"], "status": "persistence_error", "provider_task_id": task_id})
+                continue
+            results.append({"scene_id": scene["id"], "job_id": job_id, "status": "pending"})
+    started = sum(1 for result in results if result["status"] == "pending")
+    return {
+        "success": started > 0,
+        "project_id": str(project_id),
+        "requested": len(selected),
+        "started": started,
+        "results": results,
+        "notice": "Only the selected scenes were submitted. Check provider usage and costs; this endpoint does not assemble a final MP4.",
+    }
+
+
 __all__ = ["router"]
