@@ -660,4 +660,121 @@ def export_video_project_subtitles(
     )
 
 
+class SceneNarrationRequest(BaseModel):
+    voice_id: str = Field(min_length=5, max_length=100)
+    model_id: Literal["eleven_v3"] = "eleven_v3"
+    language_code: Literal["sw", "en"] = "sw"
+    delivery: Literal["natural", "warm", "dramatic", "documentary"] = "natural"
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/narration", status_code=status.HTTP_201_CREATED)
+async def generate_scene_narration_audio(
+    project_id: UUID,
+    scene_id: UUID,
+    body: SceneNarrationRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Generate one explicitly requested ElevenLabs narration clip and store it privately."""
+    db = _db(client)
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Narration audio is not configured. Add ELEVENLABS_API_KEY to AEA Core.")
+    voice_id = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip() or body.voice_id
+    project_rows = _rows(db.table("video_projects").select("id").eq(
+        "id", str(project_id)
+    ).eq("owner_id", owner_id).limit(1).execute())
+    if not project_rows:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    scene_rows = _rows(db.table("video_project_scenes").select(
+        "id,narration,narration_audio_path"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+        "owner_id", owner_id
+    ).limit(1).execute())
+    if not scene_rows:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    scene = scene_rows[0]
+    narration = str(scene.get("narration") or "").strip()
+    if not narration:
+        raise HTTPException(status_code=409, detail="This scene has no narration text.")
+    if len(narration) > 5000:
+        raise HTTPException(status_code=422, detail="Eleven v3 supports up to 5,000 characters per request. Split this scene narration before generating audio.")
+    delivery = {
+        "natural": "Speak naturally and clearly, with a conversational pace.",
+        "warm": "Use a warm, reassuring and friendly storytelling delivery.",
+        "dramatic": "Use expressive dramatic storytelling, with natural pauses and emotional emphasis.",
+        "documentary": "Use a composed, confident documentary narrator delivery.",
+    }[body.delivery]
+    payload = {
+        "text": narration,
+        "model_id": body.model_id,
+        "language_code": body.language_code,
+        "voice_settings": {"stability": 0.48, "similarity_boost": 0.78, "style": 0.35, "use_speaker_boost": True},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as http:
+            response = await http.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128",
+                headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the narration provider.") from exc
+    if response.status_code != 200 or not response.content:
+        raise HTTPException(status_code=502, detail=f"Narration provider rejected the request (HTTP {response.status_code}). Check voice access, model availability and account billing.")
+    storage_path = f"{owner_id}/{project_id}/{scene_id}.mp3"
+    try:
+        client.storage.from_("aea-video-assets").upload(
+            storage_path,
+            response.content,
+            file_options={"content-type": "audio/mpeg", "upsert": "true"},
+        )
+        saved = db.table("video_project_scenes").update({
+            "narration_audio_path": storage_path,
+        }).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+            "owner_id", owner_id
+        ).execute()
+        if not _rows(saved):
+            raise RuntimeError("Audio path was not saved on the scene.")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Narration was generated, but AEA could not securely store or attach the audio file.") from exc
+    return {
+        "success": True,
+        "project_id": str(project_id),
+        "scene_id": str(scene_id),
+        "audio": {"storage_path": storage_path, "format": "mp3", "model": body.model_id, "language_code": body.language_code},
+        "notice": "AI-generated narration audio saved privately. It has not yet been mixed into the final video.",
+    }
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/narration")
+def get_scene_narration_audio_url(
+    project_id: UUID,
+    scene_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return a short-lived signed URL for the current user's private narration clip."""
+    db = _db(client)
+    rows = _rows(db.table("video_project_scenes").select(
+        "id,narration_audio_path"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+        "owner_id", owner_id
+    ).limit(1).execute())
+    if not rows:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    path = rows[0].get("narration_audio_path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Narration audio has not been generated for this scene.")
+    try:
+        signed = client.storage.from_("aea-video-assets").create_signed_url(path, 900)
+        url = signed.get("signedURL") or signed.get("signedUrl")
+        if not url:
+            raise RuntimeError("Storage did not return a signed URL.")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not create a private narration download link.") from exc
+    return {"success": True, "audio_url": url, "expires_in_seconds": 900}
+
+
 __all__ = ["router"]
