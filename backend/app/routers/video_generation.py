@@ -437,7 +437,8 @@ def plan_video_project_from_prompt(
         "audience": body.audience,
         "objective": body.objective,
         "production_rules": [
-            "Create a complete beginning, middle and ending, not a short teaser.",\n            "Return a character_bible object describing each recurring fictional character with stable appearance, age range, clothing, voice style and role; reference these exact descriptors consistently in scene prompts.",
+            "Create a complete beginning, middle and ending, not a short teaser.",
+            "Return a character_bible object describing each recurring fictional character with stable appearance, age range, clothing, voice style and role; reference these exact descriptors consistently in scene prompts.",
             "Break the full requested runtime into ordered scenes, each 2 to 10 seconds because each scene is generated separately.",
             "Use enough scenes for the total scene durations to reach at least 90 percent of the requested runtime.",
             "Keep recurring characters visually consistent; repeat stable character appearance, clothing and age descriptors in every relevant visual_prompt.",
