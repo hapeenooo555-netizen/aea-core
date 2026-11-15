@@ -263,4 +263,85 @@ async def get_video_project(
     return {"success": True, "project": projects[0], "scenes": _rows(scenes_response)}
 
 
+@router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_video_project_scene(
+    project_id: UUID,
+    scene_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Submit one approved scene prompt to Runway and attach its task to the project."""
+    db = _db(client)
+    project_response = db.table("video_projects").select(
+        "id,owner_id,aspect_ratio,status"
+    ).eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute()
+    projects = _rows(project_response)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    project = projects[0]
+    scene_response = db.table("video_project_scenes").select(
+        "id,owner_id,visual_prompt,duration_seconds,status,generation_job_id"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq("owner_id", owner_id).limit(1).execute()
+    scenes = _rows(scene_response)
+    if not scenes:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    scene = scenes[0]
+    if scene.get("generation_job_id"):
+        raise HTTPException(status_code=409, detail="This scene already has a generation job.")
+    headers = _headers()
+    payload = {
+        "model": "gen4.5",
+        "promptText": scene["visual_prompt"],
+        "ratio": _ratio(project["aspect_ratio"]),
+        "duration": scene["duration_seconds"],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as http:
+            response = await http.post(f"{RUNWAY_BASE_URL}/text_to_video", headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the video generation provider.") from exc
+    if response.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail=f"Video provider rejected the scene request (HTTP {response.status_code}).")
+    try:
+        provider_data = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Video provider returned an invalid response.") from exc
+    task_id = provider_data.get("id")
+    if not isinstance(task_id, str) or not task_id:
+        raise HTTPException(status_code=502, detail="Video provider did not return a task ID.")
+
+    job_id = str(uuid4())
+    job = {
+        "id": job_id,
+        "owner_id": owner_id,
+        "provider": "runway",
+        "provider_task_id": task_id,
+        "model": "gen4.5",
+        "prompt": scene["visual_prompt"],
+        "duration_seconds": scene["duration_seconds"],
+        "aspect_ratio": project["aspect_ratio"],
+        "status": "pending",
+        "provider_response": provider_data,
+    }
+    try:
+        saved_job = db.table("video_generation_jobs").insert(job).execute()
+        if not _rows(saved_job):
+            raise RuntimeError("Generation job insert returned no row")
+        updated_scene = db.table("video_project_scenes").update({
+            "generation_job_id": job_id,
+            "status": "generating",
+        }).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+        if not _rows(updated_scene):
+            raise RuntimeError("Scene update returned no row")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Runway task started, but AEA could not attach it to the scene. Contact support for reconciliation.") from exc
+    return {
+        "success": True,
+        "project_id": str(project_id),
+        "scene_id": str(scene_id),
+        "job": {"id": job_id, "status": "pending", "provider": "runway", "model": "gen4.5"},
+        "notice": "Scene generation started. Poll the job endpoint to retrieve its result.",
+    }
+
+
 __all__ = ["router"]
