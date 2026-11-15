@@ -77,3 +77,7 @@ create policy "owners manage own video project scenes" on public.video_project_s
 revoke all on public.video_projects, public.video_project_scenes from anon, authenticated;
 grant select, insert, update, delete on public.video_projects, public.video_project_scenes to authenticated;
 grant all on public.video_projects, public.video_project_scenes to service_role;
+
+-- Store a reusable character reference bible for consistent storytelling scenes.
+alter table public.video_projects
+  add column if not exists character_bible jsonb not null default '{}'::jsonb;
