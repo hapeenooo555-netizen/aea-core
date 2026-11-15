@@ -13,10 +13,6 @@ create table if not exists public.creator_products (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     constraint creator_products_owner_slug_key unique (owner_id, slug),
-    constraint creator_products_asset_owner_fk
-      foreign key (asset_id, owner_id)
-      references public.content_asset_versions(asset_id, owner_id)
-      on delete restrict
 );
 create index if not exists idx_creator_products_listed_created
   on public.creator_products(status, created_at desc);
