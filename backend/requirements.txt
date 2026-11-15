@@ -8,3 +8,5 @@ cryptography>=42.0,<46.0
 
 # Test-only dependencies
 # Install with: pip install -r backend/requirements.txt -r backend/requirements-test.txt
+# FFmpeg binary provider for server-side MP4 assembly
+imageio-ffmpeg>=0.5,<1.0
