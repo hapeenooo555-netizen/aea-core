@@ -200,7 +200,7 @@ class VideoProjectRequest(BaseModel):
     aspect_ratio: Literal["9:16", "16:9"] = "16:9"
     visual_style: str = Field(default="cinematic_realistic", max_length=80)
     presenter_mode: Literal["faceless", "realistic_human", "mixed"] = "faceless"
-    scenes: list[VideoSceneInput] = Field(min_length=1, max_length=500)
+    scenes: list[VideoSceneInput] = Field(min_length=1, max_length=720)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -437,7 +437,7 @@ def plan_video_project_from_prompt(
         "audience": body.audience,
         "objective": body.objective,
         "production_rules": [
-            "Create a complete beginning, middle and ending, not a short teaser.",
+            "Create a complete beginning, middle and ending, not a short teaser.",\n            "Return a character_bible object describing each recurring fictional character with stable appearance, age range, clothing, voice style and role; reference these exact descriptors consistently in scene prompts.",
             "Break the full requested runtime into ordered scenes, each 2 to 10 seconds because each scene is generated separately.",
             "Use enough scenes for the total scene durations to reach at least 90 percent of the requested runtime.",
             "Keep recurring characters visually consistent; repeat stable character appearance, clothing and age descriptors in every relevant visual_prompt.",
@@ -470,7 +470,7 @@ def plan_video_project_from_prompt(
         scenes = [PlannedVideoScene.model_validate(item) for item in data["scenes"]]
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI returned an invalid scene plan. Please retry with a more specific prompt.") from exc
-    if not scenes or len(scenes) > 500:
+    if not scenes or len(scenes) > 720:
         raise HTTPException(status_code=502, detail="AI scene plan must contain between 1 and 500 scenes.")
     planned_seconds = sum(scene.duration_seconds for scene in scenes)
     if planned_seconds < int(body.target_duration_seconds * 0.9):
