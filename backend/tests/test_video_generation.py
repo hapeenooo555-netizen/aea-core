@@ -295,3 +295,55 @@ def test_scene_narration_accepts_eleven_v3_maximum_length(monkeypatch):
     )
     assert response.status_code == 422
     assert "5,000 characters" in response.json()["detail"]
+
+
+def test_final_assembly_requires_every_scene_completed(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "status": "ready",
+        "final_video_path": None,
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "project_id": project_id, "owner_id": "user-1",
+        "status": "generating", "video_url": None,
+    }]
+    response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
+    assert response.status_code == 409
+    assert "All scenes must finish" in response.json()["detail"]
+
+
+def test_final_assembly_queues_only_owner_completed_project(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    queued = []
+    monkeypatch.setattr(
+        video_generation, "_assemble_project_video",
+        lambda project, owner, client: queued.append((project, owner)),
+    )
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "status": "ready",
+        "final_video_path": None,
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "project_id": project_id, "owner_id": "user-1",
+        "status": "completed", "video_url": "https://example.test/scene.mp4",
+    }]
+    response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
+    assert response.status_code == 202
+    assert response.json()["status"] == "assembling"
+    assert queued == [(project_id, "user-1")]
+    assert db.tables["video_projects"][0]["status"] == "assembling"
+
+
+def test_final_video_url_is_owner_scoped():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "another-user",
+        "status": "completed", "final_video_path": "another-user/final.mp4",
+    }]
+    response = make_client(db).get(f"/video/generations/projects/{project_id}/final-video")
+    assert response.status_code == 404
