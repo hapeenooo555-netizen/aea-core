@@ -71,7 +71,8 @@ def root() -> dict[str, str]:
 
 
 # Register routers
-app.include_router(content_studio.router, tags=["content-studio"])\napp.include_router(video_generation.router, tags=["video-generation"])
+app.include_router(content_studio.router, tags=["content-studio"])
+app.include_router(video_generation.router, tags=["video-generation"])
 app.include_router(creator_store.router, tags=["creator-store"])
 app.include_router(health.router, tags=["health"])
 app.include_router(atlas.router, tags=["atlas"])
