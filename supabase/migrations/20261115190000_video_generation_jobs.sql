@@ -46,6 +46,8 @@ create table if not exists public.video_projects (
     visual_style text not null default 'cinematic_realistic',
     presenter_mode text not null default 'faceless' check (presenter_mode in ('faceless','realistic_human','mixed')),
     status text not null default 'draft' check (status in ('draft','ready','generating','assembling','completed','failed')),
+    final_video_path text,
+    assembly_error text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -88,11 +90,11 @@ alter table public.video_project_scenes
   add column if not exists narration_audio_path text;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('aea-video-assets', 'aea-video-assets', false, 52428800, array['audio/mpeg'])
+values ('aea-video-assets', 'aea-video-assets', false, 524288000, array['audio/mpeg','video/mp4'])
 on conflict (id) do update set
   public = false,
-  file_size_limit = 52428800,
-  allowed_mime_types = array['audio/mpeg'];
+  file_size_limit = 524288000,
+  allowed_mime_types = array['audio/mpeg','video/mp4'];
 
 drop policy if exists "owners read own AEA video audio" on storage.objects;
 create policy "owners read own AEA video audio"
