@@ -149,3 +149,15 @@ def test_prompt_planner_rejects_short_storyboard(monkeypatch):
         "target_duration_seconds": 300,
     })
     assert response.status_code == 502
+
+
+def test_video_batch_rejects_more_than_twenty_scenes():
+    scene_ids = [
+        f"00000000-0000-4000-8000-{index:012d}"
+        for index in range(1, 22)
+    ]
+    response = make_client(DB()).post(
+        "/video/generations/projects/22222222-2222-4222-8222-222222222222/generate-batch",
+        json={"scene_ids": scene_ids},
+    )
+    assert response.status_code == 422
