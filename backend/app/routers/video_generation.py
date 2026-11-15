@@ -168,7 +168,7 @@ async def get_video_generation(
     # Propagate each scene task's terminal/progress state into its owning project scene.
     try:
         db.table("video_project_scenes").update({
-            "status": "completed" if normalized == "completed" else ("failed" if normalized == "failed" else "generating"),
+            "status": "completed" if normalized == "completed" else ("failed" if normalized in {"failed", "cancelled"} else "generating"),
             **({"video_url": video_url} if video_url else {}),
         }).eq("generation_job_id", str(job_id)).eq("owner_id", owner_id).execute()
     except Exception as exc:
