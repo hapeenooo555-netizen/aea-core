@@ -22,7 +22,7 @@ RUNWAY_VERSION = "2024-11-06"
 
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=1800)
-    duration_seconds: int = Field(default=5, ge=5, le=10)
+    duration_seconds: int = Field(default=5, ge=4, le=10)
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
     model: Literal["gen4.5", "gen4_turbo"] = "gen4.5"
     model_config = ConfigDict(extra="forbid")
@@ -70,7 +70,7 @@ async def create_video_generation(
     }
     try:
         async with httpx.AsyncClient(timeout=45.0) as http:
-            response = await http.post(f"{RUNWAY_BASE_URL}/image_to_video", headers=headers, json=payload)
+            response = await http.post(f"{RUNWAY_BASE_URL}/text_to_video", headers=headers, json=payload)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Could not reach the video generation provider.") from exc
     if response.status_code not in (200, 201):
