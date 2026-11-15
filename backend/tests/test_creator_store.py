@@ -18,7 +18,8 @@ class Table:
         self.action = "select"
 
     def select(self, *_args):
-        self.action = "select"
+        if self.payload is None:
+            self.action = "select"
         return self
 
     def eq(self, key, value):
