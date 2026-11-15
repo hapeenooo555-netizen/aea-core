@@ -737,7 +737,7 @@ async def generate_scene_narration_audio(
             "narration_audio_path": storage_path,
         }).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
             "owner_id", owner_id
-        ).execute()
+        ).select("id").execute()
         if not _rows(saved):
             raise RuntimeError("Audio path was not saved on the scene.")
     except Exception as exc:
@@ -834,7 +834,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
                 segment_paths.append(segment_path)
 
         concat_file = temp_root / "concat.txt"
-        concat_file.write_text("".join(f"file '{p.as_posix()}'\\n" for p in segment_paths), encoding="utf-8")
+        concat_file.write_text("".join(f"file '{p.as_posix()}'\n" for p in segment_paths), encoding="utf-8")
         output_path = temp_root / "final.mp4"
         rendered = subprocess.run(
             [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
@@ -852,7 +852,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
             "status": "completed",
             "final_video_path": storage_path,
             "assembly_error": None,
-        }).eq("id", project_id).eq("owner_id", owner_id).execute()
+        }).eq("id", project_id).eq("owner_id", owner_id).select("id").execute()
         if not _rows(saved):
             raise RuntimeError("Final video was uploaded but project status could not be saved.")
     except Exception as exc:
