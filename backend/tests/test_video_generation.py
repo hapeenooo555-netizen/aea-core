@@ -161,3 +161,49 @@ def test_video_batch_rejects_more_than_twenty_scenes():
         json={"scene_ids": scene_ids},
     )
     assert response.status_code == 422
+
+
+def test_subtitle_export_builds_valid_timed_srt():
+    db = DB()
+    project_id = "33333333-3333-4333-8333-333333333333"
+    db.tables["video_projects"] = [{
+        "id": project_id,
+        "owner_id": "user-1",
+        "target_duration_seconds": 20,
+    }]
+    db.tables["video_project_scenes"] = [
+        {
+            "id": "44444444-4444-4444-8444-444444444444",
+            "project_id": project_id,
+            "owner_id": "user-1",
+            "scene_number": 1,
+            "narration": "Karibu kwenye hadithi yetu.",
+            "duration_seconds": 5,
+        },
+        {
+            "id": "55555555-5555-4555-8555-555555555555",
+            "project_id": project_id,
+            "owner_id": "user-1",
+            "scene_number": 2,
+            "narration": "Safari inaanza sasa.",
+            "duration_seconds": 7,
+        },
+    ]
+    response = make_client(db).get(f"/video/generations/projects/{project_id}/subtitles.srt")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-subrip")
+    assert "00:00:00,000 --> 00:00:05,000" in response.text
+    assert "00:00:05,000 --> 00:00:12,000" in response.text
+    assert "Karibu kwenye hadithi yetu." in response.text
+
+
+def test_subtitle_export_is_owner_scoped():
+    db = DB()
+    project_id = "33333333-3333-4333-8333-333333333333"
+    db.tables["video_projects"] = [{
+        "id": project_id,
+        "owner_id": "another-user",
+        "target_duration_seconds": 20,
+    }]
+    response = make_client(db).get(f"/video/generations/projects/{project_id}/subtitles.srt")
+    assert response.status_code == 404
