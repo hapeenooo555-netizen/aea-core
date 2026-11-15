@@ -296,8 +296,8 @@ async def generate_video_project_scene(
     if not scenes:
         raise HTTPException(status_code=404, detail="Video scene not found.")
     scene = scenes[0]
-    if scene.get("generation_job_id"):
-        raise HTTPException(status_code=409, detail="This scene already has a generation job.")
+    if scene.get("generation_job_id") and scene.get("status") != "failed":
+        raise HTTPException(status_code=409, detail="This scene already has an active or completed generation job. Only failed scenes can be retried.")
     headers = _headers()
     payload = {
         "model": "gen4.5",
@@ -544,7 +544,7 @@ async def generate_video_project_batch(
     if missing:
         raise HTTPException(status_code=404, detail="One or more scenes were not found in this project.")
     selected = [by_id[str(scene_id)] for scene_id in body.scene_ids]
-    already_started = [str(scene["id"]) for scene in selected if scene.get("generation_job_id")]
+    already_started = [str(scene["id"]) for scene in selected if scene.get("generation_job_id") and scene.get("status") != "failed"]
     if already_started:
         raise HTTPException(status_code=409, detail="Some selected scenes already have generation jobs.")
     headers = _headers()
