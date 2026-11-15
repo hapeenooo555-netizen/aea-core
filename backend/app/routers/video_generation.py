@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
@@ -775,6 +778,170 @@ def get_scene_narration_audio_url(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Could not create a private narration download link.") from exc
     return {"success": True, "audio_url": url, "expires_in_seconds": 900}
+
+
+def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None:
+    """Render completed scene clips and optional narration into one private MP4."""
+    db = _db(client)
+    temp_root: Path | None = None
+    try:
+        project_rows = _rows(db.table("video_projects").select(
+            "id,aspect_ratio"
+        ).eq("id", project_id).eq("owner_id", owner_id).limit(1).execute())
+        if not project_rows:
+            return
+        project = project_rows[0]
+        scenes = _rows(db.table("video_project_scenes").select(
+            "id,scene_number,duration_seconds,status,video_url,narration_audio_path"
+        ).eq("project_id", project_id).eq("owner_id", owner_id).order("scene_number").execute())
+        if not scenes or any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
+            raise RuntimeError("Every scene must have a completed video before assembly.")
+        temp_root = Path(tempfile.mkdtemp(prefix="aea-video-"))
+        ffmpeg = __import__("imageio_ffmpeg").get_ffmpeg_exe()
+        segment_paths: list[Path] = []
+        width, height = (720, 1280) if project.get("aspect_ratio") == "9:16" else (1280, 720)
+
+        with httpx.Client(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True) as http:
+            for index, scene in enumerate(scenes, start=1):
+                video_response = http.get(scene["video_url"])
+                video_response.raise_for_status()
+                video_path = temp_root / f"scene-{index:04d}-source.mp4"
+                video_path.write_bytes(video_response.content)
+                segment_path = temp_root / f"scene-{index:04d}.mp4"
+                command = [ffmpeg, "-y", "-i", str(video_path)]
+                narration_path = None
+                if scene.get("narration_audio_path"):
+                    audio_bytes = client.storage.from_("aea-video-assets").download(scene["narration_audio_path"])
+                    narration_path = temp_root / f"scene-{index:04d}.mp3"
+                    narration_path.write_bytes(audio_bytes)
+                    command += ["-i", str(narration_path)]
+                    audio_map = ["-map", "1:a:0"]
+                else:
+                    command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+                    audio_map = ["-map", "1:a:0"]
+                duration = max(2, min(10, int(scene["duration_seconds"])))
+                command += [
+                    "-map", "0:v:0", *audio_map,
+                    "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24",
+                    "-t", str(duration), "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-b:a", "128k", "-ar", "44100", "-ac", "2",
+                    "-movflags", "+faststart", str(segment_path),
+                ]
+                rendered = subprocess.run(command, capture_output=True, text=True, timeout=240)
+                if rendered.returncode != 0 or not segment_path.exists():
+                    raise RuntimeError(f"FFmpeg failed while rendering scene {index}.")
+                segment_paths.append(segment_path)
+
+        concat_file = temp_root / "concat.txt"
+        concat_file.write_text("".join(f"file '{p.as_posix()}'\\n" for p in segment_paths), encoding="utf-8")
+        output_path = temp_root / "final.mp4"
+        rendered = subprocess.run(
+            [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
+             "-c", "copy", "-movflags", "+faststart", str(output_path)],
+            capture_output=True, text=True, timeout=600,
+        )
+        if rendered.returncode != 0 or not output_path.exists():
+            raise RuntimeError("FFmpeg could not join the rendered scene files.")
+        storage_path = f"{owner_id}/{project_id}/final.mp4"
+        client.storage.from_("aea-video-assets").upload(
+            storage_path, output_path.read_bytes(),
+            file_options={"content-type": "video/mp4", "upsert": "true"},
+        )
+        saved = db.table("video_projects").update({
+            "status": "completed",
+            "final_video_path": storage_path,
+            "assembly_error": None,
+        }).eq("id", project_id).eq("owner_id", owner_id).execute()
+        if not _rows(saved):
+            raise RuntimeError("Final video was uploaded but project status could not be saved.")
+    except Exception as exc:
+        try:
+            db.table("video_projects").update({
+                "status": "failed",
+                "assembly_error": str(exc)[:1000],
+            }).eq("id", project_id).eq("owner_id", owner_id).execute()
+        except Exception:
+            pass
+    finally:
+        if temp_root is not None:
+            import shutil
+            shutil.rmtree(temp_root, ignore_errors=True)
+
+
+@router.post("/projects/{project_id}/assemble", status_code=status.HTTP_202_ACCEPTED)
+def assemble_video_project(
+    project_id: UUID,
+    background_tasks: BackgroundTasks,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Queue final MP4 assembly after every scene has completed."""
+    db = _db(client)
+    projects = _rows(db.table("video_projects").select(
+        "id,status,final_video_path"
+    ).eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    project = projects[0]
+    if project.get("status") == "assembling":
+        raise HTTPException(status_code=409, detail="This project is already being assembled.")
+    if project.get("final_video_path"):
+        raise HTTPException(status_code=409, detail="This project already has a final MP4. Create a new project to render another version.")
+    scenes = _rows(db.table("video_project_scenes").select(
+        "id,status,video_url"
+    ).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute())
+    if not scenes:
+        raise HTTPException(status_code=409, detail="This project has no scenes.")
+    if any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
+        raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")
+    db.table("video_projects").update({
+        "status": "assembling", "assembly_error": None,
+    }).eq("id", str(project_id)).eq("owner_id", owner_id).execute()
+    background_tasks.add_task(_assemble_project_video, str(project_id), owner_id, client)
+    return {
+        "success": True,
+        "project_id": str(project_id),
+        "status": "assembling",
+        "notice": "Final MP4 assembly has started. Check the project status for the result.",
+    }
+
+
+@router.get("/projects/{project_id}/final-video")
+def get_video_project_final_url(
+    project_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return a short-lived signed URL for the owner's completed final MP4."""
+    db = _db(client)
+    projects = _rows(db.table("video_projects").select(
+        "id,status,final_video_path,assembly_error"
+    ).eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    project = projects[0]
+    path = project.get("final_video_path")
+    if not path:
+        return {
+            "success": True,
+            "status": project.get("status"),
+            "error": project.get("assembly_error"),
+            "video_url": None,
+        }
+    try:
+        signed = client.storage.from_("aea-video-assets").create_signed_url(path, 900)
+        url = signed.get("signedURL") or signed.get("signedUrl")
+        if not url:
+            raise RuntimeError("Storage did not return a signed URL.")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not create a private final-video link.") from exc
+    return {
+        "success": True,
+        "status": "completed",
+        "video_url": url,
+        "expires_in_seconds": 900,
+    }
 
 
 __all__ = ["router"]
