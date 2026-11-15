@@ -698,8 +698,8 @@ async def generate_scene_narration_audio(
     narration = str(scene.get("narration") or "").strip()
     if not narration:
         raise HTTPException(status_code=409, detail="This scene has no narration text.")
-    if len(narration) > 3000:
-        raise HTTPException(status_code=422, detail="Eleven v3 supports up to 3,000 characters per request. Split this scene narration before generating audio.")
+    if len(narration) > 5000:
+        raise HTTPException(status_code=422, detail="Eleven v3 supports up to 5,000 characters per request. Split this scene narration before generating audio.")
     delivery_style = {
         "natural": 0.25,
         "warm": 0.4,
