@@ -117,6 +117,65 @@ class GroqLLMProvider(BaseLLMProvider):
         }
 
 
+
+class KiloGatewayLLMProvider(BaseLLMProvider):
+    """Kilo Gateway provider; supports free model routing for AEA planning tasks."""
+
+    def __init__(self) -> None:
+        self.api_key = os.getenv("KILO_API_KEY", "").strip()
+        self.model = os.getenv("KILO_MODEL", "kilo-auto/free").strip() or "kilo-auto/free"
+        self.base_url = os.getenv("KILO_BASE_URL", "https://ai-gateway.kilo.ai/api/v1").rstrip("/")
+
+    def generate(self, prompt: str, system_prompt: str | None = None) -> dict[str, Any]:
+        try:
+            if not self.api_key:
+                return self._error_response("Missing KILO_API_KEY")
+            import httpx
+
+            messages: list[dict[str, str]] = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={"model": self.model, "messages": messages, "temperature": 0.3},
+                timeout=90.0,
+            )
+            if response.status_code != 200:
+                return self._error_response(f"Kilo Gateway request failed (HTTP {response.status_code})")
+            data = response.json()
+            choices = data.get("choices") or []
+            message = choices[0].get("message", {}) if choices else {}
+            content = message.get("content", "")
+            if not isinstance(content, str) or not content.strip():
+                return self._error_response("Kilo Gateway returned an empty response")
+            usage_data = data.get("usage") or {}
+            return {
+                "success": True,
+                "content": content,
+                "model": data.get("model", self.model),
+                "provider": "kilo",
+                "usage": {
+                    "prompt_tokens": usage_data.get("prompt_tokens", 0),
+                    "completion_tokens": usage_data.get("completion_tokens", 0),
+                    "total_tokens": usage_data.get("total_tokens", 0),
+                },
+            }
+        except Exception as exc:  # pragma: no cover - defensive runtime handling
+            return self._error_response(str(exc))
+
+    def _error_response(self, error: str) -> dict[str, Any]:
+        return {
+            "success": False,
+            "content": "",
+            "model": self.model,
+            "provider": "kilo",
+            "usage": {},
+            "error": error,
+        }
+
+
 def register_llm_provider(name: str, provider_cls: type[BaseLLMProvider]) -> None:
     """Register a provider implementation for configuration-based selection."""
 
@@ -125,6 +184,7 @@ def register_llm_provider(name: str, provider_cls: type[BaseLLMProvider]) -> Non
 
 register_llm_provider("mock", MockLLMProvider)
 register_llm_provider("groq", GroqLLMProvider)
+register_llm_provider("kilo", KiloGatewayLLMProvider)
 
 
 def get_llm_provider(provider_name: str | None = None) -> BaseLLMProvider:
@@ -138,4 +198,4 @@ def get_llm_provider(provider_name: str | None = None) -> BaseLLMProvider:
     return provider_cls()
 
 
-__all__ = ["BaseLLMProvider", "MockLLMProvider", "GroqLLMProvider", "get_llm_provider"]
+__all__ = ["BaseLLMProvider", "MockLLMProvider", "GroqLLMProvider", "KiloGatewayLLMProvider", "get_llm_provider"]
