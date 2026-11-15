@@ -176,4 +176,91 @@ async def get_video_generation(
     }
 
 
+class VideoSceneInput(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    narration: str = Field(default="", max_length=12000)
+    visual_prompt: str = Field(min_length=1, max_length=1000)
+    duration_seconds: int = Field(default=5, ge=2, le=10)
+
+
+class VideoProjectRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    format: Literal["short", "long_form", "storytelling", "documentary", "advertisement"] = "storytelling"
+    target_duration_seconds: int = Field(default=300, ge=15, le=7200)
+    aspect_ratio: Literal["9:16", "16:9"] = "16:9"
+    visual_style: str = Field(default="cinematic_realistic", max_length=80)
+    presenter_mode: Literal["faceless", "realistic_human", "mixed"] = "faceless"
+    scenes: list[VideoSceneInput] = Field(min_length=1, max_length=500)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/projects", status_code=status.HTTP_201_CREATED)
+async def create_video_project(
+    body: VideoProjectRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    project_id = str(uuid4())
+    project = {
+        "id": project_id,
+        "owner_id": owner_id,
+        "title": body.title,
+        "format": body.format,
+        "target_duration_seconds": body.target_duration_seconds,
+        "aspect_ratio": body.aspect_ratio,
+        "visual_style": body.visual_style,
+        "presenter_mode": body.presenter_mode,
+        "status": "ready",
+    }
+    # A project is not accepted unless both its parent and scenes are persisted.
+    try:
+        created = db.table("video_projects").insert(project).execute()
+        if not _rows(created):
+            raise RuntimeError("Project insert returned no row")
+        scene_rows = [{
+            "id": str(uuid4()),
+            "project_id": project_id,
+            "owner_id": owner_id,
+            "scene_number": index,
+            "title": scene.title,
+            "narration": scene.narration,
+            "visual_prompt": scene.visual_prompt,
+            "duration_seconds": scene.duration_seconds,
+            "status": "pending",
+        } for index, scene in enumerate(body.scenes, start=1)]
+        saved_scenes = db.table("video_project_scenes").insert(scene_rows).execute()
+        if len(_rows(saved_scenes)) != len(scene_rows):
+            raise RuntimeError("Scene insert count mismatch")
+    except Exception as exc:
+        # Best-effort rollback prevents an incomplete project from being exposed.
+        try:
+            db.table("video_projects").delete().eq("id", project_id).eq("owner_id", owner_id).execute()
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="AEA could not persist the complete video project and its scenes.") from exc
+    return {
+        "success": True,
+        "project": {**project, "scene_count": len(scene_rows)},
+        "notice": "Project and scene plan saved. Scene generation and final video assembly are separate production steps.",
+    }
+
+
+@router.get("/projects/{project_id}")
+async def get_video_project(
+    project_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    found = db.table("video_projects").select("*").eq("id", str(project_id)).eq("owner_id", owner_id).limit(1).execute()
+    projects = _rows(found)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    scenes_response = db.table("video_project_scenes").select(
+        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url"
+    ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute()
+    return {"success": True, "project": projects[0], "scenes": _rows(scenes_response)}
+
+
 __all__ = ["router"]
