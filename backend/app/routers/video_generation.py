@@ -647,12 +647,12 @@ def export_video_project_subtitles(
             start = cursor_ms
             end = cursor_ms + duration_ms
             cues.append(
-                f"{len(cues) + 1}\\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\\n{narration}"
+                f"{len(cues) + 1}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{narration}"
             )
         cursor_ms += duration_ms
     if not cues:
         raise HTTPException(status_code=409, detail="No scene narration is available to export as subtitles.")
-    content = "\\n\\n".join(cues) + "\\n"
+    content = "\n\n".join(cues) + "\n"
     return Response(
         content=content,
         media_type="application/x-subrip; charset=utf-8",
