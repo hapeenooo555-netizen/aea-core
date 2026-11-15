@@ -5,6 +5,7 @@ then poll its status. Publishing is deliberately out of scope.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.services.llm_provider import get_llm_provider
 
 router = APIRouter(prefix="/video/generations", tags=["video-generation"])
 RUNWAY_BASE_URL = "https://api.dev.runwayml.com/v1"
@@ -349,6 +351,164 @@ async def generate_video_project_scene(
         "scene_id": str(scene_id),
         "job": {"id": job_id, "status": "pending", "provider": "runway", "model": "gen4.5"},
         "notice": "Scene generation started. Poll the job endpoint to retrieve its result.",
+    }
+
+
+class VideoProjectPlanRequest(BaseModel):
+    prompt: str = Field(min_length=10, max_length=12000)
+    title: str = Field(default="Untitled video project", min_length=1, max_length=180)
+    format: Literal["short", "long_form", "storytelling", "documentary", "advertisement"] = "storytelling"
+    target_duration_seconds: int = Field(default=300, ge=15, le=7200)
+    aspect_ratio: Literal["9:16", "16:9"] = "16:9"
+    visual_style: str = Field(default="cinematic_realistic", max_length=80)
+    presenter_mode: Literal["faceless", "realistic_human", "mixed"] = "faceless"
+    language: str = Field(default="Kiswahili", min_length=2, max_length=40)
+    audience: str = Field(default="General audience", max_length=500)
+    objective: str = Field(default="Storytelling and audience retention", max_length=300)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PlannedVideoScene(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    narration: str = Field(default="", max_length=12000)
+    visual_prompt: str = Field(min_length=1, max_length=1000)
+    duration_seconds: int = Field(ge=2, le=10)
+
+
+def _create_project_rows(
+    db: Any,
+    owner_id: str,
+    project: dict[str, Any],
+    scenes: list[PlannedVideoScene],
+) -> tuple[str, list[dict[str, Any]]]:
+    project_id = str(uuid4())
+    project_row = {"id": project_id, "owner_id": owner_id, **project}
+    scene_rows = [{
+        "id": str(uuid4()),
+        "project_id": project_id,
+        "owner_id": owner_id,
+        "scene_number": index,
+        "title": scene.title,
+        "narration": scene.narration,
+        "visual_prompt": scene.visual_prompt,
+        "duration_seconds": scene.duration_seconds,
+        "status": "pending",
+    } for index, scene in enumerate(scenes, start=1)]
+    try:
+        created = db.table("video_projects").insert(project_row).execute()
+        if not _rows(created):
+            raise RuntimeError("Project insert returned no row")
+        saved_scenes = db.table("video_project_scenes").insert(scene_rows).execute()
+        if len(_rows(saved_scenes)) != len(scene_rows):
+            raise RuntimeError("Scene insert count mismatch")
+    except Exception as exc:
+        try:
+            db.table("video_projects").delete().eq("id", project_id).eq("owner_id", owner_id).execute()
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="AEA could not persist the complete video project and its scenes.") from exc
+    return project_id, scene_rows
+
+
+@router.post("/projects/plan", status_code=status.HTTP_201_CREATED)
+def plan_video_project_from_prompt(
+    body: VideoProjectPlanRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Turn one user prompt into an editable, owner-scoped scene-by-scene video plan."""
+    db = _db(client)
+    provider = get_llm_provider()
+    provider_name = str(getattr(provider, "name", "") or provider.__class__.__name__).lower()
+    if provider_name in {"mockllmprovider", "mock"}:
+        raise HTTPException(
+            status_code=503,
+            detail="Video story planning needs a live LLM provider. Configure GROQ_API_KEY and LLM_PROVIDER=groq.",
+        )
+    brief = {
+        "user_prompt": body.prompt,
+        "title": body.title,
+        "format": body.format,
+        "target_duration_seconds": body.target_duration_seconds,
+        "aspect_ratio": body.aspect_ratio,
+        "visual_style": body.visual_style,
+        "presenter_mode": body.presenter_mode,
+        "language": body.language,
+        "audience": body.audience,
+        "objective": body.objective,
+        "production_rules": [
+            "Create a complete beginning, middle and ending, not a short teaser.",
+            "Break the full requested runtime into ordered scenes, each 2 to 10 seconds because each scene is generated separately.",
+            "Use enough scenes for the total scene durations to reach at least 90 percent of the requested runtime.",
+            "Keep recurring characters visually consistent; repeat stable character appearance, clothing and age descriptors in every relevant visual_prompt.",
+            "For faceless mode, do not show a speaking presenter or visible identifiable face.",
+            "For realistic_human or mixed, describe natural human appearance, expressions, gestures and camera movement.",
+            "Write narration in the requested language. Visual prompts should be detailed and cinematic.",
+            "Avoid unsupported factual claims and fabricated testimonials. Clearly fictionalize invented story characters.",
+            "Return JSON only, with keys title, scenes, creative_notes. scenes is an array of objects with title, narration, visual_prompt, duration_seconds."
+        ],
+    }
+    try:
+        generated = provider.generate(
+            prompt=json.dumps(brief, ensure_ascii=False),
+            system_prompt=(
+                "You are AEA's professional long-form video director and storyboard writer. "
+                "Create production-ready scene plans for AI video generation. "
+                "Respect the requested full duration, audience, language and presenter mode. "
+                "Return only valid JSON. Never claim video clips have already been generated."
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AI story planner failed to generate the video plan.") from exc
+    raw = generated.get("content") if isinstance(generated, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=502, detail="AI story planner returned an empty plan.")
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not isinstance(data.get("scenes"), list):
+            raise ValueError("Expected a scenes array")
+        scenes = [PlannedVideoScene.model_validate(item) for item in data["scenes"]]
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AI returned an invalid scene plan. Please retry with a more specific prompt.") from exc
+    if not scenes or len(scenes) > 500:
+        raise HTTPException(status_code=502, detail="AI scene plan must contain between 1 and 500 scenes.")
+    planned_seconds = sum(scene.duration_seconds for scene in scenes)
+    if planned_seconds < int(body.target_duration_seconds * 0.9):
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI plan is too short ({planned_seconds}s) for the requested {body.target_duration_seconds}s. Retry planning.",
+        )
+    project_id, scene_rows = _create_project_rows(
+        db,
+        owner_id,
+        {
+            "title": str(data.get("title") or body.title)[:180],
+            "format": body.format,
+            "target_duration_seconds": body.target_duration_seconds,
+            "aspect_ratio": body.aspect_ratio,
+            "visual_style": body.visual_style,
+            "presenter_mode": body.presenter_mode,
+            "status": "ready",
+        },
+        scenes,
+    )
+    return {
+        "success": True,
+        "project": {
+            "id": project_id,
+            "title": str(data.get("title") or body.title)[:180],
+            "format": body.format,
+            "target_duration_seconds": body.target_duration_seconds,
+            "planned_duration_seconds": planned_seconds,
+            "scene_count": len(scene_rows),
+            "status": "ready",
+            "presenter_mode": body.presenter_mode,
+            "aspect_ratio": body.aspect_ratio,
+        },
+        "scenes": scene_rows,
+        "creative_notes": data.get("creative_notes", []),
+        "published": False,
+        "notice": "Storyboard saved as an editable draft. Review the scenes before generating paid Runway clips.",
     }
 
 
