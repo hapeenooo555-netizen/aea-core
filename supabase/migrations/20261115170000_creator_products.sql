@@ -12,7 +12,7 @@ create table if not exists public.creator_products (
     status text not null default 'draft' check (status in ('draft','listed','archived')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    constraint creator_products_owner_slug_key unique (owner_id, slug),
+    constraint creator_products_owner_slug_key unique (owner_id, slug)
 );
 create index if not exists idx_creator_products_listed_created
   on public.creator_products(status, created_at desc);
