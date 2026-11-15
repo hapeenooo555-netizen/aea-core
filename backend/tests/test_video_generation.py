@@ -207,3 +207,71 @@ def test_subtitle_export_is_owner_scoped():
     }]
     response = make_client(db).get(f"/video/generations/projects/{project_id}/subtitles.srt")
     assert response.status_code == 404
+
+
+def test_scene_narration_requires_provider_key(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "narration": "Karibu Tanzania.",
+    }]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
+        json={"voice_id": "voice-test"},
+    )
+    assert response.status_code == 503
+    assert "ELEVENLABS_API_KEY" in response.json()["detail"]
+
+
+def test_scene_narration_is_owner_scoped(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "other-user"}]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
+        json={"voice_id": "voice-test"},
+    )
+    assert response.status_code == 404
+
+
+def test_scene_narration_rejects_empty_text(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "narration": "",
+    }]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
+        json={"voice_id": "voice-test"},
+    )
+    assert response.status_code == 409
+
+
+def test_scene_narration_signed_url_is_owner_scoped():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "another-user",
+        "narration_audio_path": "another-user/project/scene.mp3",
+    }]
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration"
+    )
+    assert response.status_code == 404
