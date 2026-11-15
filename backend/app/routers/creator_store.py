@@ -131,7 +131,7 @@ def update_product_status(
         raise HTTPException(status_code=404, detail="Product listing not found.")
     updated = db.table("creator_products").update({"status": body.status}).eq(
         "id", str(product_id)
-    ).eq("owner_id", owner_id).execute()
+    ).eq("owner_id", owner_id).select("*").execute()
     rows = _rows(updated)
     if not rows:
         raise HTTPException(status_code=409, detail="Product listing status was not updated.")
