@@ -81,3 +81,51 @@ grant all on public.video_projects, public.video_project_scenes to service_role;
 -- Store a reusable character reference bible for consistent storytelling scenes.
 alter table public.video_projects
   add column if not exists character_bible jsonb not null default '{}'::jsonb;
+
+
+-- Private audio artifacts for per-scene narration and later final-video assembly.
+alter table public.video_project_scenes
+  add column if not exists narration_audio_path text;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('aea-video-assets', 'aea-video-assets', false, 52428800, array['audio/mpeg'])
+on conflict (id) do update set
+  public = false,
+  file_size_limit = 52428800,
+  allowed_mime_types = array['audio/mpeg'];
+
+drop policy if exists "owners read own AEA video audio" on storage.objects;
+create policy "owners read own AEA video audio"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'aea-video-assets'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "owners upload own AEA video audio" on storage.objects;
+create policy "owners upload own AEA video audio"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'aea-video-assets'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "owners update own AEA video audio" on storage.objects;
+create policy "owners update own AEA video audio"
+  on storage.objects for update to authenticated
+  using (
+    bucket_id = 'aea-video-assets'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  )
+  with check (
+    bucket_id = 'aea-video-assets'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "owners delete own AEA video audio" on storage.objects;
+create policy "owners delete own AEA video audio"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'aea-video-assets'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
