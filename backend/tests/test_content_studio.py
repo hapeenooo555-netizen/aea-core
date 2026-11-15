@@ -163,7 +163,7 @@ def test_create_asset_replays_idempotency_key_without_duplicate():
     db = FakeDatabase()
     db.rows.append({
         "id": "existing",
-        "asset_id": "asset-1",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
         "owner_id": "owner-123",
         "version": 1,
         "idempotency_key": "draft-create-123456",
@@ -185,27 +185,27 @@ def test_create_asset_replays_idempotency_key_without_duplicate():
 def test_list_asset_versions_is_scoped_to_authenticated_owner():
     db = FakeDatabase()
     db.rows.extend([
-        {"asset_id": "asset-1", "owner_id": "owner-123", "version": 1},
-        {"asset_id": "asset-1", "owner_id": "another-user", "version": 9},
+        {"asset_id": "11111111-1111-4111-8111-111111111111", "owner_id": "owner-123", "version": 1},
+        {"asset_id": "11111111-1111-4111-8111-111111111111", "owner_id": "another-user", "version": 9},
     ])
     app.dependency_overrides[get_user_scoped_client] = lambda: db
-    response = TestClient(app).get("/content/studio/assets/asset-1/versions")
+    response = TestClient(app).get("/content/studio/assets/11111111-1111-4111-8111-111111111111/versions")
     assert response.status_code == 200
     assert response.json()["versions"] == [
-        {"asset_id": "asset-1", "owner_id": "owner-123", "version": 1}
+        {"asset_id": "11111111-1111-4111-8111-111111111111", "owner_id": "owner-123", "version": 1}
     ]
 
 
 def test_revise_asset_requires_expected_current_version():
     db = FakeDatabase()
     db.rows.append({
-        "asset_id": "asset-1",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
         "owner_id": "owner-123",
         "version": 2,
         "idempotency_key": "old-save-key-123456",
     })
     app.dependency_overrides[get_user_scoped_client] = lambda: db
-    response = TestClient(app).patch("/content/studio/assets/asset-1", json={
+    response = TestClient(app).patch("/content/studio/assets/11111111-1111-4111-8111-111111111111", json={
         "idempotency_key": "new-save-key-123456",
         "expected_version": 1,
         "title": "Edited title",
