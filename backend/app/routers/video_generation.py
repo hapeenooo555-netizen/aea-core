@@ -471,7 +471,7 @@ def plan_video_project_from_prompt(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI returned an invalid scene plan. Please retry with a more specific prompt.") from exc
     if not scenes or len(scenes) > 720:
-        raise HTTPException(status_code=502, detail="AI scene plan must contain between 1 and 500 scenes.")
+        raise HTTPException(status_code=502, detail="AI scene plan must contain between 1 and 720 scenes.")
     planned_seconds = sum(scene.duration_seconds for scene in scenes)
     if planned_seconds < int(body.target_duration_seconds * 0.9):
         raise HTTPException(
@@ -483,6 +483,7 @@ def plan_video_project_from_prompt(
         owner_id,
         {
             "title": str(data.get("title") or body.title)[:180],
+            "character_bible": data.get("character_bible", {}),
             "format": body.format,
             "target_duration_seconds": body.target_duration_seconds,
             "aspect_ratio": body.aspect_ratio,
@@ -503,6 +504,7 @@ def plan_video_project_from_prompt(
             "scene_count": len(scene_rows),
             "status": "ready",
             "presenter_mode": body.presenter_mode,
+            "character_bible": data.get("character_bible", {}),
             "aspect_ratio": body.aspect_ratio,
         },
         "scenes": scene_rows,
