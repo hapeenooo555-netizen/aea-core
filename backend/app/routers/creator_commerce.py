@@ -7,11 +7,16 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
+import hashlib
+import json
+import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.database import get_supabase_service_client
+from app.services.clickpesa_webhooks import verify_payload_checksum
 
 router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
 
@@ -59,6 +64,88 @@ def create_checkout_session(
     except Exception as exc:
         # Avoid returning database/provider internals to the browser.
         raise HTTPException(status_code=409, detail="Checkout session could not be created.") from exc
+
+
+@router.post("/webhooks/clickpesa", status_code=202)
+async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
+    """Verify and durably inbox ClickPesa events; never mark orders paid here."""
+    raw = await request.body()
+    if len(raw) > 64 * 1024:
+        raise HTTPException(status_code=413, detail="Webhook payload too large.")
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid webhook JSON.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid webhook payload.")
+
+    checksum_secret = os.getenv("CLICKPESA_CHECKSUM_KEY", "").strip()
+    if not checksum_secret or not verify_payload_checksum(checksum_secret, payload):
+        raise HTTPException(status_code=401, detail="Invalid ClickPesa webhook checksum.")
+
+    event_type = payload.get("event") or payload.get("eventType")
+    data = payload.get("data")
+    if event_type not in {"PAYMENT RECEIVED", "PAYMENT FAILED"} or not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Unsupported ClickPesa event.")
+
+    try:
+        order_id = UUID(str(data.get("orderReference", "")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid order reference.") from exc
+
+    provider_event_id = data.get("paymentReference") or data.get("paymentId") or data.get("id")
+    if not isinstance(provider_event_id, str) or not provider_event_id.strip():
+        raise HTTPException(status_code=400, detail="Missing provider payment reference.")
+
+    amount_raw = data.get("collectedAmount")
+    amount = None
+    if amount_raw is not None:
+        try:
+            from decimal import Decimal, InvalidOperation
+            parsed = Decimal(str(amount_raw))
+            if not parsed.is_finite() or parsed < 0 or parsed != parsed.to_integral_value():
+                raise ValueError
+            amount = int(parsed)
+        except (InvalidOperation, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid collected amount.")
+
+    currency = data.get("collectedCurrency")
+    if currency is not None and not isinstance(currency, str):
+        raise HTTPException(status_code=400, detail="Invalid collected currency.")
+
+    client = get_supabase_service_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Payment event storage is not configured.")
+
+    digest = hashlib.sha256(raw).hexdigest()
+    row = {
+        "order_id": str(order_id),
+        "provider": "clickpesa",
+        "provider_event_id": provider_event_id.strip(),
+        "event_type": event_type,
+        "verification_status": "verified",
+        "amount": amount,
+        "currency": currency,
+        "payload_sha256": digest,
+    }
+    try:
+        result = client.table("payment_events").upsert(
+            row, on_conflict="provider,provider_event_id", ignore_duplicates=True
+        ).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not persist payment event.") from exc
+
+    # A valid checksum proves payload integrity, not settlement. A separate
+    # provider status query and exact order/amount/currency match are required.
+    return {
+        "accepted": True,
+        "event_recorded": True,
+        "event_type": event_type,
+        "payment_reference": provider_event_id.strip(),
+        "payment_status": "pending_verification",
+        "order_status_changed": False,
+        "entitlement_granted": False,
+    }
 
 
 __all__ = ["router"]
