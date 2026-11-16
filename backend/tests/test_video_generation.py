@@ -15,7 +15,7 @@ class Query:
         self.db, self.table = db, table
         self.filters, self.payload, self.action = {}, None, "select"
 
-    def select(self, *_args): self.action = "select"; return self
+    def select(self, *_args):\n        if self.action != "update": self.action = "select"\n        return self
     def eq(self, key, value): self.filters[key] = value; return self
     def limit(self, *_args): return self
     def order(self, *_args, **_kwargs): return self
