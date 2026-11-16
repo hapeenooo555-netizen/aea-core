@@ -268,3 +268,52 @@ def test_checkout_is_idempotent_under_concurrent_requests_and_bound_to_product(p
                 "select public.create_marketplace_checkout(%s, %s)",
                 (other_product, key),
             )
+
+
+def test_mismatched_payment_is_persistently_rejected_without_paying_order(pg):
+    conn, seller, buyer, outsider, product = pg
+    _as_user(conn, buyer)
+    checkout = conn.execute(
+        "select public.create_marketplace_checkout(%s, %s)",
+        (product, "pg-rejected-payment-key-0001"),
+    ).fetchone()[0]
+    order_id = checkout["order_id"]
+
+    conn.execute("reset role")
+    conn.execute(
+        """update public.marketplace_orders
+              set provider = 'clickpesa', expires_at = now() + interval '10 minutes'
+            where id = %s""",
+        (order_id,),
+    )
+    event_ref = "clickpesa-mismatched-reference-0001"
+    conn.execute(
+        """insert into public.payment_events
+           (order_id, provider, provider_event_id, event_type, verification_status,
+            amount, currency, payload_sha256)
+           values (%s, 'clickpesa', %s, 'PAYMENT RECEIVED', 'received',
+                   24000, 'TZS', repeat('c', 64))""",
+        (order_id, event_ref),
+    )
+
+    conn.execute("set role service_role")
+    result = conn.execute(
+        "select public.confirm_marketplace_payment(%s, %s, 25000, 'TZS')",
+        (order_id, event_ref),
+    ).fetchone()[0]
+    assert result["confirmed"] is False
+    assert result["reason"] == "payment_mismatch"
+
+    conn.execute("reset role")
+    assert conn.execute(
+        "select status from public.payment_events where provider_event_id = %s",
+        (event_ref,),
+    ).fetchone()[0] == "rejected"
+    assert conn.execute(
+        "select status from public.marketplace_orders where id = %s",
+        (order_id,),
+    ).fetchone()[0] == "pending"
+    assert conn.execute(
+        "select count(*) from public.product_entitlements where order_id = %s",
+        (order_id,),
+    ).fetchone()[0] == 0
