@@ -69,3 +69,13 @@ jobs:
           backend/tests/test_affiliate_cj_connection.py
           backend/tests/test_affiliate_cj_promotional_properties.py
           backend/tests/test_affiliate_pinterest_approval_linking.py
+
+      - name: Run creator commerce and ClickPesa payment tests
+        run: >-
+          PYTHONPATH=backend python -m pytest -q
+          tests/test_creator_commerce.py
+          tests/test_creator_commerce_webhooks.py
+          tests/test_creator_commerce_migration.py
+          tests/test_clickpesa_client.py
+          tests/test_clickpesa_webhooks.py
+          tests/test_clickpesa_reconciliation.py
