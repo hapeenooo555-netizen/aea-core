@@ -123,7 +123,7 @@ async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
         "provider": "clickpesa",
         "provider_event_id": provider_event_id.strip(),
         "event_type": event_type,
-        "verification_status": "verified",
+        "verification_status": "received",
         "amount": amount,
         "currency": currency,
         "payload_sha256": digest,
