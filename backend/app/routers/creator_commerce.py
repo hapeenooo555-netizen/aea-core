@@ -29,6 +29,17 @@ from app.services.airtel_money_reconciliation import AirtelReconciliationError, 
 router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
 
 
+def _airtel_amount_tzs(value: Any) -> int:
+    """Return a positive whole-TZS amount; never truncate fractional prices."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Airtel amount must be a valid whole-TZS value.") from exc
+    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+        raise ValueError("Airtel amount must be a positive whole-TZS value.")
+    return int(amount)
+
+
 class CheckoutSessionRequest(BaseModel):
     payment_provider: Literal["clickpesa", "airtel"] = "clickpesa"
     product_id: UUID
@@ -104,18 +115,12 @@ def create_checkout_session(
                     return {"success": True, "checkout": {**data, "provider": "airtel"}, "payment_status": "pending", "provider": "airtel", "provider_transaction_id": latest["provider_checkout_id"], "collection_initiated": "unknown", "live_payment_enabled": True, "message": "Concurrent Airtel checkout detected. Reuse the saved transaction; no second USSD Push was sent."}
                 raise HTTPException(status_code=409, detail="Checkout was claimed by another request or requires manual review.")
             try:
-                amount_tzs_decimal = Decimal(str(order["total_amount"]))
-            except (InvalidOperation, TypeError, ValueError) as exc:
-                raise HTTPException(status_code=409, detail="Order amount is invalid; Airtel collection was not initiated.") from exc
-            if (
-                not amount_tzs_decimal.is_finite()
-                or amount_tzs_decimal <= 0
-                or amount_tzs_decimal != amount_tzs_decimal.to_integral_value()
-            ):
-                raise HTTPException(status_code=409, detail="Airtel requires a positive whole-TZS order amount; collection was not initiated.")
+                amount_tzs = _airtel_amount_tzs(order["total_amount"])
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail="Airtel requires a positive whole-TZS order amount; collection was not initiated.") from exc
             try:
                 with AirtelMoneyClient() as airtel:
-                    initiation = airtel.initiate_payment(msisdn=body.customer_phone, amount_tzs=int(amount_tzs_decimal), reference=order_id, transaction_id=transaction_id)
+                    initiation = airtel.initiate_payment(msisdn=body.customer_phone, amount_tzs=amount_tzs, reference=order_id, transaction_id=transaction_id)
             except (AirtelConfigurationError, AirtelAPIError, ValueError) as exc:
                 raise HTTPException(status_code=502, detail="Airtel request outcome is uncertain. Reconcile the saved transaction; do not retry collection.") from exc
             provider_payload = initiation.get("provider_response") if isinstance(initiation, dict) else None
