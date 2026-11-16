@@ -14,9 +14,10 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
 
@@ -872,7 +873,6 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
 @router.post("/projects/{project_id}/assemble", status_code=status.HTTP_202_ACCEPTED)
 def assemble_video_project(
     project_id: UUID,
-    background_tasks: BackgroundTasks,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
@@ -895,15 +895,31 @@ def assemble_video_project(
         raise HTTPException(status_code=409, detail="This project has no scenes.")
     if any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
         raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")
-    db.table("video_projects").update({
-        "status": "assembling", "assembly_error": None,
-    }).eq("id", str(project_id)).eq("owner_id", owner_id).execute()
-    background_tasks.add_task(_assemble_project_video, str(project_id), owner_id, client)
+    job_id = str(uuid4())
+    try:
+        queued = db.table("video_assembly_jobs").insert({
+            "id": job_id,
+            "project_id": str(project_id),
+            "owner_id": owner_id,
+            "status": "queued",
+            "attempts": 0,
+            "max_attempts": 3,
+        }).execute()
+        if not _rows(queued):
+            raise RuntimeError("Queue insert returned no row.")
+        updated = db.table("video_projects").update({
+            "status": "assembling", "assembly_error": None,
+        }).eq("id", str(project_id)).eq("owner_id", owner_id).select("id").execute()
+        if not _rows(updated):
+            raise RuntimeError("Project status update returned no row.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AEA could not durably queue final video assembly. Apply the durable video queue migration and retry.") from exc
     return {
         "success": True,
         "project_id": str(project_id),
-        "status": "assembling",
-        "notice": "Final MP4 assembly has started. Check the project status for the result.",
+        "job_id": job_id,
+        "status": "queued",
+        "notice": "Final MP4 assembly is durably queued. The AEA video worker will process it.",
     }
 
 
