@@ -45,7 +45,7 @@ def create_checkout_session(
     buyer_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Create an order and, only when explicitly enabled, a hosted ClickPesa link."""
+    """Create a marketplace order and initialize the selected payment provider."""
     if body.payment_provider == "airtel" and os.getenv("AIRTEL_COLLECTION_ENABLED", "").strip().lower() != "true":
         raise HTTPException(status_code=503, detail="Airtel collection is disabled; no payment request was sent.")
     if client is None:
@@ -104,8 +104,18 @@ def create_checkout_session(
                     return {"success": True, "checkout": {**data, "provider": "airtel"}, "payment_status": "pending", "provider": "airtel", "provider_transaction_id": latest["provider_checkout_id"], "collection_initiated": "unknown", "live_payment_enabled": True, "message": "Concurrent Airtel checkout detected. Reuse the saved transaction; no second USSD Push was sent."}
                 raise HTTPException(status_code=409, detail="Checkout was claimed by another request or requires manual review.")
             try:
+                amount_tzs_decimal = Decimal(str(order["total_amount"]))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="Order amount is invalid; Airtel collection was not initiated.") from exc
+            if (
+                not amount_tzs_decimal.is_finite()
+                or amount_tzs_decimal <= 0
+                or amount_tzs_decimal != amount_tzs_decimal.to_integral_value()
+            ):
+                raise HTTPException(status_code=409, detail="Airtel requires a positive whole-TZS order amount; collection was not initiated.")
+            try:
                 with AirtelMoneyClient() as airtel:
-                    initiation = airtel.initiate_payment(msisdn=body.customer_phone, amount_tzs=int(order["total_amount"]), reference=order_id, transaction_id=transaction_id)
+                    initiation = airtel.initiate_payment(msisdn=body.customer_phone, amount_tzs=int(amount_tzs_decimal), reference=order_id, transaction_id=transaction_id)
             except (AirtelConfigurationError, AirtelAPIError, ValueError) as exc:
                 raise HTTPException(status_code=502, detail="Airtel request outcome is uncertain. Reconcile the saved transaction; do not retry collection.") from exc
             provider_payload = initiation.get("provider_response") if isinstance(initiation, dict) else None
