@@ -269,7 +269,7 @@ def test_marketplace_download_denies_buyer_without_active_entitlement(monkeypatc
         response = client.get("/commerce/orders/c5b8f82a-8b37-4c78-98b8-6a41a0d9cc01/download")
         assert response.status_code == 404
         assert service.bucket.calls == []
-        assert "product_entitlements" not in service.tables
+        assert service.tables == ["marketplace_orders", "product_entitlements"]
         assert "marketplace_product_files" not in service.tables
     finally:
         _cleanup()
