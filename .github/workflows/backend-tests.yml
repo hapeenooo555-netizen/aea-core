@@ -2,9 +2,9 @@ name: Backend tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "feat/creator-commerce-foundation"]
   push:
-    branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/creator-commerce-foundation"]
+    branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/creator-commerce-foundation", "feat/airtel-money-collection-adapter"]
   workflow_dispatch:
 
 permissions:
@@ -87,6 +87,12 @@ jobs:
 
       - name: Run PostgreSQL creator commerce migration and RLS integration tests
         run: python -m pytest -q tests/test_creator_commerce_postgres.py
+
+      - name: Run Airtel Money collection adapter tests
+        run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_client.py
+
+      - name: Run Airtel Money callback authentication tests
+        run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_webhooks.py
 
       - name: Run creator commerce and ClickPesa payment tests
         run: >-

@@ -14,6 +14,7 @@ MIGRATIONS = [
     ROOT / "supabase/migrations/20261116190000_confirm_marketplace_payment.sql",
     ROOT / "supabase/migrations/20261116200000_marketplace_checkout_url.sql",
     ROOT / "supabase/migrations/20261116210000_marketplace_private_product_files.sql",
+    ROOT / "supabase/migrations/20261116220000_airtel_marketplace_provider.sql",
 ]
 
 
@@ -319,3 +320,56 @@ def test_mismatched_payment_is_persistently_rejected_without_paying_order(pg):
         "select count(*) from public.product_entitlements where order_id = %s",
         (order_id,),
     ).fetchone()[0] == 0
+
+
+def test_airtel_marketplace_payment_confirmation_is_provider_scoped_and_idempotent(pg):
+    conn, seller, buyer, outsider, product = pg
+    _as_user(conn, buyer)
+    checkout = conn.execute(
+        "select public.create_marketplace_checkout(%s, %s)",
+        (product, "pg-airtel-checkout-key-0001"),
+    ).fetchone()[0]
+    order_id = checkout["order_id"]
+
+    conn.execute("reset role")
+    conn.execute(
+        """update public.marketplace_orders
+              set provider = 'airtel', expires_at = now() + interval '10 minutes'
+            where id = %s""",
+        (order_id,),
+    )
+    event_ref = "airtel-money-transaction-0001"
+    conn.execute(
+        """insert into public.payment_events
+           (order_id, provider, provider_event_id, event_type, verification_status,
+            amount, currency, payload_sha256)
+           values (%s, 'airtel', %s, 'PAYMENT RECEIVED', 'received',
+                   25000, 'TZS', repeat('d', 64))""",
+        (order_id, event_ref),
+    )
+
+    conn.execute("set role service_role")
+    first = conn.execute(
+        "select public.confirm_marketplace_payment(%s, %s, 25000, 'TZS')",
+        (order_id, event_ref),
+    ).fetchone()[0]
+    second = conn.execute(
+        "select public.confirm_marketplace_payment(%s, %s, 25000, 'TZS')",
+        (order_id, event_ref),
+    ).fetchone()[0]
+    assert first["confirmed"] is True
+    assert first["already_processed"] is False
+    assert second["already_processed"] is True
+
+    conn.execute("reset role")
+    assert conn.execute(
+        "select status from public.marketplace_orders where id = %s", (order_id,)
+    ).fetchone()[0] == "paid"
+    assert conn.execute(
+        "select count(*) from public.product_entitlements where order_id = %s",
+        (order_id,),
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "select metadata->>'provider' from public.seller_ledger_entries where order_id = %s",
+        (order_id,),
+    ).fetchone()[0] == "airtel"
