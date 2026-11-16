@@ -41,7 +41,6 @@ def pg():
         conn.execute("drop schema if exists public cascade")
         conn.execute("drop schema if exists auth cascade")
         conn.execute("drop schema if exists storage cascade")
-        conn.execute("drop schema if exists storage cascade")
         conn.execute("create schema public")
         conn.execute("grant all on schema public to postgres")
         conn.execute("grant usage on schema public to anon, authenticated, service_role")
