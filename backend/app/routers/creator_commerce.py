@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 import hashlib
 import json
@@ -28,6 +28,7 @@ router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
 
 
 class CheckoutSessionRequest(BaseModel):
+    payment_provider: Literal["clickpesa", "airtel"] = "clickpesa"
     product_id: UUID
     idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     customer_name: str = Field(min_length=2, max_length=120)
@@ -43,6 +44,10 @@ def create_checkout_session(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Create an order and, only when explicitly enabled, a hosted ClickPesa link."""
+    # Fail closed: Airtel must not silently create a ClickPesa checkout or
+    # pretend that a USSD collection has been initiated before wiring is complete.
+    if body.payment_provider == "airtel":
+        raise HTTPException(status_code=503, detail="Airtel checkout is not enabled yet; no collection was initiated.")
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database access is not configured.")
 
