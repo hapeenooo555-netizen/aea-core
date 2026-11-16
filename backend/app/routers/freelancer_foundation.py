@@ -59,7 +59,7 @@ def _rows(response: Any) -> list[dict[str, Any]]:
 
 
 def _db_error(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=503, detail="Freelancer data service is unavailable; confirm the Phase 1 Supabase migration is applied.") from exc
+    return HTTPException(status_code=503, detail="Freelancer data service is unavailable; confirm the Phase 1 Supabase migration is applied.")
 
 
 def _list_owned(client: Any, table: str, owner_id: str, active_only: bool = False) -> list[dict[str, Any]]:
