@@ -50,3 +50,8 @@ production video creation, apply the migrations, deploy the separate worker,
 confirm it can claim a test job, and run one low-cost Runway + ElevenLabs
 end-to-end generation. No provider API key or production migration is
 configured by this source change itself.
+
+
+## Test coverage note
+
+The assembly endpoint writes a durable queue record and updates the project to `assembling`; the API process does not execute the renderer. Tests assert the queue record and state transition. The worker is the only process that claims and executes queued renders.
