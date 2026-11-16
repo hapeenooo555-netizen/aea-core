@@ -38,3 +38,24 @@ def test_checkout_idempotency_is_race_safe_and_bound_to_same_product():
     assert "oi.product_id = v_product.id" in sql
     assert "idempotency key already belongs to another product" in sql
     assert "unique (buyer_id, idempotency_key)" in sql
+
+
+def test_marketplace_product_files_are_private_and_entitlement_delivery_is_gated():
+    root = Path(__file__).resolve().parents[1]
+    migration = (root / "supabase/migrations/20261116210000_marketplace_private_product_files.sql").read_text().lower()
+    router = (root / "backend/app/routers/creator_commerce.py").read_text()
+
+    assert "create table if not exists public.marketplace_product_files" in migration
+    assert "enable row level security" in migration
+    assert "public = false" in migration
+    assert "104857600" in migration
+    assert "storage.foldername(name)" in migration
+    assert "marketplace_product_files_owner_insert" in migration
+    assert "marketplace_product_files_owner_read" in migration
+
+    assert '@router.put("/products/{product_id}/file")' in router
+    assert '@router.get("/orders/{order_id}/download")' in router
+    assert '.eq("buyer_id", buyer_id)' in router
+    assert '.eq("status", "active")' in router
+    assert 'create_signed_url(' in router
+    assert 'files[0]["storage_path"], 60' in router
