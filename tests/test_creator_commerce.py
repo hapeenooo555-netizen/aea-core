@@ -417,7 +417,7 @@ def test_marketplace_download_denies_entitlement_when_order_not_paid(monkeypatch
         _cleanup()
 
 
-def test_airtel_checkout_fails_closed_until_collection_flow_is_wired():
+def test_airtel_checkout_fails_closed_when_collection_flag_is_disabled(monkeypatch):
     db = FakeSupabaseClient(data={})
     client = _client(db=db)
     try:
@@ -430,7 +430,7 @@ def test_airtel_checkout_fails_closed_until_collection_flow_is_wired():
             "customer_phone": "+255700000000",
         })
         assert response.status_code == 503
-        assert "not enabled yet" in response.json()["detail"]
+        assert "disabled" in response.json()["detail"]
         assert db.calls == []
     finally:
         _cleanup()
