@@ -79,6 +79,8 @@ class ClickPesaClient:
             raise ValueError("Checkout amount must be positive.")
         if not order_reference or len(order_reference) > 64:
             raise ValueError("Invalid order reference.")
+        if callback_url and not callback_url.startswith("https://"):
+            raise ValueError("ClickPesa callback URL must use HTTPS.")
         token = self.generate_token()
         body = {
             "totalPrice": str(amount_tzs),
@@ -90,8 +92,6 @@ class ClickPesaClient:
             "customerPhone": customer_phone,
         }
         if callback_url:
-            if not callback_url.startswith("https://"):
-                raise ValueError("ClickPesa callback URL must use HTTPS.")
             body["callbackUrl"] = callback_url
         payload = self._request(
             "POST",
