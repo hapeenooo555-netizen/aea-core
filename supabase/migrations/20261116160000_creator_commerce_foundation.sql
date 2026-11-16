@@ -126,4 +126,78 @@ create policy seller_ledger_entries_select_seller on public.seller_ledger_entrie
     for select to authenticated
     using (auth.uid() = seller_id);
 
+
+-- Create a pending sandbox checkout from a listed product.
+-- The function derives buyer identity from auth.uid(); clients cannot supply owner IDs or prices.
+create or replace function public.create_marketplace_checkout(
+    p_product_id uuid,
+    p_idempotency_key text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth, pg_temp
+as $
+declare
+    v_buyer uuid := auth.uid();
+    v_product public.creator_products%rowtype;
+    v_order public.marketplace_orders%rowtype;
+    v_existing public.marketplace_orders%rowtype;
+    v_key text := btrim(coalesce(p_idempotency_key, ''));
+begin
+    if v_buyer is null then
+        raise exception 'Authentication required' using errcode = '28000';
+    end if;
+    if length(v_key) < 8 or length(v_key) > 128 then
+        raise exception 'Invalid idempotency key' using errcode = '22023';
+    end if;
+
+    select * into v_product
+    from public.creator_products
+    where id = p_product_id and status = 'listed';
+
+    if not found then
+        raise exception 'Product not available' using errcode = 'P0002';
+    end if;
+    if v_product.owner_id = v_buyer then
+        raise exception 'Cannot purchase your own product' using errcode = '22023';
+    end if;
+    if v_product.currency <> 'TZS' or v_product.price_amount <= 0 then
+        raise exception 'Product price is not supported' using errcode = '22023';
+    end if;
+
+    select * into v_existing
+    from public.marketplace_orders
+    where buyer_id = v_buyer and idempotency_key = v_key;
+    if found then
+        return jsonb_build_object('order_id', v_existing.id, 'status', v_existing.status,
+            'total_amount', v_existing.total_amount, 'currency', v_existing.currency,
+            'provider', v_existing.provider, 'reused', true);
+    end if;
+
+    insert into public.marketplace_orders (
+        buyer_id, seller_id, status, currency, subtotal_amount, discount_amount,
+        total_amount, provider, idempotency_key, expires_at
+    ) values (
+        v_buyer, v_product.owner_id, 'pending', 'TZS', v_product.price_amount, 0,
+        v_product.price_amount, 'test', v_key, now() + interval '30 minutes'
+    ) returning * into v_order;
+
+    insert into public.marketplace_order_items (
+        order_id, product_id, product_title, product_description, product_type,
+        unit_amount, quantity, currency
+    ) values (
+        v_order.id, v_product.id, v_product.title, v_product.description,
+        v_product.product_type, v_product.price_amount, 1, v_product.currency
+    );
+
+    return jsonb_build_object('order_id', v_order.id, 'status', v_order.status,
+        'total_amount', v_order.total_amount, 'currency', v_order.currency,
+        'provider', v_order.provider, 'reused', false);
+end;
+$;
+
+revoke all on function public.create_marketplace_checkout(uuid, text) from public;
+grant execute on function public.create_marketplace_checkout(uuid, text) to authenticated;
+
+
 commit;
