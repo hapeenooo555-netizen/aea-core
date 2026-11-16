@@ -316,11 +316,6 @@ def test_final_assembly_requires_every_scene_completed(monkeypatch):
 
 def test_final_assembly_queues_only_owner_completed_project(monkeypatch):
     project_id = "33333333-3333-4333-8333-333333333333"
-    queued = []
-    monkeypatch.setattr(
-        video_generation, "_assemble_project_video",
-        lambda project, owner, client: queued.append((project, owner)),
-    )
     db = DB()
     db.tables["video_projects"] = [{
         "id": project_id, "owner_id": "user-1", "status": "ready",
@@ -334,7 +329,11 @@ def test_final_assembly_queues_only_owner_completed_project(monkeypatch):
     response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
-    assert queued == [(project_id, "user-1")]
+    assert len(db.tables["video_assembly_jobs"]) == 1
+    job = db.tables["video_assembly_jobs"][0]
+    assert job["project_id"] == project_id
+    assert job["owner_id"] == "user-1"
+    assert job["status"] == "queued"
     assert db.tables["video_projects"][0]["status"] == "assembling"
 
 
