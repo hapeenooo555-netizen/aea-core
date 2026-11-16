@@ -23,6 +23,8 @@ from app.services.clickpesa_client import (
     ClickPesaConfigurationError,
 )
 from app.services.clickpesa_webhooks import verify_payload_checksum
+from app.services.airtel_money_client import AirtelAPIError, AirtelConfigurationError, AirtelMoneyClient
+from app.services.airtel_money_reconciliation import AirtelReconciliationError, classify_transaction_enquiry
 
 router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
 
@@ -171,7 +173,7 @@ def reconcile_marketplace_order(
         raise HTTPException(status_code=503, detail="Payment reconciliation is not configured.")
     try:
         order_result = service.table("marketplace_orders").select(
-            "id,buyer_id,status,total_amount,currency,provider,expires_at"
+            "id,buyer_id,status,total_amount,currency,provider,provider_checkout_id,expires_at"
         ).eq("id", str(order_id)).limit(1).execute()
         orders = getattr(order_result, "data", None) or []
         order = orders[0] if orders else None
@@ -179,8 +181,41 @@ def reconcile_marketplace_order(
             raise HTTPException(status_code=404, detail="Order not found.")
         if order.get("status") == "paid":
             return {"success": True, "payment_status": "paid", "already_processed": True}
-        if order.get("status") != "pending" or order.get("provider") != "clickpesa":
-            raise HTTPException(status_code=409, detail="Order is not eligible for ClickPesa reconciliation.")
+        if order.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="Order is not eligible for payment reconciliation.")
+
+        if order.get("provider") == "airtel":
+            if os.getenv("AIRTEL_COLLECTION_ENABLED", "").strip().lower() != "true":
+                raise HTTPException(status_code=503, detail="Airtel collection is disabled.")
+            transaction_id = order.get("provider_checkout_id")
+            if not isinstance(transaction_id, str) or not transaction_id:
+                raise HTTPException(status_code=409, detail="Airtel transaction ID is missing; manual review is required.")
+            try:
+                with AirtelMoneyClient() as airtel:
+                    enquiry = airtel.transaction_enquiry(transaction_id)
+                classified = classify_transaction_enquiry(enquiry, transaction_id)
+            except (AirtelConfigurationError, AirtelAPIError, AirtelReconciliationError) as exc:
+                raise HTTPException(status_code=502, detail="Airtel transaction status could not be safely verified.") from exc
+            state = classified["payment_state"]
+            if state == "failed":
+                return {"success": True, "payment_status": "failed", "provider_status": classified["status_code"], "entitlement_granted": False}
+            if state == "expired":
+                return {"success": True, "payment_status": "expired", "provider_status": classified["status_code"], "entitlement_granted": False}
+            if state == "pending":
+                return {"success": True, "payment_status": "pending", "provider_status": classified["status_code"], "entitlement_granted": False}
+            if state == "ambiguous":
+                return {"success": True, "payment_status": "pending_review", "provider_status": classified["status_code"], "entitlement_granted": False}
+            return {
+                "success": True, "payment_status": "pending_verification",
+                "provider_status": classified["status_code"],
+                "provider_transaction_id": classified["transaction_id"],
+                "airtel_money_id": classified["airtel_money_id"] or None,
+                "entitlement_granted": False,
+                "message": "Airtel reports success; amount, currency and order reference still require authoritative verification.",
+            }
+
+        if order.get("provider") != "clickpesa":
+            raise HTTPException(status_code=409, detail="Order is not eligible for the configured payment provider.")
 
         provider = ClickPesaClient()
         payments = provider.query_payment(str(order_id))
