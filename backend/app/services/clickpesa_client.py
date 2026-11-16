@@ -89,7 +89,7 @@ class ClickPesaClient:
             "description": description[:250],
             "customerName": customer_name[:120],
             "customerEmail": customer_email[:254],
-            "customerPhone": customer_phone,
+            "customerPhone": customer_phone.lstrip("+"),
         }
         if callback_url:
             body["callbackUrl"] = callback_url
