@@ -113,7 +113,7 @@ def create_checkout_session(
         update_result = service.table("marketplace_orders").update({
             "provider": "clickpesa",
             "provider_checkout_url": checkout_url,
-        }).eq("id", order_id).eq("status", "pending").eq("provider", "test").execute()
+        }).eq("id", order_id).eq("status", "pending").eq("provider", "test").select("id").execute()
         updated_rows = getattr(update_result, "data", None) or []
         if not updated_rows:
             # A concurrent request may have initialized the provider first.
