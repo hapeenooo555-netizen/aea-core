@@ -67,7 +67,7 @@ def select_verified_success(
     if str(payment.get("collectedCurrency", "")).strip().upper() != expected_currency:
         raise PaymentReconciliationError("Successful payment currency does not match the order.")
 
-    payment_reference = payment.get("paymentReference") or payment.get("id")
+    payment_reference = payment.get("paymentReference")
     if not isinstance(payment_reference, str) or not payment_reference.strip():
         raise PaymentReconciliationError("Successful payment is missing its provider reference.")
 
