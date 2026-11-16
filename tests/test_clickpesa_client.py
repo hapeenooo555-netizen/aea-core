@@ -100,4 +100,4 @@ def test_clickpesa_query_payment_encodes_order_reference():
     )
     result = client.query_payment("ORDER/1")
     assert result[0]["status"] == "PENDING"
-    assert calls[1].url.path.endswith("/ORDER%2F1")
+    assert calls[1].url.raw_path.endswith(b"/ORDER%2F1")
