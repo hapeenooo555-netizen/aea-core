@@ -183,3 +183,60 @@ def test_postgres_migrations_enforce_rls_and_confirm_payment_once(pg):
     assert conn.execute(
         "select status from public.marketplace_orders where id = %s", (order_id,)
     ).fetchone()[0] == "paid"
+
+
+def test_checkout_is_idempotent_under_concurrent_requests_and_bound_to_product(pg):
+    from concurrent.futures import ThreadPoolExecutor
+
+    conn, seller, buyer, outsider, product = pg
+    other_product = uuid4()
+    conn.execute(
+        """insert into public.creator_products
+           (id, owner_id, status, currency, price_amount, title, description, product_type)
+           values (%s, %s, 'listed', 'TZS', 40000, 'Another digital product',
+                   'Another sufficiently long description for integration testing.',
+                   'guide')""",
+        (other_product, seller),
+    )
+    dsn = os.environ["TEST_DATABASE_URL"]
+    key = "pg-concurrent-checkout-key-0001"
+
+    def create_checkout():
+        with psycopg.connect(dsn, autocommit=True) as session:
+            session.execute(
+                "select set_config('request.jwt.claim.sub', %s, false)",
+                (str(buyer),),
+            )
+            session.execute("set role authenticated")
+            return session.execute(
+                "select public.create_marketplace_checkout(%s, %s)",
+                (product, key),
+            ).fetchone()[0]
+
+    # Two independent authenticated DB sessions race on the same buyer/key.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: create_checkout(), range(2)))
+
+    assert results[0]["order_id"] == results[1]["order_id"]
+    assert sorted([results[0]["reused"], results[1]["reused"]]) == [False, True]
+    assert conn.execute(
+        "select count(*) from public.marketplace_orders where buyer_id = %s and idempotency_key = %s",
+        (buyer, key),
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "select count(*) from public.marketplace_order_items where order_id = %s",
+        (results[0]["order_id"],),
+    ).fetchone()[0] == 1
+
+    # Reusing the same idempotency key for another product must fail closed.
+    with psycopg.connect(dsn, autocommit=True) as session:
+        session.execute(
+            "select set_config('request.jwt.claim.sub', %s, false)",
+            (str(buyer),),
+        )
+        session.execute("set role authenticated")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            session.execute(
+                "select public.create_marketplace_checkout(%s, %s)",
+                (other_product, key),
+            )
