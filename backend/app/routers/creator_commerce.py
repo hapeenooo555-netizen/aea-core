@@ -238,11 +238,12 @@ def reconcile_marketplace_order(
             return {
                 "success": True,
                 "payment_status": "pending_verification",
+                "provider_payment_state": classified["payment_state"],
                 "provider_status": classified["status_code"],
                 "provider_transaction_id": classified["transaction_id"],
                 "airtel_money_id": classified["airtel_money_id"] or None,
                 "entitlement_granted": False,
-                "message": "Airtel status mapping and authoritative amount/currency fields are not yet verified; no entitlement was granted.",
+                "message": "Airtel transaction status was classified, but Transaction Enquiry amount/currency are not available in the documented response; payment remains unconfirmed and no entitlement was granted.",
             }
 
         if order.get("provider") != "clickpesa":
