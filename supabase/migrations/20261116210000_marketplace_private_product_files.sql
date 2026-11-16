@@ -80,10 +80,20 @@ create policy marketplace_product_files_owner_update on storage.objects
   using (
     bucket_id = 'marketplace-products'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.creator_products p
+      where p.id::text = (storage.foldername(name))[2]
+        and p.owner_id = (select auth.uid())
+    )
   )
   with check (
     bucket_id = 'marketplace-products'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.creator_products p
+      where p.id::text = (storage.foldername(name))[2]
+        and p.owner_id = (select auth.uid())
+    )
   );
 
 drop policy if exists marketplace_product_files_owner_delete on storage.objects;
@@ -92,6 +102,11 @@ create policy marketplace_product_files_owner_delete on storage.objects
   using (
     bucket_id = 'marketplace-products'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.creator_products p
+      where p.id::text = (storage.foldername(name))[2]
+        and p.owner_id = (select auth.uid())
+    )
   );
 
 commit;
