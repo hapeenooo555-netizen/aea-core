@@ -305,10 +305,12 @@ def test_mismatched_payment_is_persistently_rejected_without_paying_order(pg):
     assert result["reason"] == "payment_mismatch"
 
     conn.execute("reset role")
-    assert conn.execute(
-        "select verification_status from public.payment_events where provider_event_id = %s",
+    rejected_event = conn.execute(
+        "select verification_status, processed_at from public.payment_events where provider_event_id = %s",
         (event_ref,),
-    ).fetchone()[0] == "rejected"
+    ).fetchone()
+    assert rejected_event[0] == "rejected"
+    assert rejected_event[1] is not None
     assert conn.execute(
         "select status from public.marketplace_orders where id = %s",
         (order_id,),
