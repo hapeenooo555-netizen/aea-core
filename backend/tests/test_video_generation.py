@@ -333,7 +333,7 @@ def test_final_assembly_queues_only_owner_completed_project(monkeypatch):
     }]
     response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
     assert response.status_code == 202
-    assert response.json()["status"] == "assembling"
+    assert response.json()["status"] == "queued"
     assert queued == [(project_id, "user-1")]
     assert db.tables["video_projects"][0]["status"] == "assembling"
 
