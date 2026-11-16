@@ -81,7 +81,7 @@ def test_transaction_enquiry_uses_standard_payments_id_endpoint():
                 "access_token": "token", "expires_in": 180, "token_type": "bearer"
             })
         assert request.method == "GET"
-        assert request.url.path == "/standard/v1/payments/aea%2Ftx%201"
+        assert request.url.raw_path == b"/standard/v1/payments/aea%2Ftx%201"
         assert request.headers["Authorization"] == "Bearer token"
         return httpx.Response(200, json={
             "data": {"transaction": {"id": "airtel-id", "status": "TS"}},
