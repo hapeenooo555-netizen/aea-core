@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 import hashlib
 import json
 import os
@@ -46,10 +46,8 @@ def create_checkout_session(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Create an order and, only when explicitly enabled, a hosted ClickPesa link."""
-    # Fail closed: Airtel must not silently create a ClickPesa checkout or
-    # pretend that a USSD collection has been initiated before wiring is complete.
-    if body.payment_provider == "airtel":
-        raise HTTPException(status_code=503, detail="Airtel checkout is not enabled yet; no collection was initiated.")
+    if body.payment_provider == "airtel" and os.getenv("AIRTEL_COLLECTION_ENABLED", "").strip().lower() != "true":
+        raise HTTPException(status_code=503, detail="Airtel collection is disabled; no payment request was sent.")
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database access is not configured.")
 
@@ -68,7 +66,7 @@ def create_checkout_session(
     except Exception as exc:
         raise HTTPException(status_code=409, detail="Checkout session could not be created.") from exc
 
-    if os.getenv("CLICKPESA_LIVE_ENABLED", "").strip().lower() != "true":
+    if body.payment_provider == "clickpesa" and os.getenv("CLICKPESA_LIVE_ENABLED", "").strip().lower() != "true":
         return {
             "success": True, "checkout": data, "payment_status": "pending",
             "checkout_url": None, "live_payment_enabled": False,
@@ -81,12 +79,38 @@ def create_checkout_session(
     order_id = str(data["order_id"])
     try:
         order_result = service.table("marketplace_orders").select(
-            "id,buyer_id,status,total_amount,currency,provider,provider_checkout_url"
+            "id,buyer_id,status,total_amount,currency,provider,provider_checkout_url,provider_checkout_id"
         ).eq("id", order_id).limit(1).execute()
         orders = getattr(order_result, "data", None) or []
         order = orders[0] if orders else None
         if not order or order.get("buyer_id") != buyer_id or order.get("status") != "pending":
             raise HTTPException(status_code=409, detail="Order is not eligible for payment.")
+        if body.payment_provider == "airtel":
+            if order.get("provider") == "airtel":
+                existing_transaction_id = order.get("provider_checkout_id")
+                if isinstance(existing_transaction_id, str) and existing_transaction_id:
+                    return {"success": True, "checkout": {**data, "provider": "airtel"}, "payment_status": "pending", "provider": "airtel", "provider_transaction_id": existing_transaction_id, "collection_initiated": "unknown", "live_payment_enabled": True, "message": "Existing Airtel transaction reused. No second USSD Push was sent; reconcile its status."}
+                raise HTTPException(status_code=409, detail="Airtel order has no saved transaction ID; manual review is required.")
+            if order.get("provider") != "test":
+                raise HTTPException(status_code=409, detail="Order is already assigned to another payment provider.")
+            transaction_id = str(uuid4())
+            claimed = service.table("marketplace_orders").update({"provider": "airtel", "provider_checkout_id": transaction_id}).eq("id", order_id).eq("buyer_id", buyer_id).eq("status", "pending").eq("provider", "test").is_("provider_checkout_id", "null").select("id").execute()
+            claimed_rows = getattr(claimed, "data", None) or []
+            if not claimed_rows:
+                latest_result = service.table("marketplace_orders").select("provider,provider_checkout_id,status").eq("id", order_id).limit(1).execute()
+                latest_rows = getattr(latest_result, "data", None) or []
+                latest = latest_rows[0] if latest_rows else {}
+                if latest.get("provider") == "airtel" and isinstance(latest.get("provider_checkout_id"), str):
+                    return {"success": True, "checkout": {**data, "provider": "airtel"}, "payment_status": "pending", "provider": "airtel", "provider_transaction_id": latest["provider_checkout_id"], "collection_initiated": "unknown", "live_payment_enabled": True, "message": "Concurrent Airtel checkout detected. Reuse the saved transaction; no second USSD Push was sent."}
+                raise HTTPException(status_code=409, detail="Checkout was claimed by another request or requires manual review.")
+            try:
+                with AirtelMoneyClient() as airtel:
+                    initiation = airtel.initiate_payment(msisdn=body.customer_phone, amount_tzs=int(order["total_amount"]), reference=order_id, transaction_id=transaction_id)
+            except (AirtelConfigurationError, AirtelAPIError, ValueError) as exc:
+                raise HTTPException(status_code=502, detail="Airtel request outcome is uncertain. Reconcile the saved transaction; do not retry collection.") from exc
+            provider_payload = initiation.get("provider_response") if isinstance(initiation, dict) else None
+            return {"success": True, "checkout": {**data, "provider": "airtel"}, "payment_status": "pending", "provider": "airtel", "provider_transaction_id": transaction_id, "provider_response_received": isinstance(provider_payload, dict), "collection_initiated": True, "live_payment_enabled": True, "message": "Airtel USSD Push request submitted. This is not payment confirmation; reconcile before granting access."}
+
         if order.get("provider") == "clickpesa":
             existing_url = order.get("provider_checkout_url")
             if isinstance(existing_url, str) and existing_url.startswith("https://"):
