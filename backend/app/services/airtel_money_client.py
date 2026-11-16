@@ -104,7 +104,7 @@ class AirtelMoneyClient:
     @staticmethod
     def _validate_msisdn(msisdn: str) -> str:
         # Airtel documentation explicitly says to omit the country code.
-        normalized = re.sub(r"[\\s-]", "", str(msisdn))
+        normalized = re.sub(r"[\s-]", "", str(msisdn))
         if normalized.startswith("+255"):
             normalized = normalized[4:]
         elif normalized.startswith("255"):
