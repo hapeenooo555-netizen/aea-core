@@ -64,7 +64,7 @@ def test_checkout_creates_pending_sandbox_order_and_uses_rpc():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "checkout-test-0001",
+            "idempotency_key": "checkout-test-0001",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
         })
         assert response.status_code == 201
         body = response.json()
@@ -90,7 +90,7 @@ def test_checkout_rejects_extra_client_supplied_buyer_id():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "checkout-test-0002",
+            "idempotency_key": "checkout-test-0002",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
             "buyer_id": "forged-buyer",
         })
         assert response.status_code == 422
@@ -103,7 +103,7 @@ def test_checkout_rejects_invalid_idempotency_key():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "short",
+            "idempotency_key": "short",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
         })
         assert response.status_code == 422
     finally:
@@ -115,7 +115,7 @@ def test_checkout_requires_user_scoped_database_client():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "checkout-test-0003",
+            "idempotency_key": "checkout-test-0003",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
         })
         assert response.status_code == 503
     finally:
@@ -128,7 +128,7 @@ def test_checkout_hides_database_exception_details():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "checkout-test-0004",
+            "idempotency_key": "checkout-test-0004",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
         })
         assert response.status_code == 409
         assert response.json()["detail"] == "Checkout session could not be created."
@@ -143,7 +143,7 @@ def test_checkout_requires_database_to_confirm_order_id():
     try:
         response = client.post("/commerce/checkout-sessions", json={
             "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
-            "idempotency_key": "checkout-test-0005",
+            "idempotency_key": "checkout-test-0005",\n            "customer_name": "Buyer",\n            "customer_email": "buyer@example.com",\n            "customer_phone": "+255700000000",
         })
         assert response.status_code == 502
     finally:
