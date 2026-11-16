@@ -9,7 +9,7 @@ import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_service_client
@@ -31,7 +31,7 @@ class CheckoutSessionRequest(BaseModel):
     product_id: UUID
     idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     customer_name: str = Field(min_length=2, max_length=120)
-    customer_email: EmailStr
+    customer_email: str = Field(min_length=5, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
     customer_phone: str = Field(min_length=9, max_length=20, pattern=r"^\+?[0-9]{9,20}$")
     model_config = ConfigDict(extra="forbid")
 
