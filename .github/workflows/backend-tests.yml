@@ -91,6 +91,9 @@ jobs:
       - name: Run Airtel Money collection adapter tests
         run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_client.py
 
+      - name: Run Airtel Money callback authentication tests
+        run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_webhooks.py
+
       - name: Run creator commerce and ClickPesa payment tests
         run: >-
           PYTHONPATH=backend python -m pytest -q
