@@ -24,8 +24,12 @@ drop policy if exists "owners read own video assembly jobs" on public.video_asse
 create policy "owners read own video assembly jobs"
   on public.video_assembly_jobs for select to authenticated
   using ((select auth.uid()) = owner_id);
+drop policy if exists "owners enqueue own video assembly jobs" on public.video_assembly_jobs;
+create policy "owners enqueue own video assembly jobs"
+  on public.video_assembly_jobs for insert to authenticated
+  with check ((select auth.uid()) = owner_id and status = 'queued' and attempts = 0);
 revoke all on public.video_assembly_jobs from anon, authenticated;
-grant select on public.video_assembly_jobs to authenticated;
+grant select, insert on public.video_assembly_jobs to authenticated;
 grant all on public.video_assembly_jobs to service_role;
 
 -- Claim a single job atomically. Expired worker leases are eligible for recovery.
