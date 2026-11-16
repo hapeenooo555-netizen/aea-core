@@ -302,3 +302,85 @@ def test_marketplace_download_fails_closed_when_storage_returns_non_https_url(mo
         assert "download_url" not in response.json()
     finally:
         _cleanup()
+
+
+class FakeUploadQuery:
+    def __init__(self, rows):
+        self.rows = rows
+        self.filters = []
+        self.payload = None
+    def select(self, *_args):
+        return self
+    def eq(self, key, value):
+        self.filters.append((key, value))
+        return self
+    def limit(self, *_args):
+        return self
+    def upsert(self, payload, **_kwargs):
+        self.payload = payload
+        return self
+    def execute(self):
+        if self.payload is not None:
+            return SimpleNamespace(data=[self.payload])
+        return SimpleNamespace(data=self.rows)
+
+
+class FakeUploadBucket:
+    def __init__(self):
+        self.uploads = []
+    def upload(self, path, body, file_options):
+        self.uploads.append((path, body, file_options))
+        return {"Key": path}
+
+
+class FakeUploadStorage:
+    def __init__(self, bucket):
+        self.bucket = bucket
+    def from_(self, name):
+        assert name == "marketplace-products"
+        return self.bucket
+
+
+class FakeCreatorClient:
+    def __init__(self):
+        self.product_query = FakeUploadQuery([{"id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0", "status": "draft"}])
+        self.file_query = FakeUploadQuery([])
+        self.bucket = FakeUploadBucket()
+        self.storage = FakeUploadStorage(self.bucket)
+    def table(self, name):
+        if name == "creator_products":
+            return self.product_query
+        if name == "marketplace_product_files":
+            return self.file_query
+        raise AssertionError(f"Unexpected table: {name}")
+
+
+def test_marketplace_upload_stores_private_file_and_metadata_for_owner():
+    db = FakeCreatorClient()
+    client = _client(user_id="creator-owner", db=db)
+    try:
+        payload = b"%PDF-1.7 test document"
+        response = client.put(
+            "/commerce/products/b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0/file",
+            content=payload,
+            headers={
+                "content-type": "application/pdf",
+                "content-length": str(len(payload)),
+                "x-file-name": "../private/guide.pdf",
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["success"] is True
+        assert body["delivery_enabled"] is True
+        assert body["file"]["file_name"] == "guide.pdf"
+        assert body["file"]["file_size_bytes"] == len(payload)
+        assert len(db.bucket.uploads) == 1
+        path, uploaded, options = db.bucket.uploads[0]
+        assert path.startswith("creator-owner/b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0/")
+        assert uploaded == payload
+        assert options["content-type"] == "application/pdf"
+        assert db.file_query.payload["storage_path"] == path
+        assert db.file_query.payload["owner_id"] == "creator-owner"
+    finally:
+        _cleanup()
