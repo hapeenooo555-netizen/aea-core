@@ -353,6 +353,13 @@ async def upload_marketplace_product_file(
     body = await request.body()
     if len(body) != declared_length or len(body) > _MARKETPLACE_FILE_MAX_BYTES:
         raise HTTPException(status_code=413, detail="Product file size does not match the declared size or exceeds 100 MB.")
+    # Reject obvious MIME spoofing before storing user-supplied bytes.
+    if content_type == "application/pdf" and not body.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="The uploaded file is not a valid PDF signature.")
+    if content_type == "video/mp4" and (len(body) < 12 or body[4:8] != b"ftyp"):
+        raise HTTPException(status_code=415, detail="The uploaded file is not a valid MP4 signature.")
+    if content_type == "application/epub+zip" and not body.startswith(b"PK\\x03\\x04"):
+        raise HTTPException(status_code=415, detail="The uploaded file is not a valid EPUB archive.")
     products = getattr(client.table("creator_products").select("id,status").eq(
         "id", str(product_id)
     ).eq("owner_id", owner_id).limit(1).execute(), "data", None) or []
@@ -363,6 +370,9 @@ async def upload_marketplace_product_file(
     from uuid import uuid4
     suffix = _MARKETPLACE_FILE_TYPES[content_type]
     storage_path = f"{owner_id}/{product_id}/{uuid4().hex}{suffix}"
+    raw_name = request.headers.get("x-file-name", "product" + suffix)
+    safe_name = "".join(ch for ch in raw_name.replace("\\\\", "/").split("/")[-1] if ch.isprintable())
+    safe_name = safe_name.strip()[:180] or ("product" + suffix)
     try:
         client.storage.from_(_MARKETPLACE_FILE_BUCKET).upload(
             storage_path, body,
@@ -374,7 +384,7 @@ async def upload_marketplace_product_file(
             "storage_path": storage_path,
             "content_type": content_type,
             "file_size_bytes": len(body),
-            "file_name": (request.headers.get("x-file-name", "product" + suffix)[:180]),
+            "file_name": safe_name,
         }, on_conflict="product_id").select("product_id,content_type,file_size_bytes,file_name").execute()
         rows = getattr(saved, "data", None) or []
         if not rows:
