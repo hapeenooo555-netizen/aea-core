@@ -39,10 +39,13 @@ def pg():
             end $$;
         """)
         conn.execute("drop schema if exists public cascade")
+        conn.execute("drop schema if exists auth cascade")
+        conn.execute("drop schema if exists storage cascade")
+        conn.execute("drop schema if exists storage cascade")
         conn.execute("create schema public")
         conn.execute("grant all on schema public to postgres")
         conn.execute("grant usage on schema public to anon, authenticated, service_role")
-        conn.execute("create schema if not exists storage")
+        conn.execute("create schema storage")
         conn.execute("grant usage on schema storage to authenticated, service_role")
         conn.execute("""
             create table storage.buckets (
@@ -66,6 +69,7 @@ def pg():
             as 'select case when position(''/'' in name) = 0 then array[]::text[]
                 else string_to_array(regexp_replace(name, ''/[^/]*$'', ''''), ''/'') end'
         """)
+        conn.execute("create schema auth")
         conn.execute("create table auth.users (id uuid primary key)")
         conn.execute("""
             create or replace function auth.uid() returns uuid
