@@ -319,3 +319,108 @@ async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
 
 
 __all__ = ["router"]
+
+
+# Marketplace files are private objects; only this endpoint issues buyer download URLs.
+_MARKETPLACE_FILE_BUCKET = "marketplace-products"
+_MARKETPLACE_FILE_MAX_BYTES = 100 * 1024 * 1024
+_MARKETPLACE_FILE_TYPES = {
+    "application/pdf": ".pdf",
+    "video/mp4": ".mp4",
+    "application/epub+zip": ".epub",
+}
+
+
+@router.put("/products/{product_id}/file")
+async def upload_marketplace_product_file(
+    product_id: UUID,
+    request: Request,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Upload/replace a creator's private product file; raw body, MIME allowlisted."""
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped storage access is not configured.")
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in _MARKETPLACE_FILE_TYPES:
+        raise HTTPException(status_code=415, detail="Only PDF, MP4, and EPUB product files are supported.")
+    try:
+        declared_length = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid content length.")
+    if declared_length < 1 or declared_length > _MARKETPLACE_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Product file must be between 1 byte and 100 MB.")
+    body = await request.body()
+    if len(body) != declared_length or len(body) > _MARKETPLACE_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Product file size does not match the declared size or exceeds 100 MB.")
+    products = getattr(client.table("creator_products").select("id,status").eq(
+        "id", str(product_id)
+    ).eq("owner_id", owner_id).limit(1).execute(), "data", None) or []
+    if not products:
+        raise HTTPException(status_code=404, detail="Product listing not found.")
+    if products[0].get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Archived products cannot receive file uploads.")
+    from uuid import uuid4
+    suffix = _MARKETPLACE_FILE_TYPES[content_type]
+    storage_path = f"{owner_id}/{product_id}/{uuid4().hex}{suffix}"
+    try:
+        client.storage.from_(_MARKETPLACE_FILE_BUCKET).upload(
+            storage_path, body,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+        saved = client.table("marketplace_product_files").upsert({
+            "product_id": str(product_id),
+            "owner_id": owner_id,
+            "storage_path": storage_path,
+            "content_type": content_type,
+            "file_size_bytes": len(body),
+            "file_name": (request.headers.get("x-file-name", "product" + suffix)[:180]),
+        }, on_conflict="product_id").select("product_id,content_type,file_size_bytes,file_name").execute()
+        rows = getattr(saved, "data", None) or []
+        if not rows:
+            raise RuntimeError("Product file metadata was not confirmed.")
+    except Exception as exc:
+        # A failed metadata write leaves an inaccessible private object, never a public file.
+        raise HTTPException(status_code=502, detail="Product file could not be safely attached to the listing.") from exc
+    return {"success": True, "file": rows[0], "delivery_enabled": True}
+
+
+@router.get("/orders/{order_id}/download")
+def download_marketplace_product(
+    order_id: UUID,
+    buyer_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Issue a short-lived URL only when the caller owns an active paid entitlement."""
+    service = get_supabase_service_client()
+    if service is None:
+        raise HTTPException(status_code=503, detail="Marketplace delivery is not configured.")
+    try:
+        entitlements = getattr(service.table("product_entitlements").select(
+            "id,product_id,status"
+        ).eq("order_id", str(order_id)).eq("buyer_id", buyer_id).eq(
+            "status", "active"
+        ).limit(1).execute(), "data", None) or []
+        if not entitlements:
+            raise HTTPException(status_code=404, detail="Paid product entitlement not found.")
+        files = getattr(service.table("marketplace_product_files").select(
+            "storage_path,content_type,file_name"
+        ).eq("product_id", entitlements[0]["product_id"]).limit(1).execute(), "data", None) or []
+        if not files:
+            raise HTTPException(status_code=404, detail="Product file is not available yet.")
+        signed = service.storage.from_(_MARKETPLACE_FILE_BUCKET).create_signed_url(
+            files[0]["storage_path"], 60
+        )
+        url = signed.get("signedURL") or signed.get("signedUrl")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise RuntimeError("Storage did not return a valid signed URL.")
+        return {
+            "success": True,
+            "download_url": url,
+            "file_name": files[0]["file_name"],
+            "content_type": files[0]["content_type"],
+            "expires_in_seconds": 60,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A secure product download link could not be created.") from exc
