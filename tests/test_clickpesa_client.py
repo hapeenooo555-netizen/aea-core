@@ -53,6 +53,7 @@ def test_clickpesa_generates_hosted_checkout_link():
     assert payload["totalPrice"] == "25000"
     assert payload["orderCurrency"] == "TZS"
     assert payload["orderReference"] == "AEA-ORDER-001"
+    assert payload["customerPhone"] == "255700000000"
     assert calls[1].headers["Authorization"] == "Bearer test-token"
 
 
