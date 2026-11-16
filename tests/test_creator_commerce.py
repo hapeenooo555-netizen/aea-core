@@ -244,7 +244,12 @@ class FakeServiceClient:
         self.tables = []
     def table(self, name):
         self.tables.append(name)
-        data = self.entitlements if name == "product_entitlements" else self.files
+        if name == "product_entitlements":
+            data = self.entitlements
+        elif name == "marketplace_orders":
+            data = [{"id": "c5b8f82a-8b37-4c78-98b8-6a41a0d9cc01", "status": "paid", "buyer_id": "paid-buyer"}]
+        else:
+            data = self.files
         return FakeSelectQuery(data)
     class _Storage:
         def __init__(self, bucket):
@@ -264,6 +269,7 @@ def test_marketplace_download_denies_buyer_without_active_entitlement(monkeypatc
         response = client.get("/commerce/orders/c5b8f82a-8b37-4c78-98b8-6a41a0d9cc01/download")
         assert response.status_code == 404
         assert service.bucket.calls == []
+        assert "product_entitlements" not in service.tables
         assert "marketplace_product_files" not in service.tables
     finally:
         _cleanup()
@@ -382,5 +388,30 @@ def test_marketplace_upload_stores_private_file_and_metadata_for_owner():
         assert options["content-type"] == "application/pdf"
         assert db.file_query.payload["storage_path"] == path
         assert db.file_query.payload["owner_id"] == "creator-owner"
+    finally:
+        _cleanup()
+
+
+def test_marketplace_download_denies_entitlement_when_order_not_paid(monkeypatch):
+    service = FakeServiceClient(
+        entitlements=[{"id": "ent-1", "product_id": "product-1", "status": "active"}],
+        files=[{"storage_path": "seller/product-1/file.pdf", "content_type": "application/pdf", "file_name": "guide.pdf"}],
+    )
+    class UnpaidService(FakeServiceClient):
+        def table(self, name):
+            self.tables.append(name)
+            if name == "marketplace_orders":
+                return FakeSelectQuery([])
+            if name == "product_entitlements":
+                return FakeSelectQuery(self.entitlements)
+            return FakeSelectQuery(self.files)
+    service = UnpaidService(entitlements=service.entitlements, files=service.files)
+    monkeypatch.setattr(commerce_router, "get_supabase_service_client", lambda: service)
+    client = _client(user_id="paid-buyer")
+    try:
+        response = client.get("/commerce/orders/c5b8f82a-8b37-4c78-98b8-6a41a0d9cc01/download")
+        assert response.status_code == 404
+        assert service.bucket.calls == []
+        assert "product_entitlements" not in service.tables
     finally:
         _cleanup()
