@@ -35,7 +35,7 @@ class ModelSpec:
 
 
 DEFAULT_CATALOG = [
-    {"provider":"runway","model_id":"gen4.5","display_name":"Runway Gen-4.5","capabilities":["text_to_video","image_to_video","cinematic_storytelling"],"quality_tier":"premium","cost_per_unit":0.12,"cost_unit":"second","enabled":True,"adapter":"runway"},
+    {"provider":"runway","model_id":"gen4.5","display_name":"Runway Gen-4.5","capabilities":["text_to_video","image_to_video","cinematic_storytelling"],"quality_tier":"premium","cost_per_unit":0.12,"cost_unit":"second","enabled":False,"adapter":None},
     {"provider":"pika","model_id":"h3-flex","display_name":"Pika H3 Flex","capabilities":["text_to_video","image_to_video","audio_video","social_video"],"quality_tier":"premium","cost_per_unit":None,"cost_unit":"second","enabled":False,"adapter":None},
     {"provider":"xai","model_id":"grok-imagine-video-lite","display_name":"Grok Imagine Lite","capabilities":["text_to_video","image_to_video","social_video"],"quality_tier":"economy","cost_per_unit":0.02,"cost_unit":"second","enabled":False,"adapter":None},
     {"provider":"wan","model_id":"wan-open-weight","display_name":"Wan open-weight family","capabilities":["text_to_video","image_to_video","self_hosted"],"quality_tier":"configurable","cost_per_unit":None,"cost_unit":"second","enabled":False,"adapter":None},
