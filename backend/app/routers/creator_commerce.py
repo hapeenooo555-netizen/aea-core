@@ -191,7 +191,7 @@ def reconcile_marketplace_order(
     order_id: UUID,
     buyer_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
-    """Query ClickPesa and finalize only a unique, exact successful payment."""
+    """Reconcile a provider transaction; fulfil only after authoritative verification."""
     service = get_supabase_service_client()
     if service is None:
         raise HTTPException(status_code=503, detail="Payment reconciliation is not configured.")
@@ -218,24 +218,16 @@ def reconcile_marketplace_order(
                 with AirtelMoneyClient() as airtel:
                     enquiry = airtel.transaction_enquiry(transaction_id)
                 classified = classify_transaction_enquiry(enquiry, transaction_id)
-            except (AirtelConfigurationError, AirtelAPIError, AirtelReconciliationError) as exc:
+            except (AirtelConfigurationError, AirtelAPIError, AirtelReconciliationError, ValueError) as exc:
                 raise HTTPException(status_code=502, detail="Airtel transaction status could not be safely verified.") from exc
-            state = classified["payment_state"]
-            if state == "failed":
-                return {"success": True, "payment_status": "failed", "provider_status": classified["status_code"], "entitlement_granted": False}
-            if state == "expired":
-                return {"success": True, "payment_status": "expired", "provider_status": classified["status_code"], "entitlement_granted": False}
-            if state == "pending":
-                return {"success": True, "payment_status": "pending", "provider_status": classified["status_code"], "entitlement_granted": False}
-            if state == "ambiguous":
-                return {"success": True, "payment_status": "pending_review", "provider_status": classified["status_code"], "entitlement_granted": False}
             return {
-                "success": True, "payment_status": "pending_verification",
+                "success": True,
+                "payment_status": "pending_verification",
                 "provider_status": classified["status_code"],
                 "provider_transaction_id": classified["transaction_id"],
                 "airtel_money_id": classified["airtel_money_id"] or None,
                 "entitlement_granted": False,
-                "message": "Airtel reports success; amount, currency and order reference still require authoritative verification.",
+                "message": "Airtel status mapping and authoritative amount/currency fields are not yet verified; no entitlement was granted.",
             }
 
         if order.get("provider") != "clickpesa":
