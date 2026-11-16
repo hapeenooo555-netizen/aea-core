@@ -13,7 +13,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_service_client
-from app.services.clickpesa_reconciliation import (\n    PaymentReconciliationError,\n    select_verified_success,\n)\nfrom app.services.clickpesa_client import (
+from app.services.clickpesa_reconciliation import (
+    PaymentReconciliationError,
+    select_verified_success,
+)
+from app.services.clickpesa_client import (
     ClickPesaAPIError,
     ClickPesaClient,
     ClickPesaConfigurationError,
