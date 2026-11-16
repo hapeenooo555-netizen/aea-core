@@ -58,9 +58,10 @@ begin
      or v_event.event_type <> 'PAYMENT RECEIVED'
      or v_event.verification_status = 'rejected' then
     update public.payment_events
-       set verification_status = 'rejected'
+       set verification_status = 'rejected', processed_at = now()
      where id = v_event.id and verification_status <> 'verified';
-    raise exception 'Payment does not match order' using errcode = '22023';
+    return jsonb_build_object('confirmed', false, 'reason', 'payment_mismatch',
+                              'order_id', p_order_id, 'status', v_order.status);
   end if;
 
   if v_order.status = 'paid' then
@@ -73,9 +74,11 @@ begin
   end if;
 
   if v_order.status <> 'pending' or (v_order.expires_at is not null and v_order.expires_at < now()) then
-    update public.payment_events set verification_status = 'rejected'
-      where id = v_event.id;
-    raise exception 'Order is not payable' using errcode = '22023';
+    update public.payment_events
+       set verification_status = 'rejected', processed_at = now()
+     where id = v_event.id;
+    return jsonb_build_object('confirmed', false, 'reason', 'order_not_payable',
+                              'order_id', p_order_id, 'status', v_order.status);
   end if;
 
   update public.marketplace_orders
