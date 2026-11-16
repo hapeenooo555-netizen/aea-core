@@ -166,3 +166,47 @@ def test_checkout_requires_database_to_confirm_order_id():
         assert response.status_code == 502
     finally:
         _cleanup()
+
+
+def test_marketplace_upload_rejects_mime_spoofed_pdf_before_database_access():
+    db = FakeSupabaseClient(data=[])
+    client = _client(user_id="creator-owner", db=db)
+    try:
+        response = client.put(
+            "/commerce/products/b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0/file",
+            content=b"not a pdf",
+            headers={"content-type": "application/pdf", "content-length": "9"},
+        )
+        assert response.status_code == 415
+        assert "valid PDF signature" in response.json()["detail"]
+        assert db.calls == []
+    finally:
+        _cleanup()
+
+
+def test_marketplace_upload_rejects_unsupported_mime_type():
+    db = FakeSupabaseClient(data=[])
+    client = _client(user_id="creator-owner", db=db)
+    try:
+        response = client.put(
+            "/commerce/products/b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0/file",
+            content=b"binary",
+            headers={"content-type": "application/octet-stream", "content-length": "6"},
+        )
+        assert response.status_code == 415
+        assert db.calls == []
+    finally:
+        _cleanup()
+
+
+def test_marketplace_upload_requires_user_scoped_storage_client():
+    client = _client(user_id="creator-owner", db=None)
+    try:
+        response = client.put(
+            "/commerce/products/b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0/file",
+            content=b"%PDF-1.7",
+            headers={"content-type": "application/pdf", "content-length": "8"},
+        )
+        assert response.status_code == 503
+    finally:
+        _cleanup()
