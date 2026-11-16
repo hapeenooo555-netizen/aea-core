@@ -88,7 +88,10 @@ jobs:
       - name: Run PostgreSQL creator commerce migration and RLS integration tests
         run: python -m pytest -q tests/test_creator_commerce_postgres.py
 
-      - name: Run Airtel Money collection adapter tests\n        run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_client.py\n\n      - name: Run creator commerce and ClickPesa payment tests
+      - name: Run Airtel Money collection adapter tests
+        run: PYTHONPATH=backend python -m pytest -q tests/test_airtel_money_client.py
+
+      - name: Run creator commerce and ClickPesa payment tests
         run: >-
           PYTHONPATH=backend python -m pytest -q
           tests/test_creator_commerce.py
