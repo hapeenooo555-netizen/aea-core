@@ -371,7 +371,7 @@ async def upload_marketplace_product_file(
     suffix = _MARKETPLACE_FILE_TYPES[content_type]
     storage_path = f"{owner_id}/{product_id}/{uuid4().hex}{suffix}"
     raw_name = request.headers.get("x-file-name", "product" + suffix)
-    safe_name = "".join(ch for ch in raw_name.replace("\\\\", "/").split("/")[-1] if ch.isprintable())
+    safe_name = "".join(ch for ch in raw_name.replace("\\", "/").split("/")[-1] if ch.isprintable())
     safe_name = safe_name.strip()[:180] or ("product" + suffix)
     try:
         client.storage.from_(_MARKETPLACE_FILE_BUCKET).upload(
