@@ -176,22 +176,41 @@ begin
         raise exception 'Product price is not supported' using errcode = '22023';
     end if;
 
-    select * into v_existing
-    from public.marketplace_orders
-    where buyer_id = v_buyer and idempotency_key = v_key;
-    if found then
-        return jsonb_build_object('order_id', v_existing.id, 'status', v_existing.status,
-            'total_amount', v_existing.total_amount, 'currency', v_existing.currency,
-            'provider', v_existing.provider, 'reused', true);
-    end if;
-
+    -- The unique constraint is the concurrency boundary. If another request
+    -- inserts the same buyer/key first, ON CONFLICT waits and returns no row;
+    -- we then read and validate the winner rather than leaking a unique error.
     insert into public.marketplace_orders (
         buyer_id, seller_id, status, currency, subtotal_amount, discount_amount,
         total_amount, provider, idempotency_key, expires_at
     ) values (
         v_buyer, v_product.owner_id, 'pending', 'TZS', v_product.price_amount, 0,
         v_product.price_amount, 'test', v_key, now() + interval '30 minutes'
-    ) returning * into v_order;
+    )
+    on conflict (buyer_id, idempotency_key) do nothing
+    returning * into v_order;
+
+    if not found then
+        select * into v_existing
+        from public.marketplace_orders
+        where buyer_id = v_buyer and idempotency_key = v_key
+        for update;
+
+        if not found then
+            raise exception 'Checkout could not be safely reused' using errcode = '40001';
+        end if;
+
+        if not exists (
+            select 1 from public.marketplace_order_items oi
+            where oi.order_id = v_existing.id and oi.product_id = v_product.id
+        ) then
+            raise exception 'Idempotency key already belongs to another product'
+                using errcode = '22023';
+        end if;
+
+        return jsonb_build_object('order_id', v_existing.id, 'status', v_existing.status,
+            'total_amount', v_existing.total_amount, 'currency', v_existing.currency,
+            'provider', v_existing.provider, 'reused', true);
+    end if;
 
     insert into public.marketplace_order_items (
         order_id, product_id, product_title, product_description, product_type,
