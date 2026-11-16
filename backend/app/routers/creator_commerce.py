@@ -1,10 +1,7 @@
-"""Authenticated checkout-session creation for the creator marketplace.
-
-This endpoint creates a pending sandbox order only. It does not collect money,
-call ClickPesa, confirm payment, or grant a download entitlement.
-"""
+"""Authenticated creator-marketplace checkout and payment notifications."""
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 import hashlib
@@ -12,10 +9,15 @@ import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_service_client
+from app.services.clickpesa_client import (
+    ClickPesaAPIError,
+    ClickPesaClient,
+    ClickPesaConfigurationError,
+)
 from app.services.clickpesa_webhooks import verify_payload_checksum
 
 router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
@@ -24,6 +26,9 @@ router = APIRouter(prefix="/commerce", tags=["creator-commerce"])
 class CheckoutSessionRequest(BaseModel):
     product_id: UUID
     idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    customer_name: str = Field(min_length=2, max_length=120)
+    customer_email: EmailStr
+    customer_phone: str = Field(min_length=9, max_length=20, pattern=r"^\+?[0-9]{9,20}$")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -33,42 +38,84 @@ def create_checkout_session(
     buyer_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Create an idempotent pending sandbox order for a listed product."""
+    """Create an order and, only when explicitly enabled, a hosted ClickPesa link."""
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database access is not configured.")
 
     try:
         result = client.rpc(
             "create_marketplace_checkout",
-            {
-                "p_product_id": str(body.product_id),
-                "p_idempotency_key": body.idempotency_key,
-            },
+            {"p_product_id": str(body.product_id), "p_idempotency_key": body.idempotency_key},
         ).execute()
         data = getattr(result, "data", None)
         if isinstance(data, list):
             data = data[0] if data else None
         if not isinstance(data, dict) or not data.get("order_id"):
             raise HTTPException(status_code=502, detail="Checkout order was not confirmed by the database.")
-        # The buyer identity is derived from the verified JWT; never trust a browser-supplied buyer ID.
-        return {
-            "success": True,
-            "checkout": data,
-            "payment_status": "pending",
-            "checkout_url": None,
-            "live_payment_enabled": False,
-            "message": "Sandbox order created. No payment has been collected and no download is available.",
-        }
     except HTTPException:
         raise
     except Exception as exc:
-        # Avoid returning database/provider internals to the browser.
         raise HTTPException(status_code=409, detail="Checkout session could not be created.") from exc
+
+    if os.getenv("CLICKPESA_LIVE_ENABLED", "").strip().lower() != "true":
+        return {
+            "success": True, "checkout": data, "payment_status": "pending",
+            "checkout_url": None, "live_payment_enabled": False,
+            "message": "Sandbox order created. No payment has been collected and no download is available.",
+        }
+
+    service = get_supabase_service_client()
+    if service is None:
+        raise HTTPException(status_code=503, detail="Payment checkout is not configured.")
+    order_id = str(data["order_id"])
+    try:
+        order_result = service.table("marketplace_orders").select(
+            "id,buyer_id,status,total_amount,currency,provider"
+        ).eq("id", order_id).limit(1).execute()
+        orders = getattr(order_result, "data", None) or []
+        order = orders[0] if orders else None
+        if not order or order.get("buyer_id") != buyer_id or order.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="Order is not eligible for payment.")
+        item_result = service.table("marketplace_order_items").select(
+            "product_title"
+        ).eq("order_id", order_id).limit(1).execute()
+        items = getattr(item_result, "data", None) or []
+        title = str(items[0].get("product_title", "AEA Marketplace product")) if items else "AEA Marketplace product"
+
+        provider = ClickPesaClient()
+        callback_url = os.getenv("CLICKPESA_CALLBACK_URL", "").strip() or None
+        checkout_url = provider.generate_checkout_link(
+            amount_tzs=int(order["total_amount"]),
+            order_reference=order_id,
+            description=title,
+            customer_name=body.customer_name,
+            customer_email=str(body.customer_email),
+            customer_phone=body.customer_phone,
+            callback_url=callback_url,
+        )
+        service.table("marketplace_orders").update({
+            "provider": "clickpesa",
+            "provider_checkout_id": checkout_url,
+        }).eq("id", order_id).eq("status", "pending").execute()
+        return {
+            "success": True,
+            "checkout": {**data, "provider": "clickpesa"},
+            "payment_status": "pending",
+            "checkout_url": checkout_url,
+            "live_payment_enabled": True,
+            "message": "Hosted checkout created. The order remains pending until provider verification succeeds.",
+        }
+    except HTTPException:
+        raise
+    except (ClickPesaConfigurationError, ClickPesaAPIError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="ClickPesa checkout could not be created.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Checkout could not be safely finalized.") from exc
 
 
 @router.post("/webhooks/clickpesa", status_code=202)
 async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
-    """Verify and durably inbox ClickPesa events; never mark orders paid here."""
+    """Verify and inbox ClickPesa events; webhook alone never grants access."""
     raw = await request.body()
     if len(raw) > 64 * 1024:
         raise HTTPException(status_code=413, detail="Webhook payload too large.")
@@ -83,9 +130,17 @@ async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
     if not checksum_secret or not verify_payload_checksum(checksum_secret, payload):
         raise HTTPException(status_code=401, detail="Invalid ClickPesa webhook checksum.")
 
-    event_type = payload.get("event") or payload.get("eventType")
     data = payload.get("data")
-    if event_type not in {"PAYMENT RECEIVED", "PAYMENT FAILED"} or not isinstance(data, dict):
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Invalid ClickPesa event data.")
+    status_value = str(data.get("status", "")).strip().upper()
+    event_type = payload.get("event") or payload.get("eventType")
+    if event_type not in {"PAYMENT RECEIVED", "PAYMENT FAILED"}:
+        # Some ClickPesa callback configurations send status in data rather than event.
+        event_type = "PAYMENT RECEIVED" if status_value == "SUCCESS" else (
+            "PAYMENT FAILED" if status_value in {"FAILED", "CANCELED"} else None
+        )
+    if event_type not in {"PAYMENT RECEIVED", "PAYMENT FAILED"}:
         raise HTTPException(status_code=400, detail="Unsupported ClickPesa event.")
 
     try:
@@ -97,54 +152,41 @@ async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
     if not isinstance(provider_event_id, str) or not provider_event_id.strip():
         raise HTTPException(status_code=400, detail="Missing provider payment reference.")
 
-    amount_raw = data.get("collectedAmount")
     amount = None
+    amount_raw = data.get("collectedAmount")
     if amount_raw is not None:
         try:
-            from decimal import Decimal, InvalidOperation
             parsed = Decimal(str(amount_raw))
             if not parsed.is_finite() or parsed < 0 or parsed != parsed.to_integral_value():
                 raise ValueError
             amount = int(parsed)
         except (InvalidOperation, ValueError):
             raise HTTPException(status_code=400, detail="Invalid collected amount.")
-
     currency = data.get("collectedCurrency")
     if currency is not None and not isinstance(currency, str):
         raise HTTPException(status_code=400, detail="Invalid collected currency.")
 
-    client = get_supabase_service_client()
-    if client is None:
+    service = get_supabase_service_client()
+    if service is None:
         raise HTTPException(status_code=503, detail="Payment event storage is not configured.")
-
-    digest = hashlib.sha256(raw).hexdigest()
     row = {
-        "order_id": str(order_id),
-        "provider": "clickpesa",
-        "provider_event_id": provider_event_id.strip(),
-        "event_type": event_type,
-        "verification_status": "received",
-        "amount": amount,
-        "currency": currency,
-        "payload_sha256": digest,
+        "order_id": str(order_id), "provider": "clickpesa",
+        "provider_event_id": provider_event_id.strip(), "event_type": event_type,
+        "verification_status": "received", "amount": amount, "currency": currency,
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
     }
     try:
-        result = client.table("payment_events").upsert(
+        service.table("payment_events").upsert(
             row, on_conflict="provider,provider_event_id", ignore_duplicates=True
         ).execute()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Could not persist payment event.") from exc
 
-    # A valid checksum proves payload integrity, not settlement. A separate
-    # provider status query and exact order/amount/currency match are required.
     return {
-        "accepted": True,
-        "event_recorded": True,
-        "event_type": event_type,
+        "accepted": True, "event_recorded": True, "event_type": event_type,
         "payment_reference": provider_event_id.strip(),
         "payment_status": "pending_verification",
-        "order_status_changed": False,
-        "entitlement_granted": False,
+        "order_status_changed": False, "entitlement_granted": False,
     }
 
 
