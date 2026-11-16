@@ -450,3 +450,27 @@ def test_checkout_rejects_unknown_payment_provider():
         assert response.status_code == 422
     finally:
         _cleanup()
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (25000, 25000),
+    ("25000", 25000),
+    ("25000.00", 25000),
+])
+def test_airtel_amount_requires_positive_whole_tzs(value, expected):
+    assert commerce_router._airtel_amount_tzs(value) == expected
+
+
+@pytest.mark.parametrize("value", [
+    "25000.50",
+    "0",
+    "-100",
+    "NaN",
+    "Infinity",
+    None,
+    "not-an-amount",
+])
+def test_airtel_amount_rejects_fractional_nonpositive_or_invalid_values(value):
+    with pytest.raises(ValueError):
+        commerce_router._airtel_amount_tzs(value)
+
