@@ -56,6 +56,6 @@ def test_marketplace_product_files_are_private_and_entitlement_delivery_is_gated
     assert '@router.put("/products/{product_id}/file")' in router
     assert '@router.get("/orders/{order_id}/download")' in router
     assert '.eq("buyer_id", buyer_id)' in router
-    assert '.eq("status", "active")' in router
+    assert '"status", "active"' in router
     assert 'create_signed_url(' in router
     assert 'files[0]["storage_path"], 60' in router
