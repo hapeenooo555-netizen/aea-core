@@ -781,7 +781,7 @@ def get_scene_narration_audio_url(
     return {"success": True, "audio_url": url, "expires_in_seconds": 900}
 
 
-def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None:
+def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool:
     """Render completed scene clips and optional narration into one private MP4."""
     db = _db(client)
     temp_root: Path | None = None
@@ -790,7 +790,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
             "id,aspect_ratio"
         ).eq("id", project_id).eq("owner_id", owner_id).limit(1).execute())
         if not project_rows:
-            return
+            raise RuntimeError("Video project not found for the queued owner.")
         project = project_rows[0]
         scenes = _rows(db.table("video_project_scenes").select(
             "id,scene_number,duration_seconds,status,video_url,narration_audio_path"
@@ -856,6 +856,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
         }).eq("id", project_id).eq("owner_id", owner_id).select("id").execute()
         if not _rows(saved):
             raise RuntimeError("Final video was uploaded but project status could not be saved.")
+        return True
     except Exception as exc:
         try:
             db.table("video_projects").update({
@@ -864,6 +865,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> None
             }).eq("id", project_id).eq("owner_id", owner_id).execute()
         except Exception:
             pass
+        return False
     finally:
         if temp_root is not None:
             import shutil
