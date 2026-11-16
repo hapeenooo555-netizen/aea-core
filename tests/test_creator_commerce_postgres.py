@@ -62,9 +62,11 @@ def pg():
         conn.execute("grant select, insert, update, delete on storage.objects to authenticated, service_role")
         conn.execute("""
             create or replace function storage.foldername(name text) returns text[]
-            language sql immutable as $
-              select case when position('/' in name) = 0 then array[]::text[]
-                else string_to_array(regexp_replace(name, '/[^/]*        conn.execute("create table auth.users (id uuid primary key)")
+            language sql immutable
+            as 'select case when position(''/' ' in name) = 0 then array[]::text[]
+                else string_to_array(regexp_replace(name, ''/[^/]*$'', ''''), ''/'') end'
+        """)
+        conn.execute("create table auth.users (id uuid primary key)")
         conn.execute("""
             create or replace function auth.uid() returns uuid
             language sql stable
