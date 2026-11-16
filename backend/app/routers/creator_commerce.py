@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_service_client
-from app.services.clickpesa_client import (
+from app.services.clickpesa_reconciliation import (\n    PaymentReconciliationError,\n    select_verified_success,\n)\nfrom app.services.clickpesa_client import (
     ClickPesaAPIError,
     ClickPesaClient,
     ClickPesaConfigurationError,
@@ -112,6 +112,91 @@ def create_checkout_session(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Checkout could not be safely finalized.") from exc
 
+
+
+@router.post("/orders/{order_id}/reconcile")
+def reconcile_marketplace_order(
+    order_id: UUID,
+    buyer_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Query ClickPesa and finalize only a unique, exact successful payment."""
+    service = get_supabase_service_client()
+    if service is None:
+        raise HTTPException(status_code=503, detail="Payment reconciliation is not configured.")
+    try:
+        order_result = service.table("marketplace_orders").select(
+            "id,buyer_id,status,total_amount,currency,provider,expires_at"
+        ).eq("id", str(order_id)).limit(1).execute()
+        orders = getattr(order_result, "data", None) or []
+        order = orders[0] if orders else None
+        if not order or order.get("buyer_id") != buyer_id:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        if order.get("status") == "paid":
+            return {"success": True, "payment_status": "paid", "already_processed": True}
+        if order.get("status") != "pending" or order.get("provider") != "clickpesa":
+            raise HTTPException(status_code=409, detail="Order is not eligible for ClickPesa reconciliation.")
+
+        provider = ClickPesaClient()
+        payments = provider.query_payment(str(order_id))
+        verified = select_verified_success(
+            payments,
+            order_reference=str(order_id),
+            expected_amount=int(order["total_amount"]),
+            expected_currency=str(order["currency"]),
+        )
+        if verified is None:
+            return {
+                "success": True,
+                "payment_status": "pending",
+                "order_status_changed": False,
+                "entitlement_granted": False,
+            }
+
+        event_row = {
+            "order_id": str(order_id),
+            "provider": "clickpesa",
+            "provider_event_id": verified["provider_payment_reference"],
+            "event_type": "PAYMENT RECEIVED",
+            "verification_status": "received",
+            "amount": verified["amount"],
+            "currency": verified["currency"],
+            "payload_sha256": hashlib.sha256(
+                json.dumps(verified, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
+        service.table("payment_events").upsert(
+            event_row,
+            on_conflict="provider,provider_event_id",
+            ignore_duplicates=True,
+        ).execute()
+        confirmation = service.rpc(
+            "confirm_marketplace_payment",
+            {
+                "p_order_id": str(order_id),
+                "p_provider_event_id": verified["provider_payment_reference"],
+                "p_amount": verified["amount"],
+                "p_currency": verified["currency"],
+            },
+        ).execute()
+        result = getattr(confirmation, "data", None)
+        if isinstance(result, list):
+            result = result[0] if result else None
+        if not isinstance(result, dict) or result.get("confirmed") is not True:
+            raise HTTPException(status_code=502, detail="Payment confirmation was not completed.")
+        return {
+            "success": True,
+            "payment_status": "paid",
+            "order_status_changed": not bool(result.get("already_processed")),
+            "entitlements_granted": int(result.get("entitlements_granted", 0)),
+        }
+    except HTTPException:
+        raise
+    except (ClickPesaConfigurationError, ClickPesaAPIError) as exc:
+        raise HTTPException(status_code=502, detail="ClickPesa payment status could not be checked.") from exc
+    except PaymentReconciliationError as exc:
+        raise HTTPException(status_code=409, detail="Payment details require manual verification.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Payment reconciliation could not be completed.") from exc
 
 @router.post("/webhooks/clickpesa", status_code=202)
 async def receive_clickpesa_webhook(request: Request) -> dict[str, Any]:
