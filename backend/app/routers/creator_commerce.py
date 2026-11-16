@@ -74,12 +74,25 @@ def create_checkout_session(
     order_id = str(data["order_id"])
     try:
         order_result = service.table("marketplace_orders").select(
-            "id,buyer_id,status,total_amount,currency,provider"
+            "id,buyer_id,status,total_amount,currency,provider,provider_checkout_url"
         ).eq("id", order_id).limit(1).execute()
         orders = getattr(order_result, "data", None) or []
         order = orders[0] if orders else None
         if not order or order.get("buyer_id") != buyer_id or order.get("status") != "pending":
             raise HTTPException(status_code=409, detail="Order is not eligible for payment.")
+        if order.get("provider") == "clickpesa":
+            existing_url = order.get("provider_checkout_url")
+            if isinstance(existing_url, str) and existing_url.startswith("https://"):
+                return {
+                    "success": True, "checkout": {**data, "provider": "clickpesa"},
+                    "payment_status": "pending", "checkout_url": existing_url,
+                    "live_payment_enabled": True,
+                    "message": "Existing hosted checkout reused; no additional link was generated.",
+                }
+            raise HTTPException(status_code=409, detail="ClickPesa checkout is already initialized; manual review is required.")
+        if order.get("provider") != "test":
+            raise HTTPException(status_code=409, detail="Order has an unsupported payment provider state.")
+
         item_result = service.table("marketplace_order_items").select(
             "product_title"
         ).eq("order_id", order_id).limit(1).execute()
@@ -97,10 +110,27 @@ def create_checkout_session(
             customer_phone=body.customer_phone,
             callback_url=callback_url,
         )
-        service.table("marketplace_orders").update({
+        update_result = service.table("marketplace_orders").update({
             "provider": "clickpesa",
-            "provider_checkout_id": checkout_url,
-        }).eq("id", order_id).eq("status", "pending").execute()
+            "provider_checkout_url": checkout_url,
+        }).eq("id", order_id).eq("status", "pending").eq("provider", "test").execute()
+        updated_rows = getattr(update_result, "data", None) or []
+        if not updated_rows:
+            # A concurrent request may have initialized the provider first.
+            latest_result = service.table("marketplace_orders").select(
+                "provider,provider_checkout_url,status"
+            ).eq("id", order_id).limit(1).execute()
+            latest_rows = getattr(latest_result, "data", None) or []
+            latest = latest_rows[0] if latest_rows else {}
+            latest_url = latest.get("provider_checkout_url")
+            if latest.get("provider") == "clickpesa" and isinstance(latest_url, str) and latest_url.startswith("https://"):
+                return {
+                    "success": True, "checkout": {**data, "provider": "clickpesa"},
+                    "payment_status": "pending", "checkout_url": latest_url,
+                    "live_payment_enabled": True,
+                    "message": "Existing hosted checkout reused after concurrent initialization.",
+                }
+            raise HTTPException(status_code=409, detail="Checkout state changed; no payment link was returned.")
         return {
             "success": True,
             "checkout": {**data, "provider": "clickpesa"},
