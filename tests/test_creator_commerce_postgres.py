@@ -63,7 +63,7 @@ def pg():
         conn.execute("""
             create or replace function storage.foldername(name text) returns text[]
             language sql immutable
-            as 'select case when position(''/' ' in name) = 0 then array[]::text[]
+            as 'select case when position(''/'' in name) = 0 then array[]::text[]
                 else string_to_array(regexp_replace(name, ''/[^/]*$'', ''''), ''/'') end'
         """)
         conn.execute("create table auth.users (id uuid primary key)")
