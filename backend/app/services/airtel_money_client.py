@@ -51,13 +51,24 @@ class AirtelMoneyClient:
         self.clock = clock
         self._access_token: str | None = None
         self._token_expires_at = 0.0
+        # Reuse one HTTP client: a fresh client per request closes injected
+        # transports (including MockTransport) after the OAuth call.
+        self._http_client = httpx.Client(timeout=self.timeout, transport=self.transport)
+
+    def close(self) -> None:
+        self._http_client.close()
+
+    def __enter__(self) -> "AirtelMoneyClient":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
-            with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
-                response = client.request(method, self.base_url + path, **kwargs)
-                response.raise_for_status()
-                payload = response.json()
+            response = self._http_client.request(method, self.base_url + path, **kwargs)
+            response.raise_for_status()
+            payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise AirtelAPIError("Airtel API request failed.") from exc
         if not isinstance(payload, dict):
