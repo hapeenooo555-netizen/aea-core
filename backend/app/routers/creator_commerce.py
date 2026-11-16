@@ -358,7 +358,7 @@ async def upload_marketplace_product_file(
         raise HTTPException(status_code=415, detail="The uploaded file is not a valid PDF signature.")
     if content_type == "video/mp4" and (len(body) < 12 or body[4:8] != b"ftyp"):
         raise HTTPException(status_code=415, detail="The uploaded file is not a valid MP4 signature.")
-    if content_type == "application/epub+zip" and not body.startswith(b"PK\\x03\\x04"):
+    if content_type == "application/epub+zip" and not body.startswith(b"PK\x03\x04"):
         raise HTTPException(status_code=415, detail="The uploaded file is not a valid EPUB archive.")
     products = getattr(client.table("creator_products").select("id,status").eq(
         "id", str(product_id)
