@@ -306,7 +306,7 @@ def test_mismatched_payment_is_persistently_rejected_without_paying_order(pg):
 
     conn.execute("reset role")
     assert conn.execute(
-        "select status from public.payment_events where provider_event_id = %s",
+        "select verification_status from public.payment_events where provider_event_id = %s",
         (event_ref,),
     ).fetchone()[0] == "rejected"
     assert conn.execute(
