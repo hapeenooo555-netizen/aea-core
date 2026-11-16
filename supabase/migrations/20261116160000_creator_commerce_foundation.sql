@@ -99,6 +99,17 @@ alter table public.payment_events enable row level security;
 alter table public.product_entitlements enable row level security;
 alter table public.seller_ledger_entries enable row level security;
 
+
+-- Explicit least-privilege table grants; RLS remains the row-level boundary.
+revoke all on public.marketplace_orders, public.marketplace_order_items,
+  public.payment_events, public.product_entitlements, public.seller_ledger_entries
+  from anon, authenticated;
+grant select on public.marketplace_orders, public.marketplace_order_items,
+  public.product_entitlements, public.seller_ledger_entries to authenticated;
+grant all on public.marketplace_orders, public.marketplace_order_items,
+  public.payment_events, public.product_entitlements, public.seller_ledger_entries
+  to service_role;
+
 -- Buyers and sellers may read their own order. Mutations remain trusted-backend only.
 drop policy if exists marketplace_orders_select_participant on public.marketplace_orders;
 create policy marketplace_orders_select_participant on public.marketplace_orders
