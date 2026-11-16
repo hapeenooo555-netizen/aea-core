@@ -95,6 +95,26 @@ def get_supabase_service_client() -> Any:
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
 
+_video_worker_client: Any = None
+
+
+def get_supabase_video_worker_client() -> Any:
+    """Return a dedicated service-role client for the isolated video worker."""
+    global _video_worker_client
+    if _video_worker_client is not None:
+        return _video_worker_client
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+        _video_worker_client = create_client(url, service_role_key)
+        return _video_worker_client
+    except Exception:  # pragma: no cover - deployment configuration failure
+        return None
+
+
 _oauth_callback_client: Any = None
 
 
