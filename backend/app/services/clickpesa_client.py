@@ -6,6 +6,7 @@ orders paid; payment status must be reconciled against ClickPesa separately.
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 from typing import Any
 
 import httpx
@@ -109,7 +110,7 @@ class ClickPesaClient:
         token = self.generate_token()
         payload = self._request(
             "GET",
-            "/third-parties/payments/" + httpx.URL("https://placeholder/" + order_reference).path.rsplit("/", 1)[-1],
+            "/third-parties/payments/" + quote(order_reference, safe=""),
             headers={"Authorization": token},
         )
         if isinstance(payload, dict):
