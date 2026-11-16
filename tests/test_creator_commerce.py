@@ -415,3 +415,38 @@ def test_marketplace_download_denies_entitlement_when_order_not_paid(monkeypatch
         assert "product_entitlements" not in service.tables
     finally:
         _cleanup()
+
+
+def test_airtel_checkout_fails_closed_until_collection_flow_is_wired():
+    db = FakeSupabaseClient(data={})
+    client = _client(db=db)
+    try:
+        response = client.post("/commerce/checkout-sessions", json={
+            "payment_provider": "airtel",
+            "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
+            "idempotency_key": "checkout-airtel-0001",
+            "customer_name": "Buyer",
+            "customer_email": "buyer@example.com",
+            "customer_phone": "+255700000000",
+        })
+        assert response.status_code == 503
+        assert "not enabled yet" in response.json()["detail"]
+        assert db.calls == []
+    finally:
+        _cleanup()
+
+
+def test_checkout_rejects_unknown_payment_provider():
+    client = _client(db=FakeSupabaseClient(data={}))
+    try:
+        response = client.post("/commerce/checkout-sessions", json={
+            "payment_provider": "mixx",
+            "product_id": "b8b4e39e-20ac-46c1-a4fd-8b1a6d6bb6b0",
+            "idempotency_key": "checkout-provider-0001",
+            "customer_name": "Buyer",
+            "customer_email": "buyer@example.com",
+            "customer_phone": "+255700000000",
+        })
+        assert response.status_code == 422
+    finally:
+        _cleanup()
