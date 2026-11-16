@@ -55,7 +55,8 @@ begin
      or v_order.total_amount <> p_amount
      or v_event.amount <> p_amount
      or upper(coalesce(v_event.currency, '')) <> 'TZS'
-     or v_event.event_type <> 'PAYMENT RECEIVED' then
+     or v_event.event_type <> 'PAYMENT RECEIVED'
+     or v_event.verification_status = 'rejected' then
     update public.payment_events
        set verification_status = 'rejected'
      where id = v_event.id and verification_status <> 'verified';
