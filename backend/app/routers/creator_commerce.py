@@ -99,24 +99,13 @@ def create_checkout_session(
         items = getattr(item_result, "data", None) or []
         title = str(items[0].get("product_title", "AEA Marketplace product")) if items else "AEA Marketplace product"
 
-        provider = ClickPesaClient()
-        callback_url = os.getenv("CLICKPESA_CALLBACK_URL", "").strip() or None
-        checkout_url = provider.generate_checkout_link(
-            amount_tzs=int(order["total_amount"]),
-            order_reference=order_id,
-            description=title,
-            customer_name=body.customer_name,
-            customer_email=str(body.customer_email),
-            customer_phone=body.customer_phone,
-            callback_url=callback_url,
-        )
-        update_result = service.table("marketplace_orders").update({
+        # Claim the provider transition before the external API call. This prevents
+        # concurrent retries from creating multiple independently payable links.
+        claim_result = service.table("marketplace_orders").update({
             "provider": "clickpesa",
-            "provider_checkout_url": checkout_url,
         }).eq("id", order_id).eq("status", "pending").eq("provider", "test").select("id").execute()
-        updated_rows = getattr(update_result, "data", None) or []
-        if not updated_rows:
-            # A concurrent request may have initialized the provider first.
+        claimed_rows = getattr(claim_result, "data", None) or []
+        if not claimed_rows:
             latest_result = service.table("marketplace_orders").select(
                 "provider,provider_checkout_url,status"
             ).eq("id", order_id).limit(1).execute()
@@ -130,7 +119,25 @@ def create_checkout_session(
                     "live_payment_enabled": True,
                     "message": "Existing hosted checkout reused after concurrent initialization.",
                 }
-            raise HTTPException(status_code=409, detail="Checkout state changed; no payment link was returned.")
+            raise HTTPException(status_code=409, detail="Checkout initialization is already in progress or requires manual review.")
+
+        provider = ClickPesaClient()
+        callback_url = os.getenv("CLICKPESA_CALLBACK_URL", "").strip() or None
+        checkout_url = provider.generate_checkout_link(
+            amount_tzs=int(order["total_amount"]),
+            order_reference=order_id,
+            description=title,
+            customer_name=body.customer_name,
+            customer_email=str(body.customer_email),
+            customer_phone=body.customer_phone,
+            callback_url=callback_url,
+        )
+        save_result = service.table("marketplace_orders").update({
+            "provider_checkout_url": checkout_url,
+        }).eq("id", order_id).eq("status", "pending").eq("provider", "clickpesa").is_("provider_checkout_url", "null").select("id").execute()
+        saved_rows = getattr(save_result, "data", None) or []
+        if not saved_rows:
+            raise HTTPException(status_code=502, detail="Hosted checkout was created but could not be safely attached to the order; manual review is required.")
         return {
             "success": True,
             "checkout": {**data, "provider": "clickpesa"},
