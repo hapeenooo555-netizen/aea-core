@@ -168,10 +168,12 @@ def reconcile_marketplace_order(
                 json.dumps(verified, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest(),
         }
+        # The provider query is authoritative. Refresh a webhook-first inbox row
+        # (which may have omitted amount/currency) with the verified values.
         service.table("payment_events").upsert(
             event_row,
             on_conflict="provider,provider_event_id",
-            ignore_duplicates=True,
+            ignore_duplicates=False,
         ).execute()
         confirmation = service.rpc(
             "confirm_marketplace_payment",
