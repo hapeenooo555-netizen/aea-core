@@ -465,3 +465,43 @@ def test_checkout_is_idempotent_under_concurrent_requests_and_bound_to_product(p
                 "select public.create_marketplace_checkout(%s, %s)",
                 (other_product, key),
             )
+
+
+def test_marketplace_file_metadata_and_storage_objects_are_owner_scoped(pg):
+    conn, seller, buyer, outsider, product = pg
+    path = f"{seller}/{product}/private-product.pdf"
+    conn.execute(
+        """insert into public.marketplace_product_files
+           (product_id, owner_id, storage_path, content_type, file_size_bytes, file_name)
+           values (%s, %s, %s, 'application/pdf', 1024, 'product.pdf')""",
+        (product, seller, path),
+    )
+    conn.execute(
+        "insert into storage.objects(bucket_id, name) values ('marketplace-products', %s)",
+        (path,),
+    )
+
+    _as_user(conn, seller)
+    assert conn.execute(
+        "select count(*) from public.marketplace_product_files where product_id = %s",
+        (product,),
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "select count(*) from storage.objects where bucket_id = 'marketplace-products' and name = %s",
+        (path,),
+    ).fetchone()[0] == 1
+
+    _as_user(conn, buyer)
+    assert conn.execute(
+        "select count(*) from public.marketplace_product_files where product_id = %s",
+        (product,),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "select count(*) from storage.objects where bucket_id = 'marketplace-products' and name = %s",
+        (path,),
+    ).fetchone()[0] == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute(
+            "insert into storage.objects(bucket_id, name) values ('marketplace-products', %s)",
+            (path,),
+        )
