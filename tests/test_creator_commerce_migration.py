@@ -23,3 +23,18 @@ def test_payment_confirmation_migration_is_service_role_only_and_atomic():
     assert "verification_status = 'verified'" in lowered
     assert "status = 'paid'" in lowered
     assert "from public.payment_events" in lowered
+
+
+def test_checkout_idempotency_is_race_safe_and_bound_to_same_product():
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "supabase/migrations/20261116160000_creator_commerce_foundation.sql"
+    )
+    sql = migration.read_text().lower()
+
+    assert "on conflict (buyer_id, idempotency_key) do nothing" in sql
+    assert "if not found then" in sql
+    assert "for update" in sql
+    assert "oi.product_id = v_product.id" in sql
+    assert "idempotency key already belongs to another product" in sql
+    assert "unique (buyer_id, idempotency_key)" in sql
