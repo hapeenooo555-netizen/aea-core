@@ -147,7 +147,7 @@ create or replace function public.create_marketplace_checkout(
 language plpgsql
 security definer
 set search_path = public, auth, pg_temp
-as $
+as $$
 declare
     v_buyer uuid := auth.uid();
     v_product public.creator_products%rowtype;
@@ -205,7 +205,7 @@ begin
         'total_amount', v_order.total_amount, 'currency', v_order.currency,
         'provider', v_order.provider, 'reused', false);
 end;
-$;
+$$;
 
 revoke all on function public.create_marketplace_checkout(uuid, text) from public;
 grant execute on function public.create_marketplace_checkout(uuid, text) to authenticated;
