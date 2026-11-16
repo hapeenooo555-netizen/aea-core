@@ -405,6 +405,13 @@ def download_marketplace_product(
     if service is None:
         raise HTTPException(status_code=503, detail="Marketplace delivery is not configured.")
     try:
+        orders = getattr(service.table("marketplace_orders").select(
+            "id,status"
+        ).eq("id", str(order_id)).eq("buyer_id", buyer_id).eq(
+            "status", "paid"
+        ).limit(1).execute(), "data", None) or []
+        if not orders:
+            raise HTTPException(status_code=404, detail="Paid order not found.")
         entitlements = getattr(service.table("product_entitlements").select(
             "id,product_id,status"
         ).eq("order_id", str(order_id)).eq("buyer_id", buyer_id).eq(
