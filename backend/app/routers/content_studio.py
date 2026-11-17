@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
+from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -58,7 +59,16 @@ def _system_prompt() -> str:
         "If facts are uncertain, label them for human verification. Do not promise virality, views, likes or leads. "
         "Return ONLY valid JSON with keys: title, content_type, core_content, hooks (array of 3), "
         "caption, cta, hashtags (array), keywords (array), platform_variants (object), "
-        "creative_direction, research_notes, verification_needed (array), primary_objective. "
+        "creative_direction, research_notes, verification_needed (array), primary_objective, "
+        "shareability_angle, audience_trigger, hook_rationale, hashtag_strategy (object). "
+        "Build content for genuine shareability: a specific audience problem or desire, a strong truthful hook, "
+        "a useful payoff, and a natural reason to save, share or comment. Do not use clickbait or engagement bait. "
+        "Hashtags must be authentic and tightly relevant to the actual topic, product, audience, language and market. "
+        "Prefer a balanced mix of specific niche, audience/problem, brand/product and location hashtags where appropriate. "
+        "Avoid generic filler such as #viral, #fyp and #trending unless current evidence supplied in the brief proves relevance. "
+        "Never invent hashtag volume, ranking, trend velocity or popularity metrics. If no live trend research source is available, "
+        "state that trend status is unverified and present hashtags as relevance-based suggestions, not trending facts. "
+        "In hashtag_strategy include rationale, groups (niche, audience, brand, location), trend_status and data_limitations. "
         "Each platform variant should include format, caption and CTA when a platform is requested. "
         "For video, include script, scene_plan, voiceover and subtitle_text inside core_content. "
         "For ebooks/courses, include a table_of_contents and chapter_or_module_outline in core_content. "
@@ -214,7 +224,7 @@ def generate_studio_draft(
         "published": False,
         "provider": response.get("provider") or provider_name,
         "model": response.get("model"),
-        "draft": _enrich_draft_emojis(draft, brief),
+        "draft": _enrich_draft_emojis(_enrich_content_intelligence(draft, brief), brief),
     }
 
 
