@@ -12,6 +12,8 @@ from app.routers import content_studio
 class FakeProvider:
     def generate(self, prompt: str, system_prompt: str | None = None):
         assert "You are AEA Content Studio" in (system_prompt or "")
+        assert "fluent, natural, grammatically correct Tanzanian Kiswahili" in (system_prompt or "")
+        assert "Never invent product features" in (system_prompt or "")
         return {
             "success": True,
             "provider": "test",
