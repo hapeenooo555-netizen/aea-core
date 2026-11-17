@@ -9,7 +9,7 @@ from typing import Any
 
 _SOURCE_CATALOG: tuple[dict[str, Any], ...] = (
     {
-        "id": "tz_tc ra_statistics".replace(" ", ""),
+        "id": "tz_tcra_statistics",
         "name": "Tanzania Communications Regulatory Authority statistics",
         "publisher": "TCRA",
         "url": "https://www.tcra.go.tz/publications/statistics",
@@ -24,7 +24,7 @@ _SOURCE_CATALOG: tuple[dict[str, Any], ...] = (
         "id": "tz_nbs",
         "name": "National Bureau of Statistics Tanzania",
         "publisher": "NBS Tanzania",
-        "url": "https://www.nbs.go.tz/",
+        "url": "https://www.nbs.go.tz/index.php/portals",
         "market_scope": ["TZ"],
         "source_type": "official",
         "evidence_type": ["official_statistics", "household_and_business_surveys"],
