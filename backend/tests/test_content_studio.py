@@ -313,3 +313,16 @@ def test_studio_rejects_invalid_research_source_url(monkeypatch):
         },
     )
     assert response.status_code == 422
+
+
+def test_studio_accepts_tanzania_and_international_market_scope(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post("/content/studio/generate", json={
+        "prompt": "Create a market-aware guide for small business customer follow-up.",
+        "niche": "Business automation", "content_type": "article",
+        "market_scope": "tanzania_and_international", "target_countries": ["KE", "US"],
+    })
+    assert response.status_code == 200
+    scope = response.json()["draft"]["intelligence"]["geographic_scope"]
+    assert scope["tanzania"] is True and scope["international"] is True
+    assert scope["target_countries"] == ["KE", "US"]
