@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
+from app.services.market_research_sources import list_market_research_sources
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -185,6 +186,17 @@ def _response_row(response: Any) -> dict[str, Any] | None:
     if isinstance(data, list):
         return data[0] if data else None
     return data if isinstance(data, dict) else None
+
+
+@router.get("/research/sources")
+def get_research_source_catalog(
+    market_scope: Literal["tanzania_and_international", "tanzania_only", "international_only"] = "tanzania_and_international",
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """List research sources and access constraints for the selected markets."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return list_market_research_sources(market_scope)
 
 
 @router.post("/generate")
