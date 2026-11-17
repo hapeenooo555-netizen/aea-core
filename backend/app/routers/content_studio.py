@@ -17,6 +17,7 @@ from app.services.llm_provider import get_llm_provider
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
+from app.services.country_intelligence import build_country_revenue_plan, list_country_markets
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -194,6 +195,38 @@ def _response_row(response: Any) -> dict[str, Any] | None:
     if isinstance(data, list):
         return data[0] if data else None
     return data if isinstance(data, dict) else None
+
+
+class CountryRevenuePlanRequest(BaseModel):
+    country_codes: list[str] = Field(min_length=1, max_length=6)
+    offer: str = Field(min_length=3, max_length=500)
+    objective: Literal["leads", "sales", "traffic"] = "sales"
+    channel: str | None = Field(default=None, max_length=40)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/country-intelligence/markets")
+def get_country_intelligence_markets(
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Return configured launch markets and the content-to-revenue measurement funnel."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return list_country_markets()
+
+
+@router.post("/country-intelligence/plan")
+def create_country_revenue_plan(
+    body: CountryRevenuePlanRequest,
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Create country-specific campaign hypotheses; this does not claim validated demand."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return build_country_revenue_plan(body.country_codes, body.offer, body.objective, body.channel)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/research/sources")
