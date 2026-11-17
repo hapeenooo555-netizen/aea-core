@@ -173,6 +173,24 @@ def test_studio_generate_requires_authentication():
     assert response.status_code == 401
 
 
+def test_emoji_enrichment_adds_ai_emojis_to_platform_cta():
+    draft = {
+        "caption": "Rahisisha kazi zako",
+        "cta": "Anza kutumia AEA",
+        "hooks": ["Unatumia muda mwingi kwenye kazi za kawaida?"],
+        "platform_variants": {
+            "instagram": {"caption": "Fanya kazi kwa haraka", "cta": "Jaribu sasa"}
+        },
+    }
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "AI automation kwa biashara ndogo", "niche": "Teknolojia", "tone": "exciting"},
+    )
+    assert "🤖" in enriched["caption"] or "⚡" in enriched["caption"]
+    assert "🤖" in enriched["cta"] or "⚡" in enriched["cta"]
+    assert "🤖" in enriched["platform_variants"]["instagram"]["cta"] or "⚡" in enriched["platform_variants"]["instagram"]["cta"]
+
+
 def test_create_asset_persists_owner_scoped_version_one():
     db = FakeDatabase()
     app.dependency_overrides[get_user_scoped_client] = lambda: db
