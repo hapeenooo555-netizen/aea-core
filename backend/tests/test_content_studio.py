@@ -109,6 +109,37 @@ def test_studio_generate_returns_structured_unpublished_draft(monkeypatch):
     assert payload["published"] is False
     assert payload["draft"]["title"] == "AI for Small Business"
     assert len(payload["draft"]["hooks"]) == 3
+    assert any(emoji in payload["draft"]["caption"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
+    assert any(emoji in payload["draft"]["cta"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
+    assert all(any(emoji in hook for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨")) for hook in payload["draft"]["hooks"])
+
+
+def test_emoji_enrichment_matches_customer_sales_context():
+    draft = {
+        "caption": "Ongea nasi leo",
+        "cta": "Tuma ujumbe sasa",
+        "hooks": ["Unahitaji huduma nzuri?"],
+        "platform_variants": {
+            "facebook": {"caption": "Huduma bora kwa biashara yako", "cta": "Wasiliana nasi"}
+        },
+    }
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "Jibu wateja kupitia WhatsApp na ongeza mauzo", "niche": "Huduma kwa wateja", "tone": "friendly"},
+    )
+    assert "💬" in enriched["caption"] or "🤝" in enriched["caption"]
+    assert "💬" in enriched["hooks"][0] or "🤝" in enriched["hooks"][0]
+    assert "💬" in enriched["platform_variants"]["facebook"]["caption"] or "🤝" in enriched["platform_variants"]["facebook"]["caption"]
+
+
+def test_emoji_enrichment_respects_existing_emojis_and_professional_tone():
+    draft = {"caption": "Karibu dukani 🛍️", "cta": "Wasiliana nasi"}
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "Ofa ya punguzo kwa wateja", "niche": "Retail", "tone": "professional"},
+    )
+    assert enriched["caption"] == "Karibu dukani 🛍️"
+    assert enriched["cta"].endswith("🎁")
 
 
 def test_studio_generate_rejects_mock_provider(monkeypatch):
