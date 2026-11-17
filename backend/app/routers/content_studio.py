@@ -17,6 +17,8 @@ from app.services.llm_provider import get_llm_provider
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
+from app.services.country_intelligence import build_country_revenue_plan, list_country_markets
+from app.services.country_revenue_attribution import validate_revenue_event
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -194,6 +196,38 @@ def _response_row(response: Any) -> dict[str, Any] | None:
     if isinstance(data, list):
         return data[0] if data else None
     return data if isinstance(data, dict) else None
+
+
+class CountryRevenuePlanRequest(BaseModel):
+    country_codes: list[str] = Field(min_length=1, max_length=6)
+    offer: str = Field(min_length=3, max_length=500)
+    objective: Literal["leads", "sales", "traffic"] = "sales"
+    channel: str | None = Field(default=None, max_length=40)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/country-intelligence/markets")
+def get_country_intelligence_markets(
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Return configured launch markets and the content-to-revenue measurement funnel."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return list_country_markets()
+
+
+@router.post("/country-intelligence/plan")
+def create_country_revenue_plan(
+    body: CountryRevenuePlanRequest,
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Create country-specific campaign hypotheses; this does not claim validated demand."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return build_country_revenue_plan(body.country_codes, body.offer, body.objective, body.channel)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/research/sources")
@@ -402,3 +436,97 @@ def revise_studio_asset(
     if not row:
         raise HTTPException(status_code=502, detail="Database did not confirm the new draft version.")
     return {"success": True, "asset": row, "replayed": False}
+
+
+class CountryRevenueEventRequest(BaseModel):
+    idempotency_key: str = Field(min_length=16, max_length=128)
+    event_type: Literal[
+        "content_published", "impression_or_view", "tracked_click", "lead_captured",
+        "lead_qualified", "checkout_started_or_quote_requested", "purchase_confirmed", "payment_settled",
+    ]
+    country_code: str = Field(min_length=2, max_length=2)
+    currency: str = Field(min_length=3, max_length=3)
+    campaign_id: str = Field(min_length=1, max_length=120)
+    content_id: str | None = Field(default=None, max_length=120)
+    channel: str = Field(min_length=2, max_length=30)
+    occurred_at: str
+    amount_minor: int | None = Field(default=None, ge=0)
+    metadata: dict[str, str] = Field(default_factory=dict, max_length=5)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/country-intelligence/events", status_code=status.HTTP_201_CREATED)
+def record_country_revenue_event(
+    body: CountryRevenueEventRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Record one first-party revenue funnel event for the authenticated owner."""
+    db = _require_user_client(client)
+    try:
+        event = validate_revenue_event(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    existing = db.table("country_revenue_events").select("id,event_type,country_code,campaign_id").eq(
+        "owner_id", owner_id
+    ).eq("idempotency_key", event["idempotency_key"]).limit(1).execute()
+    existing_row = _response_row(existing)
+    if existing_row:
+        return {"success": True, "event": existing_row, "replayed": True}
+    payload = {"owner_id": owner_id, **event}
+    try:
+        saved = db.table("country_revenue_events").insert(payload).execute()
+    except Exception as exc:
+        replay = db.table("country_revenue_events").select("id,event_type,country_code,campaign_id").eq(
+            "owner_id", owner_id
+        ).eq("idempotency_key", event["idempotency_key"]).limit(1).execute()
+        replay_row = _response_row(replay)
+        if replay_row:
+            return {"success": True, "event": replay_row, "replayed": True}
+        raise HTTPException(status_code=409, detail="Revenue event could not be saved.") from exc
+    row = _response_row(saved)
+    if not row:
+        raise HTTPException(status_code=502, detail="Database did not confirm event persistence.")
+    return {"success": True, "event": row, "replayed": False}
+
+
+@router.get("/country-intelligence/performance")
+def get_country_revenue_performance(
+    country_code: str | None = Query(default=None, min_length=2, max_length=2),
+    campaign_id: str | None = Query(default=None, max_length=120),
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Aggregate first-party funnel events; monetary totals remain in native currency."""
+    db = _require_user_client(client)
+    query = db.table("country_revenue_events").select(
+        "event_type,country_code,currency,campaign_id,amount_minor,occurred_at"
+    ).eq("owner_id", owner_id)
+    if country_code:
+        query = query.eq("country_code", country_code.upper())
+    if campaign_id:
+        query = query.eq("campaign_id", campaign_id)
+    response = query.order("occurred_at", desc=True).limit(5000).execute()
+    rows = getattr(response, "data", None) or []
+    aggregates: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["country_code"], row["currency"], row["campaign_id"])
+        item = aggregates.setdefault(key, {
+            "country_code": key[0], "currency": key[1], "campaign_id": key[2],
+            "event_counts": {}, "confirmed_purchase_amount_minor": 0,
+            "settled_payment_amount_minor": 0,
+        })
+        event_type = row["event_type"]
+        item["event_counts"][event_type] = item["event_counts"].get(event_type, 0) + 1
+        amount = row.get("amount_minor") or 0
+        if event_type == "purchase_confirmed":
+            item["confirmed_purchase_amount_minor"] += amount
+        elif event_type == "payment_settled":
+            item["settled_payment_amount_minor"] += amount
+    return {
+        "success": True,
+        "aggregation": "first_party_events_only",
+        "truncated": len(rows) >= 5000,
+        "campaigns": list(aggregates.values()),
+        "notice": "Amounts are in minor units of each campaign's native currency; do not combine currencies without a dated FX conversion.",
+    }
