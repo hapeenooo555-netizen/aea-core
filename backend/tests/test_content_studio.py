@@ -109,6 +109,37 @@ def test_studio_generate_returns_structured_unpublished_draft(monkeypatch):
     assert payload["published"] is False
     assert payload["draft"]["title"] == "AI for Small Business"
     assert len(payload["draft"]["hooks"]) == 3
+    assert any(emoji in payload["draft"]["caption"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
+    assert any(emoji in payload["draft"]["cta"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
+    assert all(any(emoji in hook for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨")) for hook in payload["draft"]["hooks"])
+
+
+def test_emoji_enrichment_matches_customer_sales_context():
+    draft = {
+        "caption": "Ongea nasi leo",
+        "cta": "Tuma ujumbe sasa",
+        "hooks": ["Unahitaji huduma nzuri?"],
+        "platform_variants": {
+            "facebook": {"caption": "Huduma bora kwa biashara yako", "cta": "Wasiliana nasi"}
+        },
+    }
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "Jibu wateja kupitia WhatsApp na ongeza mauzo", "niche": "Huduma kwa wateja", "tone": "friendly"},
+    )
+    assert "💬" in enriched["caption"] or "🤝" in enriched["caption"]
+    assert "💬" in enriched["hooks"][0] or "🤝" in enriched["hooks"][0]
+    assert "💬" in enriched["platform_variants"]["facebook"]["caption"] or "🤝" in enriched["platform_variants"]["facebook"]["caption"]
+
+
+def test_emoji_enrichment_respects_existing_emojis_and_professional_tone():
+    draft = {"caption": "Karibu dukani 🛍️", "cta": "Wasiliana nasi"}
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "Ofa ya punguzo kwa wateja", "niche": "Retail", "tone": "professional"},
+    )
+    assert enriched["caption"] == "Karibu dukani 🛍️"
+    assert enriched["cta"].endswith("🎁")
 
 
 def test_studio_generate_rejects_mock_provider(monkeypatch):
@@ -140,6 +171,24 @@ def test_studio_generate_requires_authentication():
         },
     )
     assert response.status_code == 401
+
+
+def test_emoji_enrichment_adds_ai_emojis_to_platform_cta():
+    draft = {
+        "caption": "Rahisisha kazi zako",
+        "cta": "Anza kutumia AEA",
+        "hooks": ["Unatumia muda mwingi kwenye kazi za kawaida?"],
+        "platform_variants": {
+            "instagram": {"caption": "Fanya kazi kwa haraka", "cta": "Jaribu sasa"}
+        },
+    }
+    enriched = content_studio._enrich_draft_emojis(
+        draft,
+        {"prompt": "AI automation kwa biashara ndogo", "niche": "Teknolojia", "tone": "exciting"},
+    )
+    assert "🤖" in enriched["caption"] or "⚡" in enriched["caption"]
+    assert "🤖" in enriched["cta"] or "⚡" in enriched["cta"]
+    assert "🤖" in enriched["platform_variants"]["instagram"]["cta"] or "⚡" in enriched["platform_variants"]["instagram"]["cta"]
 
 
 def test_create_asset_persists_owner_scoped_version_one():
@@ -215,3 +264,115 @@ def test_revise_asset_requires_expected_current_version():
         "content": {"title": "Edited title"},
     })
     assert response.status_code == 409
+
+
+def test_studio_accepts_structured_research_sources_and_labels_them_unverified(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    client = TestClient(app)
+    response = client.post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "audience": "Small business owners",
+            "objective": "education",
+            "platforms": ["facebook"],
+            "research_sources": [{
+                "title": "Digital adoption survey",
+                "publisher": "Example Research Group",
+                "url": "https://example.org/research/digital-adoption",
+                "excerpt": "Respondents described barriers to adopting digital tools.",
+                "published_at": "2026-10-01",
+                "retrieved_at": "2026-11-18",
+                "source_type": "research",
+            }],
+        },
+    )
+    assert response.status_code == 200
+    intelligence = response.json()["draft"]["intelligence"]
+    assert intelligence["market_research"]["status"] == "user_sources_supplied_not_independently_verified"
+    assert intelligence["market_research"]["sources"][0]["publisher"] == "Example Research Group"
+    assert intelligence["opportunity_assessment"]["demand_status"] == "unknown"
+
+
+def test_studio_rejects_invalid_research_source_url(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "research_sources": [{
+                "title": "Bad source",
+                "publisher": "Unknown",
+                "url": "javascript:alert(1)",
+                "excerpt": "This is an example excerpt long enough for validation.",
+            }],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_studio_accepts_tanzania_and_international_market_scope(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post("/content/studio/generate", json={
+        "prompt": "Create a market-aware guide for small business customer follow-up.",
+        "niche": "Business automation", "content_type": "article",
+        "market_scope": "tanzania_and_international", "target_countries": ["KE", "US"],
+    })
+    assert response.status_code == 200
+    scope = response.json()["draft"]["intelligence"]["geographic_scope"]
+    assert scope["tanzania"] is True and scope["international"] is True
+    assert scope["target_countries"] == ["KE", "US"]
+
+
+def test_studio_rejects_http_research_source_url(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "research_sources": [{
+                "title": "Insecure source",
+                "publisher": "Example",
+                "url": "http://example.org/research",
+                "excerpt": "This excerpt is long enough for the source validation requirement.",
+            }],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_world_bank_endpoint_requires_authentication():
+    app.dependency_overrides.pop(get_current_user_id, None)
+    response = TestClient(app).get("/content/studio/research/world-bank?country_codes=TZ")
+    assert response.status_code == 401
+
+
+def test_world_bank_endpoint_returns_country_context(monkeypatch):
+    async def fake_fetch(countries, indicators):
+        return {
+            "provider": "world_bank_indicators_api",
+            "status": "retrieved",
+            "countries_requested": countries,
+            "indicators_requested": indicators,
+            "observations": [{"country_code": "TZ", "year": "2024", "value": 100}],
+            "errors": [],
+            "market_demand_assessment": "not_assessed",
+        }
+
+    monkeypatch.setattr(content_studio, "fetch_world_bank_indicators", fake_fetch)
+    app.dependency_overrides[get_current_user_id] = lambda: "owner-123"
+    try:
+        response = TestClient(app).get(
+            "/content/studio/research/world-bank?country_codes=TZ&indicators=population"
+        )
+        assert response.status_code == 200
+        assert response.json()["observations"][0]["country_code"] == "TZ"
+        assert response.json()["market_demand_assessment"] == "not_assessed"
+    finally:
+        app.dependency_overrides.pop(get_current_user_id, None)

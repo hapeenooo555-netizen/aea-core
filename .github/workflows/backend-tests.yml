@@ -57,6 +57,15 @@ jobs:
           tests/test_p1_7b_employee_slice.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
+      - name: Run AEA Content Studio tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_content_studio.py
+      - name: Run AEA market research connector tests
+        run: >-
+          PYTHONPATH=backend python -m pytest -q
+          backend/tests/test_content_intelligence.py
+          backend/tests/test_market_research_sources.py
+          backend/tests/test_world_bank_research.py
+
       - name: Run AEA video generation and durable worker tests
         run: >-
           PYTHONPATH=backend python -m pytest -q
