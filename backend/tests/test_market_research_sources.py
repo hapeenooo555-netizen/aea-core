@@ -9,6 +9,7 @@ def test_default_catalog_includes_tanzania_and_global_sources_without_claiming_l
     assert "tz_nbs" in ids
     assert "google_trends" in ids
     assert "meta_ad_library" in ids
+    assert "world_bank_indicators_api" in ids
     google = next(source for source in result["sources"] if source["id"] == "google_trends")
     assert google["live_api_available"] is False
     assert google["access_mode"] == "alpha_access_required"
@@ -21,7 +22,8 @@ def test_country_scope_filters_catalog():
     }
     international = list_market_research_sources("international_only")
     assert "tz_nbs" not in {source["id"] for source in international["sources"]}
-    assert "google_trends" in {source["id"] for source in international["sources"]}\n    assert "world_bank_indicators_api" in {source["id"] for source in international["sources"]}
+    assert "google_trends" in {source["id"] for source in international["sources"]}
+    assert "world_bank_indicators_api" in {source["id"] for source in international["sources"]}
 
 
 def test_unknown_scope_is_rejected():
