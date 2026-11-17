@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from app.services.country_intelligence import MARKETS
@@ -13,6 +14,7 @@ EVENT_TYPES = {
 }
 ALLOWED_CHANNELS = {"facebook", "instagram", "whatsapp", "youtube", "pinterest", "tiktok", "website", "email", "other"}
 ALLOWED_METADATA_KEYS = {"source", "provider_event_id", "landing_page", "experiment_variant", "notes_code"}
+METADATA_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/?&=%+\\-]{0,119}$")
 
 
 def validate_revenue_event(payload: dict[str, Any]) -> dict[str, Any]:
@@ -53,11 +55,11 @@ def validate_revenue_event(payload: dict[str, Any]) -> dict[str, Any]:
     if amount is not None and (not isinstance(amount, int) or isinstance(amount, bool) or amount < 0):
         raise ValueError("amount_minor must be a non-negative integer.")
     metadata = payload.get("metadata") or {}
-    if not isinstance(metadata, dict) or set(metadata) - ALLOWED_METADATA_KEYS:
-        raise ValueError("metadata contains unsupported keys; do not submit personal data.")
+    if not isinstance(metadata, dict) or len(metadata) > 5 or set(metadata) - ALLOWED_METADATA_KEYS:
+        raise ValueError("metadata contains too many or unsupported keys; do not submit personal data.")
     for value in metadata.values():
-        if not isinstance(value, str) or len(value) > 240:
-            raise ValueError("metadata values must be short strings.")
+        if not isinstance(value, str) or not METADATA_VALUE_PATTERN.fullmatch(value):
+            raise ValueError("metadata values must be short identifiers or URL-safe tokens, not free text or personal data.")
     if event_type not in {"purchase_confirmed", "payment_settled"} and amount is not None:
         raise ValueError("amount_minor is only valid for purchase or settled payment events.")
     if event_type == "payment_settled" and amount is None:
