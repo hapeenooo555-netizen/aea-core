@@ -28,3 +28,19 @@ def test_unknown_scope_is_rejected():
     import pytest
     with pytest.raises(ValueError):
         list_market_research_sources("everywhere")
+
+
+def test_content_studio_research_sources_endpoint_is_authenticated_and_filterable():
+    from fastapi.testclient import TestClient
+    from app.dependencies import get_current_user_id
+    from app.main import app
+
+    app.dependency_overrides[get_current_user_id] = lambda: "owner-123"
+    try:
+        response = TestClient(app).get("/content/studio/research/sources?market_scope=tanzania_and_international")
+        assert response.status_code == 200
+        assert response.json()["status"] == "source_directory_only_no_live_research_performed"
+        ids = {item["id"] for item in response.json()["sources"]}
+        assert "tz_nbs" in ids and "google_trends" in ids
+    finally:
+        app.dependency_overrides.clear()
