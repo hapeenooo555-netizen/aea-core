@@ -9,13 +9,14 @@ import json
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
+from app.services.world_bank_research import fetch_world_bank_indicators
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -197,6 +198,21 @@ def get_research_source_catalog(
     if not owner_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     return list_market_research_sources(market_scope)
+
+
+@router.get("/research/world-bank")
+async def get_world_bank_market_context(
+    country_codes: list[str] = Query(default=["TZ", "KE", "US"], max_length=5),
+    indicators: list[str] = Query(default=["population", "internet_users_pct"], max_length=3),
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Retrieve bounded official macro indicators for selected countries."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return await fetch_world_bank_indicators(country_codes, indicators)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/generate")
