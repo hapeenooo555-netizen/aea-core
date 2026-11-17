@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "feat/content-studio-emotion-aware-emojis"]
   push:
     branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/country-intelligence-content-to-revenue"]
   workflow_dispatch:
