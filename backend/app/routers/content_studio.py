@@ -33,6 +33,9 @@ class ResearchSourceInput(BaseModel):
     published_at: str | None = Field(default=None, max_length=40)
     retrieved_at: str | None = Field(default=None, max_length=40)
     source_type: Literal["official", "research", "news", "industry", "first_party", "other"] = "other"
+    country_code: str | None = Field(default=None, min_length=2, max_length=3)
+    market_region: str | None = Field(default=None, max_length=120)
+    language: str | None = Field(default=None, max_length=40)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -45,6 +48,8 @@ class StudioGenerateRequest(BaseModel):
     language: str = Field(default="English", min_length=2, max_length=40)
     tone: str = Field(default="helpful", min_length=2, max_length=80)
     platforms: list[Literal["pinterest", "facebook", "instagram", "whatsapp", "youtube"]] = Field(default_factory=list, max_length=5)
+    market_scope: Literal["tanzania_and_international", "tanzania_only", "international_only"] = "tanzania_and_international"
+    target_countries: list[str] = Field(default_factory=list, max_length=20)
     research_sources: list[ResearchSourceInput] = Field(default_factory=list, max_length=10)
     model_config = ConfigDict(extra="forbid")
 
@@ -208,6 +213,8 @@ def generate_studio_draft(
         "language": body.language,
         "tone": body.tone,
         "platforms": body.platforms,
+        "market_scope": body.market_scope,
+        "target_countries": body.target_countries,
         "research_sources": [source.model_dump(mode="json") for source in body.research_sources],
     }
     try:
