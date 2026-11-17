@@ -52,6 +52,7 @@ def _brief_intelligence(brief: dict[str, Any]) -> dict[str, Any]:
     objective = str(brief.get("objective") or "").strip()
     platforms = brief.get("platforms") if isinstance(brief.get("platforms"), list) else []
     content_type = str(brief.get("content_type") or "").strip()
+    supplied_sources = brief.get("research_sources") if isinstance(brief.get("research_sources"), list) else []
 
     checks = {
         "specific_problem_or_offer": len(_tokens(prompt)) >= 8,
@@ -84,15 +85,28 @@ def _brief_intelligence(brief: dict[str, Any]) -> dict[str, Any]:
             "validation_status": "hypothesis_requires_customer_evidence",
         },
         "market_research": {
-            "status": "not_performed_no_live_market_sources",
-            "evidence_scope": "user_supplied_brief_only",
+            "status": "user_sources_supplied_not_independently_verified" if supplied_sources else "not_performed_no_live_market_sources",
+            "evidence_scope": "user_supplied_sources_only" if supplied_sources else "user_supplied_brief_only",
+            "sources": [
+                {
+                    "title": str(item.get("title") or ""),
+                    "publisher": str(item.get("publisher") or ""),
+                    "url": str(item.get("url") or ""),
+                    "excerpt": str(item.get("excerpt") or ""),
+                    "published_at": item.get("published_at"),
+                    "retrieved_at": item.get("retrieved_at"),
+                    "source_type": str(item.get("source_type") or "other"),
+                    "verification_status": "user_supplied_not_independently_verified",
+                }
+                for item in supplied_sources if isinstance(item, dict)
+            ],
             "research_tasks": research_tasks,
         },
         "opportunity_assessment": {
             "status": "preliminary_brief_review",
             "demand_status": "unknown",
             "score": None,
-            "reason": "A demand score requires dated market, audience or performance evidence; this request supplied no such source data.",
+            "reason": "A demand score requires independently validated, dated market, audience or first-party performance evidence. Supplied excerpts alone do not establish demand.",
         },
     }
 
