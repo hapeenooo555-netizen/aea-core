@@ -299,6 +299,11 @@ def generate_studio_draft(
         "market_scope": body.market_scope,
         "target_countries": body.target_countries,
         "research_sources": [source.model_dump(mode="json") for source in body.research_sources],
+        "verified_product_facts": [
+            "AEA Content Studio generates structured, editable content drafts; generation does not publish automatically.",
+            "AEA Country Intelligence creates country-specific campaign hypotheses and conversion paths; these are not verified demand or revenue forecasts.",
+            "Users can save generated content drafts in their authenticated AEA workspace.",
+        ],
     }
     try:
         response = provider.generate(
