@@ -10,7 +10,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
@@ -38,6 +38,13 @@ class ResearchSourceInput(BaseModel):
     country_code: str | None = Field(default=None, min_length=2, max_length=3)
     market_region: str | None = Field(default=None, max_length=120)
     language: str | None = Field(default=None, max_length=40)
+    @field_validator("url")
+    @classmethod
+    def require_https_source_url(cls, value: HttpUrl) -> HttpUrl:
+        if value.scheme != "https":
+            raise ValueError("Research source URLs must use HTTPS.")
+        return value
+
     model_config = ConfigDict(extra="forbid")
 
 
