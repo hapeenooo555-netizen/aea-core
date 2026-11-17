@@ -33,6 +33,18 @@ _SOURCE_CATALOG: tuple[dict[str, Any], ...] = (
         "limitations": "Use published datasets and dissemination terms; do not assume every dataset is open or available through an API.",
     },
     {
+        "id": "world_bank_indicators_api",
+        "name": "World Bank Indicators API",
+        "publisher": "World Bank",
+        "url": "https://api.worldbank.org/v2/",
+        "market_scope": ["global"],
+        "source_type": "official",
+        "evidence_type": ["country_indicators", "population", "macro_economic_and_development"],
+        "access_mode": "public_api",
+        "live_api_available": True,
+        "limitations": "Use indicator metadata, country code, observation year and source notes. Many indicators are annual or lagged and are not direct measures of product demand.",
+    },
+    {
         "id": "google_trends",
         "name": "Google Trends API",
         "publisher": "Google",
