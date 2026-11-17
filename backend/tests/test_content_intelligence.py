@@ -70,3 +70,28 @@ def test_records_supplied_research_sources_without_claiming_verification():
     assert research["sources"][0]["url"] == source["url"]
     assert research["sources"][0]["verification_status"] == "user_supplied_not_independently_verified"
     assert result["intelligence"]["opportunity_assessment"]["demand_status"] == "unknown"
+
+
+def test_geographic_scope_defaults_to_tanzania_and_international_without_inventing_target_countries():
+    result = enrich_content_intelligence(
+        {"title": "AI for shops", "hashtags": []},
+        {"prompt": "Help small shops reply to customers faster using simple automation", "niche": "Business automation"},
+    )
+    scope = result["intelligence"]["geographic_scope"]
+    assert scope["selection"] == "tanzania_and_international"
+    assert scope["tanzania"] is True
+    assert scope["international"] is True
+    assert scope["target_countries"] == []
+    assert scope["international_targets_status"] == "needs_country_selection"
+    assert "do not combine country-level metrics" in scope["comparison_rule"]
+
+
+def test_geographic_scope_respects_selected_countries_and_scope():
+    result = enrich_content_intelligence(
+        {"title": "Digital tools", "hashtags": []},
+        {"prompt": "Compare tools for small businesses", "niche": "Business",
+         "market_scope": "tanzania_and_international", "target_countries": ["KE", "US"]},
+    )
+    scope = result["intelligence"]["geographic_scope"]
+    assert scope["target_countries"] == ["KE", "US"]
+    assert scope["international_targets_status"] == "countries_selected"
