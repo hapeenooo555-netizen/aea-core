@@ -15,3 +15,34 @@ def test_handles_missing_or_malformed_hashtags():
     result = enrich_content_intelligence({"hashtags": "not-a-list"}, {"niche": "Education", "prompt": "Create a learning guide"})
     assert result["hashtags"] == []
     assert result["hashtag_strategy"]["groups"]["location"] == []
+
+
+def test_brief_readiness_is_not_misrepresented_as_market_demand():
+    result = enrich_content_intelligence(
+        {"title": "AI for shops", "hashtags": []},
+        {
+            "prompt": "Help small shops reply to customers faster using simple automation",
+            "niche": "Business automation",
+            "audience": "Small shop owners in Tanzania",
+            "objective": "leads",
+            "content_type": "short_video",
+            "platforms": ["facebook", "instagram"],
+        },
+    )
+    intelligence = result["intelligence"]
+    assert intelligence["brief_readiness"]["score"] == 100
+    assert intelligence["brief_readiness"]["label"] == "brief_completeness_not_market_demand"
+    assert intelligence["market_research"]["status"] == "not_performed_no_live_market_sources"
+    assert intelligence["opportunity_assessment"]["demand_status"] == "unknown"
+    assert intelligence["opportunity_assessment"]["score"] is None
+
+
+def test_brief_intelligence_identifies_missing_audience_and_platforms():
+    result = enrich_content_intelligence(
+        {"title": "A guide", "hashtags": []},
+        {"prompt": "Create a guide about saving time", "niche": "Productivity"},
+    )
+    readiness = result["intelligence"]["brief_readiness"]
+    assert readiness["score"] < 100
+    assert "target_audience_defined" in readiness["missing_inputs"]
+    assert "platforms_selected" in readiness["missing_inputs"]
