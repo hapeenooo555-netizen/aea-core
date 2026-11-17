@@ -264,3 +264,52 @@ def test_revise_asset_requires_expected_current_version():
         "content": {"title": "Edited title"},
     })
     assert response.status_code == 409
+
+
+def test_studio_accepts_structured_research_sources_and_labels_them_unverified(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    client = TestClient(app)
+    response = client.post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "audience": "Small business owners",
+            "objective": "education",
+            "platforms": ["facebook"],
+            "research_sources": [{
+                "title": "Digital adoption survey",
+                "publisher": "Example Research Group",
+                "url": "https://example.org/research/digital-adoption",
+                "excerpt": "Respondents described barriers to adopting digital tools.",
+                "published_at": "2026-10-01",
+                "retrieved_at": "2026-11-18",
+                "source_type": "research",
+            }],
+        },
+    )
+    assert response.status_code == 200
+    intelligence = response.json()["draft"]["intelligence"]
+    assert intelligence["market_research"]["status"] == "user_sources_supplied_not_independently_verified"
+    assert intelligence["market_research"]["sources"][0]["publisher"] == "Example Research Group"
+    assert intelligence["opportunity_assessment"]["demand_status"] == "unknown"
+
+
+def test_studio_rejects_invalid_research_source_url(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "research_sources": [{
+                "title": "Bad source",
+                "publisher": "Unknown",
+                "url": "javascript:alert(1)",
+                "excerpt": "This is an example excerpt long enough for validation.",
+            }],
+        },
+    )
+    assert response.status_code == 422
