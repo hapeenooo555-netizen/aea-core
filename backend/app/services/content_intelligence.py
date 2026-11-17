@@ -53,6 +53,8 @@ def _brief_intelligence(brief: dict[str, Any]) -> dict[str, Any]:
     platforms = brief.get("platforms") if isinstance(brief.get("platforms"), list) else []
     content_type = str(brief.get("content_type") or "").strip()
     supplied_sources = brief.get("research_sources") if isinstance(brief.get("research_sources"), list) else []
+    market_scope = str(brief.get("market_scope") or "tanzania_and_international")
+    target_countries = brief.get("target_countries") if isinstance(brief.get("target_countries"), list) else []
 
     checks = {
         "specific_problem_or_offer": len(_tokens(prompt)) >= 8,
@@ -84,6 +86,14 @@ def _brief_intelligence(brief: dict[str, Any]) -> dict[str, Any]:
             "problem_or_offer_from_brief": prompt or None,
             "validation_status": "hypothesis_requires_customer_evidence",
         },
+        "geographic_scope": {
+            "selection": market_scope,
+            "tanzania": market_scope in {"tanzania_and_international", "tanzania_only"},
+            "international": market_scope in {"tanzania_and_international", "international_only"},
+            "target_countries": [str(country).strip() for country in target_countries if str(country).strip()][:20],
+            "international_targets_status": "countries_selected" if target_countries else ("needs_country_selection" if market_scope in {"tanzania_and_international", "international_only"} else "not_in_scope"),
+            "comparison_rule": "Keep evidence, audience assumptions, pricing and performance segmented by country; do not combine country-level metrics into one market estimate.",
+        },
         "market_research": {
             "status": "user_sources_supplied_not_independently_verified" if supplied_sources else "not_performed_no_live_market_sources",
             "evidence_scope": "user_supplied_sources_only" if supplied_sources else "user_supplied_brief_only",
@@ -96,11 +106,18 @@ def _brief_intelligence(brief: dict[str, Any]) -> dict[str, Any]:
                     "published_at": item.get("published_at"),
                     "retrieved_at": item.get("retrieved_at"),
                     "source_type": str(item.get("source_type") or "other"),
+                    "country_code": item.get("country_code"),
+                    "market_region": item.get("market_region"),
+                    "language": item.get("language"),
                     "verification_status": "user_supplied_not_independently_verified",
                 }
                 for item in supplied_sources if isinstance(item, dict)
             ],
-            "research_tasks": research_tasks,
+            "research_tasks": research_tasks + ([
+                "For Tanzania, prioritize local evidence and record the region, language and date for each finding.",
+                "For each selected international country, research demand, competitors, pricing and platform behavior separately.",
+                "Compare Tanzania and each international country only after normalizing currency, period, audience and metric definitions.",
+            ] if market_scope == "tanzania_and_international" else []),
         },
         "opportunity_assessment": {
             "status": "preliminary_brief_review",
