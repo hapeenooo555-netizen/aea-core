@@ -376,3 +376,32 @@ def test_world_bank_endpoint_returns_country_context(monkeypatch):
         assert response.json()["market_demand_assessment"] == "not_assessed"
     finally:
         app.dependency_overrides.pop(get_current_user_id, None)
+
+
+
+def test_country_intelligence_markets_endpoint_requires_authentication():
+    app.dependency_overrides.clear()
+    response = TestClient(app).get("/content/studio/country-intelligence/markets")
+    assert response.status_code == 401
+
+
+def test_country_intelligence_plan_endpoint_returns_country_specific_conversion_paths():
+    response = TestClient(app).post("/content/studio/country-intelligence/plan", json={
+        "country_codes": ["TZ", "KE", "US"],
+        "offer": "Small business AI toolkit",
+        "objective": "sales",
+        "channel": "facebook",
+    })
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["strategy"] == "content_to_revenue"
+    assert [plan["country_code"] for plan in payload["plans"]] == ["TZ", "KE", "US"]
+    assert [plan["currency"] for plan in payload["plans"]] == ["TZS", "KES", "USD"]
+    assert all(plan["primary_conversion_event"] == "purchase_confirmed" for plan in payload["plans"])
+
+
+def test_country_intelligence_plan_endpoint_rejects_unknown_market():
+    response = TestClient(app).post("/content/studio/country-intelligence/plan", json={
+        "country_codes": ["XX"], "offer": "A useful offer"
+    })
+    assert response.status_code == 422
