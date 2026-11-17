@@ -74,8 +74,8 @@ def _system_prompt() -> str:
 
 _EMOJI_CATEGORIES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("ofa", "punguzo", "discount", "promotion", "promo", "offer", "bonus", "free"), ("🎁", "🔥")),
-    (("mauzo", "sales", "revenue", "faida", "profit", "nunua", "buy", "shop", "order"), ("🛍️", "📈")),
     (("mteja", "wateja", "customer", "whatsapp", "chat", "message", "reply", "huduma", "support"), ("💬", "🤝")),
+    (("mauzo", "sales", "revenue", "faida", "profit", "nunua", "buy", "shop", "order"), ("🛍️", "📈")),
     (("uaminifu", "trust", "salama", "secure", "verified", "quality", "uhakika"), ("✅", "💚")),
     (("ai", "automation", "otomatiki", "teknolojia", "technology", "digital", "software"), ("🤖", "⚡")),
     (("jifunze", "learn", "elimu", "education", "guide", "tips", "mafunzo", "how to"), ("💡", "📚")),
