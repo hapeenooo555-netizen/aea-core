@@ -63,8 +63,83 @@ def _system_prompt() -> str:
         "For video, include script, scene_plan, voiceover and subtitle_text inside core_content. "
         "For ebooks/courses, include a table_of_contents and chapter_or_module_outline in core_content. "
         "For Pinterest, include pin_title, pin_description, image_concept and destination_placeholder. "
+        "Write emotionally relevant social copy: select emojis from the message intent, audience, niche and tone, "
+        "not randomly. Use 1-2 well-matched emojis in captions, hooks and CTAs; use at most one for a formal/professional tone. "
+        "Examples: offers use 🎁🔥; sales/growth use 🛍️📈; customer conversations use 💬🤝; trust uses ✅💚; "
+        "AI/technology uses 🤖⚡; education uses 💡📚. Match the actual brief and never force an unrelated category. "
+        "Use emojis sparingly, keep the copy readable, and adapt emoji placement to each platform. "
         "This is a draft for human review; do not publish."
     )
+
+
+_EMOJI_CATEGORIES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("ofa", "punguzo", "discount", "promotion", "promo", "offer", "bonus", "free"), ("🎁", "🔥")),
+    (("mauzo", "sales", "revenue", "faida", "profit", "nunua", "buy", "shop", "order"), ("🛍️", "📈")),
+    (("mteja", "wateja", "customer", "whatsapp", "chat", "message", "reply", "huduma", "support"), ("💬", "🤝")),
+    (("uaminifu", "trust", "salama", "secure", "verified", "quality", "uhakika"), ("✅", "💚")),
+    (("ai", "automation", "otomatiki", "teknolojia", "technology", "digital", "software"), ("🤖", "⚡")),
+    (("jifunze", "learn", "elimu", "education", "guide", "tips", "mafunzo", "how to"), ("💡", "📚")),
+    (("chakula", "food", "kahawa", "coffee", "restaurant", "mgahawa", "vyakula"), ("🍽️", "😋")),
+    (("nguo", "vitambaa", "fashion", "mavazi", "clothing", "style"), ("👗", "✨")),
+    (("ongeza", "ongezeko", "grow", "growth", "biashara", "business", "leads", "kampeni"), ("🚀", "📈")),
+)
+_KNOWN_EMOJIS = tuple(
+    emoji
+    for _keywords, emojis in _EMOJI_CATEGORIES
+    for emoji in emojis
+) + ("😊", "✨")
+
+
+def _relevant_emojis(context: str, tone: str) -> tuple[str, ...]:
+    """Choose a small emoji set from the brief's actual topic and intent."""
+    normalized = context.casefold()
+    selected: tuple[str, ...] = ()
+    for keywords, emojis in _EMOJI_CATEGORIES:
+        if any(keyword in normalized for keyword in keywords):
+            selected = emojis
+            break
+    if not selected:
+        selected = ("😊", "✨")
+    if any(word in tone.casefold() for word in ("professional", "formal", "corporate")):
+        return selected[:1]
+    return selected[:2]
+
+
+def _add_relevant_emojis(value: Any, emojis: tuple[str, ...]) -> Any:
+    """Add relevant emojis only to plain text that does not already contain one."""
+    if not isinstance(value, str) or not value.strip():
+        return value
+    if any(emoji in value for emoji in _KNOWN_EMOJIS):
+        return value
+    return f"{value.rstrip()} {' '.join(emojis)}"
+
+
+def _enrich_draft_emojis(draft: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
+    """Ensure social captions, hooks and CTAs receive topic-aware emoji treatment."""
+    context = " ".join(
+        str(brief.get(key) or "")
+        for key in ("prompt", "niche", "objective", "tone", "language")
+    )
+    context += " " + str(draft.get("title") or "") + " " + str(draft.get("caption") or "")
+    emojis = _relevant_emojis(context, str(brief.get("tone") or ""))
+
+    for key in ("caption", "cta"):
+        if key in draft:
+            draft[key] = _add_relevant_emojis(draft[key], emojis)
+
+    hooks = draft.get("hooks")
+    if isinstance(hooks, list):
+        draft["hooks"] = [_add_relevant_emojis(hook, emojis) for hook in hooks]
+
+    variants = draft.get("platform_variants")
+    if isinstance(variants, dict):
+        for variant in variants.values():
+            if not isinstance(variant, dict):
+                continue
+            for key in ("caption", "cta"):
+                if key in variant:
+                    variant[key] = _add_relevant_emojis(variant[key], emojis)
+    return draft
 
 
 def _require_user_client(client: Any) -> Any:
@@ -139,7 +214,7 @@ def generate_studio_draft(
         "published": False,
         "provider": response.get("provider") or provider_name,
         "model": response.get("model"),
-        "draft": draft,
+        "draft": _enrich_draft_emojis(draft, brief),
     }
 
 
