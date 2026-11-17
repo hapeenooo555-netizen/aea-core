@@ -451,7 +451,7 @@ class CountryRevenueEventRequest(BaseModel):
     channel: str = Field(min_length=2, max_length=30)
     occurred_at: str
     amount_minor: int | None = Field(default=None, ge=0)
-    metadata: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, str] = Field(default_factory=dict, max_length=5)
     model_config = ConfigDict(extra="forbid")
 
 
