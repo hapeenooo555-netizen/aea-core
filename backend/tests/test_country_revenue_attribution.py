@@ -63,3 +63,18 @@ def test_only_purchase_or_settlement_events_accept_amount():
         validate_revenue_event(_event(event_type="tracked_click", amount_minor=100))
     with pytest.raises(ValueError, match="requires amount_minor"):
         validate_revenue_event(_event(amount_minor=None))
+
+
+def test_rejects_free_text_and_email_like_metadata_values():
+    with pytest.raises(ValueError, match="identifiers or URL-safe"):
+        validate_revenue_event(_event(metadata={"source": "Customer called and gave details"}))
+    with pytest.raises(ValueError, match="identifiers or URL-safe"):
+        validate_revenue_event(_event(metadata={"source": "customer@example.com"}))
+
+
+def test_rejects_more_than_five_metadata_fields():
+    with pytest.raises(ValueError, match="too many"):
+        validate_revenue_event(_event(metadata={
+            "source": "manual", "provider_event_id": "evt_123", "landing_page": "https://example.test/a",
+            "experiment_variant": "variant_a", "notes_code": "note_01", "extra": "x"
+        }))
