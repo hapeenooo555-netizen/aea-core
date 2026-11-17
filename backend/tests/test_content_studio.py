@@ -326,3 +326,53 @@ def test_studio_accepts_tanzania_and_international_market_scope(monkeypatch):
     scope = response.json()["draft"]["intelligence"]["geographic_scope"]
     assert scope["tanzania"] is True and scope["international"] is True
     assert scope["target_countries"] == ["KE", "US"]
+
+
+def test_studio_rejects_http_research_source_url(monkeypatch):
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
+    response = TestClient(app).post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a practical guide to customer follow-up for small businesses.",
+            "niche": "Business automation",
+            "content_type": "article",
+            "research_sources": [{
+                "title": "Insecure source",
+                "publisher": "Example",
+                "url": "http://example.org/research",
+                "excerpt": "This excerpt is long enough for the source validation requirement.",
+            }],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_world_bank_endpoint_requires_authentication():
+    app.dependency_overrides.pop(get_current_user_id, None)
+    response = TestClient(app).get("/content/studio/research/world-bank?country_codes=TZ")
+    assert response.status_code == 401
+
+
+def test_world_bank_endpoint_returns_country_context(monkeypatch):
+    async def fake_fetch(countries, indicators):
+        return {
+            "provider": "world_bank_indicators_api",
+            "status": "retrieved",
+            "countries_requested": countries,
+            "indicators_requested": indicators,
+            "observations": [{"country_code": "TZ", "year": "2024", "value": 100}],
+            "errors": [],
+            "market_demand_assessment": "not_assessed",
+        }
+
+    monkeypatch.setattr(content_studio, "fetch_world_bank_indicators", fake_fetch)
+    app.dependency_overrides[get_current_user_id] = lambda: "owner-123"
+    try:
+        response = TestClient(app).get(
+            "/content/studio/research/world-bank?country_codes=TZ&indicators=population"
+        )
+        assert response.status_code == 200
+        assert response.json()["observations"][0]["country_code"] == "TZ"
+        assert response.json()["market_demand_assessment"] == "not_assessed"
+    finally:
+        app.dependency_overrides.pop(get_current_user_id, None)
