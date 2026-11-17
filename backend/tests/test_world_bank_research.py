@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import pytest
 
@@ -37,10 +38,9 @@ class FakeAsyncClient:
         return FakeWorldBankResponse(str(httpx.URL(url).copy_merge_params(params or {})))
 
 
-@pytest.mark.asyncio
-async def test_world_bank_retrieval_returns_country_and_source_provenance(monkeypatch):
+def test_world_bank_retrieval_returns_country_and_source_provenance(monkeypatch):
     monkeypatch.setattr("app.services.world_bank_research.httpx.AsyncClient", FakeAsyncClient)
-    result = await fetch_world_bank_indicators(["TZ"], ["population"])
+    result = asyncio.run(fetch_world_bank_indicators(["TZ"], ["population"]))
     assert result["status"] == "retrieved"
     observation = result["observations"][0]
     assert observation["country_code"] == "TZ"
@@ -50,9 +50,8 @@ async def test_world_bank_retrieval_returns_country_and_source_provenance(monkey
     assert result["market_demand_assessment"] == "not_assessed"
 
 
-@pytest.mark.asyncio
-async def test_world_bank_retrieval_rejects_unknown_countries_and_indicators():
+def test_world_bank_retrieval_rejects_unknown_countries_and_indicators():
     with pytest.raises(ValueError):
-        await fetch_world_bank_indicators(["XX"])
+        asyncio.run(fetch_world_bank_indicators(["XX"]))
     with pytest.raises(ValueError):
-        await fetch_world_bank_indicators(["TZ"], ["trending_searches"])
+        asyncio.run(fetch_world_bank_indicators(["TZ"], ["trending_searches"]))
