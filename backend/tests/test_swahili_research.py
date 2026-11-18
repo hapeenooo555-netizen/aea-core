@@ -74,9 +74,9 @@ def test_tanzania_official_sources_have_distinct_commercial_rights():
     assert "attribution" in nbs["access_mode"]
 
     ppra = by_id["ppra_nest"]
-    assert ppra["rights_status"] == "commercial_permission_required"
+    assert ppra["rights_status"] == "conflicting_licence_metadata_review"
     assert ppra["enabled"] is False
-    assert ppra["access_mode"] == "non_commercial_only"
+    assert ppra["access_mode"] == "license_conflict_review_no_commercial_use"
 
 
 def test_registry_exposes_categories_and_does_not_enable_sources():
@@ -86,3 +86,14 @@ def test_registry_exposes_categories_and_does_not_enable_sources():
     assert "official_statistics" in result["categories"]
     assert "procurement" in result["categories"]
     assert result["enabled_count"] == 0
+
+
+def test_ppra_source_explicitly_flags_licence_review_and_blocks_use():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    result = list_swahili_research_sources("TZ")
+    ppra = next(source for source in result["sources"] if source["source_id"] == "ppra_nest")
+    assert ppra["enabled"] is False
+    assert ppra["rights_status"] == "conflicting_licence_metadata_review"
+    assert "CC BY-NC-SA 4.0" in ppra["rights_note"]
+    assert "written" in ppra["rights_note"]
