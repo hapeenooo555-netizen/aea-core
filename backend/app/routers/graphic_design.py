@@ -60,7 +60,12 @@ def list_graphic_design_assets(
             raise RuntimeError("Unexpected graphic-design asset listing response")
 
         assets = []
-        bucket = user_client.storage.from_("aea-design-assets")
+        # The bucket is private and its SELECT policy is intentionally not granted
+        # to end users. Sign only after owner-filtered DB lookup and path validation.
+        signing_client = get_supabase_image_budget_client()
+        if signing_client is None:
+            raise RuntimeError("Private asset signing is not configured")
+        bucket = signing_client.storage.from_("aea-design-assets")
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -174,7 +179,9 @@ async def generate_graphic_design_image(
             raise RuntimeError("Could not finalize image-generation job")
 
         stage = "signed_url_creation"
-        signed = user_client.storage.from_("aea-design-assets").create_signed_url(
+        # Upload and signing use the server-side worker client. The path is
+        # constructed from the authenticated owner and this newly-created job ID.
+        signed = worker_client.storage.from_("aea-design-assets").create_signed_url(
             asset_path, 3600
         )
         signed_data = getattr(signed, "data", None) or {}
