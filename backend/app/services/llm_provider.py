@@ -78,6 +78,7 @@ class GroqLLMProvider(BaseLLMProvider):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=messages,
+                response_format={"type": "json_object"},
             )
 
             content = ""
