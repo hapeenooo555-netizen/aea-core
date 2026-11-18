@@ -232,6 +232,7 @@ def test_graphic_design_assets_rejects_invalid_limit():
 def test_graphic_design_generate_renders_exact_text_overlay(monkeypatch):
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed"))
     response = TestClient(app).post("/graphic-design/generate", json={
         "prompt": "Create a clean abstract blue and green business background without text.",
         "aspect_ratio": "4:5",
