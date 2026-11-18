@@ -34,7 +34,7 @@ class StorageBucket:
         return SimpleNamespace(data={"path": "owner/job/original.png"})
 
     def create_signed_url(self, *_args, **_kwargs):
-        return SimpleNamespace(data={"signedUrl": "https://signed.example/image"})
+        return {"signedURL": "https://signed.example/image"}
 
 
 class Storage:
@@ -137,7 +137,7 @@ class GalleryBucket:
 
     def create_signed_url(self, path, expires_in):
         self.signed_paths.append((path, expires_in))
-        return SimpleNamespace(data={"signedUrl": f"https://signed.example/{path}"})
+        return {"signedURL": f"https://signed.example/{path}"}
 
 
 class GalleryStorage:
