@@ -81,11 +81,24 @@ class GroqLLMProvider(BaseLLMProvider):
                 response_format={"type": "json_object"},
             )
 
-            content = ""
-            if getattr(response, "choices", None):
-                first_choice = response.choices[0]
-                if getattr(first_choice, "message", None) is not None:
-                    content = getattr(first_choice.message, "content", "") or ""
+            choices = getattr(response, "choices", None) or []
+            if not choices:
+                return self._error_response("Groq returned no completion choices")
+
+            first_choice = choices[0]
+            message = getattr(first_choice, "message", None)
+            content = getattr(message, "content", None) if message is not None else None
+
+            # Some SDK/model combinations can expose structured content blocks.
+            if isinstance(content, list):
+                content = "".join(
+                    str(block.get("text", "")) if isinstance(block, dict) else str(getattr(block, "text", "") or "")
+                    for block in content
+                )
+            if not isinstance(content, str) or not content.strip():
+                finish_reason = getattr(first_choice, "finish_reason", None)
+                reason = f"Groq returned empty content (finish_reason={finish_reason})"
+                return self._error_response(reason)
 
             usage = {}
             if getattr(response, "usage", None) is not None:
