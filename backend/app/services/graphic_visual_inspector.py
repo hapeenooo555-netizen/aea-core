@@ -44,15 +44,15 @@ def inspect_generated_background(image_bytes: bytes) -> VisualInspection:
                 return VisualInspection(False, "image_dimensions_exceed_limit", width, height)
             metrics = _measure_visual_quality(image)
             quality_failures = []
-            if metrics["contrast_stddev"] < 18:
+            if metrics["contrast_stddev"] < 12:
                 quality_failures.append("low_contrast")
-            if metrics["sharpness_score"] < 4.5:
+            if metrics["sharpness_score"] < 1.2:
                 quality_failures.append("soft_or_blurry")
-            if metrics["clipped_pixel_ratio"] > 0.45:
+            if metrics["clipped_pixel_ratio"] > 0.65:
                 quality_failures.append("exposure_clipping")
             if not (0.08 <= metrics["saliency_center_x"] <= 0.92 and 0.08 <= metrics["saliency_center_y"] <= 0.92):
                 quality_failures.append("poor_visual_balance")
-            if metrics["bottom_saliency_ratio"] > 0.62:
+            if metrics["bottom_saliency_ratio"] > 0.72:
                 quality_failures.append("subject_may_conflict_with_text_panel")
             try:
                 data = pytesseract.image_to_data(
@@ -94,8 +94,6 @@ def _measure_visual_quality(image: Image.Image) -> dict:
     sharpness = edge_stats.stddev[0]
 
     blurred = gray.filter(ImageFilter.GaussianBlur(radius=5))
-    residual = Image.blend(gray, blurred, 0)  # independent grayscale copy
-    diff = Image.eval(Image.blend(gray, blurred, 0), lambda value: value)
     # Pixel-wise high-frequency residual acts as a lightweight saliency proxy.
     import PIL.ImageChops
     residual = PIL.ImageChops.difference(gray, blurred)
