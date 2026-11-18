@@ -28,3 +28,14 @@ async def test_search_rejects_invalid_query_and_country():
         await search_swahili_rss("x")
     with pytest.raises(ValueError):
         await search_swahili_rss("biashara", country_code="XX")
+
+
+@pytest.mark.asyncio
+async def test_search_does_not_fetch_bbc_rss_without_business_permission():
+    from app.services.swahili_research import search_swahili_rss
+
+    result = await search_swahili_rss("biashara", country_code="TZ")
+    assert result["status"] == "source_permission_required"
+    assert result["results"] == []
+    assert result["sources"][0]["enabled"] is False
+    assert result["sources"][0]["access_mode"] == "business_permission_required"
