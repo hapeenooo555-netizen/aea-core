@@ -1,6 +1,7 @@
 """Authenticated fal.ai image generation with owner-scoped jobs and private assets."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app.services.image_generation_provider import (
 )
 
 router = APIRouter(prefix="/graphic-design", tags=["graphic-design"])
+logger = logging.getLogger(__name__)
 
 
 class ImageGenerateRequest(BaseModel):
@@ -134,8 +136,10 @@ async def generate_graphic_design_image(
     if worker_client is None:
         raise HTTPException(status_code=503, detail="Image storage worker is not configured")
 
+    stage = "provider_configuration"
     try:
         provider = get_image_generation_provider()
+        stage = "provider_generation"
         generated = await provider.generate(
             prompt=body.prompt,
             aspect_ratio=body.aspect_ratio,
@@ -151,11 +155,13 @@ async def generate_graphic_design_image(
         if extension is None:
             raise RuntimeError("Unsupported generated image type")
         asset_path = f"{owner_id}/{job_id}/original.{extension}"
+        stage = "private_storage_upload"
         worker_client.storage.from_("aea-design-assets").upload(
             asset_path,
             generated.content,
             file_options={"content-type": generated.mime_type, "upsert": "false"},
         )
+        stage = "job_finalization"
         updated = worker_client.table("graphic_design_jobs").update({
             "status": "completed",
             "asset_path": asset_path,
@@ -167,6 +173,7 @@ async def generate_graphic_design_image(
         if not _row(updated):
             raise RuntimeError("Could not finalize image-generation job")
 
+        stage = "signed_url_creation"
         signed = user_client.storage.from_("aea-design-assets").create_signed_url(
             asset_path, 3600
         )
@@ -187,11 +194,15 @@ async def generate_graphic_design_image(
             "height": generated.height,
         }
     except ImageProviderNotConfigured as exc:
+        logger.warning("Graphic design generation unavailable at stage=%s error_type=%s", stage, type(exc).__name__)
         worker_client.table("graphic_design_jobs").update({
             "status": "failed", "error": str(exc)[:500]
         }).eq("id", job_id).eq("owner_id", owner_id).execute()
         raise HTTPException(status_code=503, detail="Image generation is not configured") from exc
     except Exception as exc:
+        # Never log exception text: provider errors may contain prompts, signed URLs,
+        # request metadata, or credentials. Stage and exception class are sufficient.
+        logger.error("Graphic design generation failed at stage=%s error_type=%s", stage, type(exc).__name__)
         try:
             worker_client.table("graphic_design_jobs").update({
                 "status": "failed", "error": "Image generation or private asset storage failed"
