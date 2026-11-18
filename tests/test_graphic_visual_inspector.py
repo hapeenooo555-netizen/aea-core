@@ -1,13 +1,17 @@
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.services import graphic_visual_inspector as inspector
 
 
 def _png():
     stream = BytesIO()
-    Image.new("RGB", (800, 1000), (120, 150, 180)).save(stream, format="PNG")
+    image = Image.new("RGB", (800, 1000), (120, 150, 180))
+    draw = ImageDraw.Draw(image)
+    for x in range(0, 800, 8):
+        draw.line((x, 0, x, 1000), fill=(40 + (x % 160), 90, 170), width=3)
+    image.save(stream, format="PNG")
     return stream.getvalue()
 
 
@@ -41,3 +45,17 @@ def test_visual_inspector_rejects_invalid_image():
         assert "valid readable image" in str(exc)
     else:
         raise AssertionError("Invalid image must not pass inspection")
+
+
+
+def test_visual_inspector_returns_quality_metrics(monkeypatch):
+    monkeypatch.setattr(
+        inspector.pytesseract,
+        "image_to_data",
+        lambda *args, **kwargs: {"text": [], "conf": []},
+    )
+    result = inspector.inspect_generated_background(_png())
+    assert result.quality_metrics is not None
+    assert "contrast_stddev" in result.quality_metrics
+    assert "sharpness_score" in result.quality_metrics
+    assert "bottom_saliency_ratio" in result.quality_metrics
