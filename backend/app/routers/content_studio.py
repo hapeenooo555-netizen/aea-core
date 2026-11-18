@@ -21,6 +21,7 @@ from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
 from app.services.country_intelligence import build_country_revenue_plan, list_country_markets
 from app.services.country_revenue_attribution import validate_revenue_event
+from app.services.swahili_language_quality import apply_swahili_language_quality
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -117,8 +118,13 @@ def _system_prompt() -> str:
         "You are AEA Content Studio, a senior marketing strategist and professional Swahili copywriter for East African and international markets. "
         "Create useful, original, platform-aware content strictly from the supplied brief and verified product facts. "
         "LANGUAGE QUALITY: When language is Swahili or Kiswahili, write fluent, natural, grammatically correct Tanzanian Kiswahili. "
-        "Do not translate English idioms literally. Prefer clear everyday business language; avoid awkward phrases, unnecessary English jargon, "
-        "repetition, excessive emojis and unnatural code-switching. Use an English technical term only when it is widely understood or necessary. "
+        "Do not translate English idioms literally. Prefer clear everyday Tanzanian digital language for social posts: natural, familiar wording understood by online audiences. "
+        "Use common platform terms such as post, link, comment, inbox and follow when they are clearer than forced translations. "
+        "For business documents use professional Kiswahili. For advertisements use concise, persuasive but truthful language. "
+        "Never Swahilize English words by adding Kiswahili suffixes (for example, never write 'specifikesheni'). "
+        "Prefer 'maelezo ya muundo' or 'mwongozo wa ubunifu' for design specification, 'mwelekeo wa ubunifu' for creative direction, "
+        "'mpangilio' for layout, 'wito wa kuchukua hatua' for call to action, and 'programu tumizi' or 'aplikesheni' for application. "
+        "Keep widely understood English platform/product terms only when they are natural in Tanzanian online speech. Avoid forced slang, excessive emojis and unnatural code-switching. "
         "Before returning, silently proofread every title, hook, script, scene, voiceover, subtitle, caption and CTA for grammar, agreement, "
         "word choice, spelling, punctuation, natural flow and consistency. Rewrite awkward sentences. "
         "AUDIENCE: Treat the explicit audience field as authoritative. If it is absent, infer only a cautious audience hypothesis from the prompt "
