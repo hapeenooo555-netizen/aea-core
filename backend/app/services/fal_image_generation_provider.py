@@ -111,7 +111,7 @@ class FalImageGenerationProvider:
                 json={
                     "prompt": prompt,
                     **(
-                        {"aspect_ratio": aspect_ratio}
+                        {"aspect_ratio": aspect_ratio, "resolution": "1K"}
                         if model_key == "nano_banana_pro"
                         else {"image_size": {"width": width, "height": height}}
                     ),
@@ -124,8 +124,13 @@ class FalImageGenerationProvider:
             submitted = response.json()
             status_url = submitted.get("status_url")
             response_url = submitted.get("response_url")
-            if not status_url or not response_url:
-                raise RuntimeError("fal.ai did not return queue status/result URLs")
+            for queue_url in (status_url, response_url):
+                parsed_queue = urlparse(queue_url or "")
+                if parsed_queue.scheme != "https" or not (
+                    parsed_queue.hostname == "queue.fal.run"
+                    or (parsed_queue.hostname or "").endswith(".queue.fal.run")
+                ):
+                    raise RuntimeError("fal.ai returned an invalid queue URL")
 
             payload: dict[str, Any] | None = None
             for _ in range(self.max_polls):
@@ -152,8 +157,13 @@ class FalImageGenerationProvider:
                 raise RuntimeError("fal.ai response did not contain an image URL")
             image_url = images[0]["url"]
             parsed = urlparse(image_url)
-            if parsed.scheme != "https" or not parsed.netloc:
-                raise RuntimeError("fal.ai returned an invalid image URL")
+            image_host = parsed.hostname or ""
+            if parsed.scheme != "https" or not (
+                image_host == "storage.googleapis.com"
+                or image_host.endswith(".fal.media")
+                or image_host.endswith(".fal.ai")
+            ):
+                raise RuntimeError("fal.ai returned an untrusted image host")
             media = await client.get(image_url)
             media.raise_for_status()
             content = media.content
