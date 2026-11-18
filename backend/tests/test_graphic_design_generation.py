@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import io
 
+from PIL import Image
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
@@ -52,8 +54,10 @@ class FakeClient:
 class FakeProvider:
     async def generate(self, *, prompt, aspect_ratio, model):
         from app.services.image_generation_provider import GeneratedImage
+        buffer = io.BytesIO()
+        Image.new("RGB", (1024, 1280), "white").save(buffer, format="PNG")
         return GeneratedImage(
-            content=b"png-bytes",
+            content=buffer.getvalue(),
             mime_type="image/png",
             width=1024,
             height=1024,
@@ -221,3 +225,27 @@ def test_graphic_design_assets_requires_authentication():
 def test_graphic_design_assets_rejects_invalid_limit():
     response = TestClient(app).get("/graphic-design/assets?limit=1000")
     assert response.status_code == 422
+
+
+
+def test_graphic_design_generate_renders_exact_text_overlay(monkeypatch):
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
+    monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
+    response = TestClient(app).post("/graphic-design/generate", json={
+        "prompt": "Create a clean abstract blue and green business background without text.",
+        "aspect_ratio": "4:5",
+        "model": "z_image_turbo",
+        "text_overlay": {
+            "title": "AI inarahisisha biashara yako",
+            "body": "Jifunze jinsi AEA inavyosaidia biashara yako kukua.",
+            "cta": "Gundua sasa",
+            "brand": "AEA Affiliate Hub",
+            "accent": "#10B981",
+        },
+    })
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["mime_type"] == "image/png"
+    assert payload["width"] == 1024
+    assert payload["height"] == 1280
+    assert payload["published"] is False
