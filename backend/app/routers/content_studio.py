@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
+from app.services.prompt_intelligence import build_intelligence_context
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
@@ -287,7 +288,18 @@ def generate_studio_draft(
             detail="AI Content Studio is not configured with a production LLM provider. Configure GROQ_API_KEY and LLM_PROVIDER=groq before generating live content.",
         )
 
+    intelligence_context = build_intelligence_context(
+        prompt=body.prompt,
+        content_type=body.content_type,
+        niche=body.niche,
+        audience=body.audience,
+        objective=body.objective,
+        language=body.language,
+        tone=body.tone,
+        platforms=body.platforms,
+    )
     brief = {
+        "prompt_intelligence": intelligence_context,
         "prompt": body.prompt,
         "niche": body.niche,
         "content_type": body.content_type,
