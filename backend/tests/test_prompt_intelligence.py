@@ -55,3 +55,20 @@ def test_domain_profiles_include_quality_and_professional_roles():
     assert context["domain"] == "graphic_design"
     assert "graphic_designer" in context["specialist_roles"]
     assert "contrast" in context["quality_standards"]
+
+
+def test_prompt_hash_is_stable_and_configuration_sensitive():
+    from app.routers.content_studio import _prompt_hash
+
+    first = _prompt_hash("You are AEA.", {"temperature": 0.2})
+    same = _prompt_hash("You are AEA.", {"temperature": 0.2})
+    changed = _prompt_hash("You are AEA.", {"temperature": 0.7})
+    assert first == same
+    assert first != changed
+    assert len(first) == 64
+
+
+def test_domain_detection_supports_swahi_plain_language():
+    assert detect_domain("Nahitaji bango la duka langu") == "graphic_design"
+    assert detect_domain("Nisaidie kuandika ripoti ya biashara") == "business_documents"
+    assert detect_domain("Nataka kampeni ya kutafuta wateja") == "marketing"
