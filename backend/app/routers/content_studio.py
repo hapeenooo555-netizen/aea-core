@@ -560,6 +560,39 @@ def create_prompt_version(
     return {"success": True, "version": version, "active_version": next_version}
 
 
+@router.get("/prompts/{registry_id}/active")
+def get_active_prompt_version(
+    registry_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Resolve the active immutable prompt version for an owned registry entry."""
+    db = _require_user_client(client)
+    registry_response = db.table("prompt_intelligence_registry").select(
+        "id,prompt_key,display_name,domain,active_version"
+    ).eq("owner_id", owner_id).eq("id", str(registry_id)).limit(1).execute()
+    registry = _response_row(registry_response)
+    if not registry:
+        raise HTTPException(status_code=404, detail="Prompt registry entry not found.")
+
+    version_response = db.table("prompt_intelligence_versions").select(
+        "id,registry_id,version,system_prompt,configuration,change_note,content_sha256,created_at"
+    ).eq("owner_id", owner_id).eq("registry_id", str(registry_id)).eq(
+        "version", registry["active_version"]
+    ).limit(1).execute()
+    active = _response_row(version_response)
+    if not active:
+        raise HTTPException(status_code=409, detail="The active prompt version is missing.")
+
+    expected_hash = _prompt_hash(
+        active["system_prompt"], active.get("configuration") or {}
+    )
+    if active.get("content_sha256") != expected_hash:
+        raise HTTPException(status_code=409, detail="Prompt version integrity check failed.")
+
+    return {"success": True, "prompt": registry, "active_version": active}
+
+
 @router.get("/prompts/{registry_id}/versions")
 def list_prompt_versions(
     registry_id: UUID,
