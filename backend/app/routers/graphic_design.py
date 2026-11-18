@@ -15,6 +15,7 @@ from app.services.image_generation_provider import (
     get_image_generation_provider,
 )
 from app.services.design_text_renderer import DesignCopy, render_design_copy
+from app.services.graphic_visual_inspector import inspect_generated_background
 
 router = APIRouter(prefix="/graphic-design", tags=["graphic-design"])
 logger = logging.getLogger(__name__)
@@ -179,6 +180,10 @@ async def generate_graphic_design_image(
         )
         if generated.provider != provider_name:
             raise RuntimeError("Unexpected image provider returned")
+        stage = "visual_quality_inspection"
+        inspection = inspect_generated_background(generated.content)
+        if not inspection.accepted:
+            raise ValueError("Generated background failed AEA visual quality inspection")
         final_content = generated.content
         final_mime_type = generated.mime_type
         final_width = generated.width
@@ -211,7 +216,7 @@ async def generate_graphic_design_image(
             "mime_type": final_mime_type,
             "width": final_width,
             "height": final_height,
-            "provider_metadata": generated.provider_metadata,
+            "provider_metadata": {**generated.provider_metadata, "visual_inspection": {"accepted": True, "reason": inspection.reason}},
         }).eq("id", job_id).eq("owner_id", owner_id).execute()
         if not _row(updated):
             raise RuntimeError("Could not finalize image-generation job")
