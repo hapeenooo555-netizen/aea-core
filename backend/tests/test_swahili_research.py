@@ -60,3 +60,40 @@ def test_swahili_source_registry_rejects_unknown_market():
 
     with pytest.raises(ValueError):
         list_swahili_research_sources("XX")
+
+
+def test_tanzania_official_sources_have_distinct_commercial_rights():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    result = list_swahili_research_sources("TZ")
+    by_id = {source["source_id"]: source for source in result["sources"]}
+
+    nbs = by_id["nbs_tanzania"]
+    assert nbs["rights_status"] == "commercial_reuse_conditionally_allowed"
+    assert nbs["enabled"] is False
+    assert "attribution" in nbs["access_mode"]
+
+    ppra = by_id["ppra_nest"]
+    assert ppra["rights_status"] == "conflicting_licence_metadata_review"
+    assert ppra["enabled"] is False
+    assert ppra["access_mode"] == "license_conflict_review_no_commercial_use"
+
+
+def test_registry_exposes_categories_and_does_not_enable_sources():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    result = list_swahili_research_sources("TZ")
+    assert "official_statistics" in result["categories"]
+    assert "procurement" in result["categories"]
+    assert result["enabled_count"] == 0
+
+
+def test_ppra_source_explicitly_flags_licence_review_and_blocks_use():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    result = list_swahili_research_sources("TZ")
+    ppra = next(source for source in result["sources"] if source["source_id"] == "ppra_nest")
+    assert ppra["enabled"] is False
+    assert ppra["rights_status"] == "conflicting_licence_metadata_review"
+    assert "CC BY-NC-SA 4.0" in ppra["rights_note"]
+    assert "written" in ppra["rights_note"]
