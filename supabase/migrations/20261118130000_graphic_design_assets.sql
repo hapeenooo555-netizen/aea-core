@@ -37,6 +37,7 @@ create policy "owners read own graphic design jobs"
   on public.graphic_design_jobs for select to authenticated
   using ((select auth.uid()) = owner_id);
 drop policy if exists "owners create own graphic design jobs" on public.graphic_design_jobs;
+drop policy if exists "owners create own pending graphic design jobs" on public.graphic_design_jobs;
 create policy "owners create own pending graphic design jobs"
   on public.graphic_design_jobs for insert to authenticated
   with check (
