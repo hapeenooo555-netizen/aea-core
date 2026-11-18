@@ -45,6 +45,7 @@ def list_graphic_design_assets(
     if user_client is None:
         raise HTTPException(status_code=503, detail="User-scoped database access is unavailable")
 
+    stage = "job_query"
     try:
         response = (
             user_client.table("graphic_design_jobs")
@@ -60,12 +61,14 @@ def list_graphic_design_assets(
             raise RuntimeError("Unexpected graphic-design asset listing response")
 
         assets = []
+        stage = "worker_client_configuration"
         # The bucket is private and its SELECT policy is intentionally not granted
         # to end users. Sign only after owner-filtered DB lookup and path validation.
         signing_client = get_supabase_image_budget_client()
         if signing_client is None:
             raise RuntimeError("Private asset signing is not configured")
         bucket = signing_client.storage.from_("aea-design-assets")
+        stage = "asset_signing"
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -97,6 +100,8 @@ def list_graphic_design_assets(
     except HTTPException:
         raise
     except Exception as exc:
+        # Do not log exception text or paths; only stage and exception class.
+        logger.error("Graphic design asset listing failed at stage=%s error_type=%s", stage, type(exc).__name__)
         raise HTTPException(
             status_code=503,
             detail="Could not load private graphic-design assets",
