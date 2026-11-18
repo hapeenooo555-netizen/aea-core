@@ -153,6 +153,54 @@ def test_prompt_planner_rejects_short_storyboard(monkeypatch):
     assert response.status_code == 502
 
 
+
+def test_prompt_planner_repairs_short_storyboard_once(monkeypatch):
+    class Provider:
+        name = "groq"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **_kwargs):
+            import json
+            self.calls += 1
+            scene_count = 12 if self.calls == 1 else 30
+            return {
+                "success": True,
+                "content": json.dumps({
+                    "title": "Safari ya Mjasiriamali",
+                    "scenes": [
+                        {
+                            "title": f"Scene {index}",
+                            "narration": "Safari ya biashara inaendelea",
+                            "visual_prompt": f"Cinematic faceless scene {index}",
+                            "duration_seconds": 10,
+                        }
+                        for index in range(scene_count)
+                    ],
+                }),
+            }
+
+    provider = Provider()
+    monkeypatch.setattr(video_generation, "get_llm_provider", lambda: provider)
+    db = DB()
+    response = make_client(db).post("/video/generations/projects/plan", json={
+        "prompt": "Tengeneza documentary ya safari ya mjasiriamali wa Tanzania.",
+        "title": "Safari ya Mjasiriamali",
+        "format": "storytelling",
+        "target_duration_seconds": 300,
+        "language": "Kiswahili",
+        "presenter_mode": "faceless",
+        "aspect_ratio": "16:9",
+    })
+
+    assert response.status_code == 201
+    assert provider.calls == 2
+    payload = response.json()
+    assert payload["project"]["planned_duration_seconds"] == 300
+    assert payload["project"]["scene_count"] == 30
+    assert len(db.tables["video_project_scenes"]) == 30
+
 def test_video_batch_rejects_more_than_twenty_scenes():
     scene_ids = [
         f"00000000-0000-4000-8000-{index:012d}"
