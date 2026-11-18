@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -58,10 +59,20 @@ def render_design_copy(image_bytes: bytes, copy: DesignCopy) -> tuple[bytes, int
     """Overlay exact user-approved copy onto a generated visual; return PNG bytes."""
     if not image_bytes:
         raise ValueError("Base image is empty")
-    title = (copy.title or "").strip()[:180]
-    body = (copy.body or "").strip()[:500]
-    cta = (copy.cta or "").strip()[:80]
-    brand = (copy.brand or "").strip()[:80]
+    def clean_copy(value: str, limit: int) -> str:
+        # Remove unresolved template tokens and pictographs unsupported by the
+        # installed text fonts; preserve Kiswahili, punctuation and Latin text.
+        value = re.sub(r"\\[[A-Z0-9_ -]*PLACEHOLDER[A-Z0-9_ -]*\\]", "", value or "", flags=re.IGNORECASE)
+        value = "".join(ch for ch in value if unicodedata.category(ch) != "So")
+        value = re.sub(r"\\s+", " ", value).strip()
+        return value[:limit]
+
+    title = clean_copy(copy.title, 180)
+    body = clean_copy(copy.body, 500)
+    cta = clean_copy(copy.cta, 80)
+    brand = clean_copy(copy.brand, 80)
+    if not cta:
+        cta = "Jifunze zaidi"
     if not title:
         raise ValueError("A headline is required for text rendering")
 
@@ -75,7 +86,7 @@ def render_design_copy(image_bytes: bytes, copy: DesignCopy) -> tuple[bytes, int
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     panel_box = (margin // 2, panel_top, width - margin // 2, height - margin // 2)
-    draw.rounded_rectangle(panel_box, radius=int(24 * scale), fill=(8, 18, 35, 224))
+    draw.rounded_rectangle(panel_box, radius=int(24 * scale), fill=(8, 18, 35, 255))
     accent = _color(copy.accent, "#10B981")
     draw.rounded_rectangle(
         (panel_box[0], panel_top, panel_box[0] + int(9 * scale), panel_box[3]),
