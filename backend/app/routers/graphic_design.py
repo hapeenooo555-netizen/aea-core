@@ -14,15 +14,25 @@ from app.services.image_generation_provider import (
     ImageProviderNotConfigured,
     get_image_generation_provider,
 )
+from app.services.design_text_renderer import DesignCopy, render_design_copy
 
 router = APIRouter(prefix="/graphic-design", tags=["graphic-design"])
 logger = logging.getLogger(__name__)
+
+
+class DesignTextOverlay(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    body: str = Field(default="", max_length=500)
+    cta: str = Field(default="", max_length=80)
+    brand: str = Field(default="", max_length=80)
+    accent: str = "#10B981"
 
 
 class ImageGenerateRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=12000)
     aspect_ratio: Literal["1:1", "4:5", "9:16", "16:9", "3:2"] = "1:1"
     model: Literal["z_image_turbo", "nano_banana_pro"] = "z_image_turbo"
+    text_overlay: DesignTextOverlay | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -169,27 +179,38 @@ async def generate_graphic_design_image(
         )
         if generated.provider != provider_name:
             raise RuntimeError("Unexpected image provider returned")
+        final_content = generated.content
+        final_mime_type = generated.mime_type
+        final_width = generated.width
+        final_height = generated.height
+        if body.text_overlay is not None:
+            stage = "text_overlay_render"
+            final_content, final_width, final_height = render_design_copy(
+                generated.content,
+                DesignCopy(**body.text_overlay.model_dump()),
+            )
+            final_mime_type = "image/png"
         extension = {
             "image/png": "png",
             "image/jpeg": "jpg",
             "image/webp": "webp",
-        }.get(generated.mime_type)
+        }.get(final_mime_type)
         if extension is None:
             raise RuntimeError("Unsupported generated image type")
         asset_path = f"{owner_id}/{job_id}/original.{extension}"
         stage = "private_storage_upload"
         worker_client.storage.from_("aea-design-assets").upload(
             asset_path,
-            generated.content,
-            file_options={"content-type": generated.mime_type, "upsert": "false"},
+            final_content,
+            file_options={"content-type": final_mime_type, "upsert": "false"},
         )
         stage = "job_finalization"
         updated = worker_client.table("graphic_design_jobs").update({
             "status": "completed",
             "asset_path": asset_path,
-            "mime_type": generated.mime_type,
-            "width": generated.width,
-            "height": generated.height,
+            "mime_type": final_mime_type,
+            "width": final_width,
+            "height": final_height,
             "provider_metadata": generated.provider_metadata,
         }).eq("id", job_id).eq("owner_id", owner_id).execute()
         if not _row(updated):
@@ -217,9 +238,9 @@ async def generate_graphic_design_image(
             "asset_path": asset_path,
             "signed_url": signed_url,
             "signed_url_expires_in": 3600 if signed_url else None,
-            "mime_type": generated.mime_type,
-            "width": generated.width,
-            "height": generated.height,
+            "mime_type": final_mime_type,
+            "width": final_width,
+            "height": final_height,
         }
     except ImageProviderNotConfigured as exc:
         logger.warning("Graphic design generation unavailable at stage=%s error_type=%s", stage, type(exc).__name__)
