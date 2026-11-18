@@ -103,3 +103,120 @@ def test_graphic_design_generate_rejects_invalid_model():
         "model": "unknown-model",
     })
     assert response.status_code == 422
+
+
+class GalleryQuery:
+    def __init__(self, rows):
+        self.rows = rows
+        self.filters = []
+        self.selected = None
+        self.limit_value = None
+
+    def select(self, columns):
+        self.selected = columns
+        return self
+
+    def eq(self, column, value):
+        self.filters.append((column, value))
+        return self
+
+    def order(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, value):
+        self.limit_value = value
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=self.rows[:self.limit_value])
+
+
+class GalleryBucket:
+    def __init__(self):
+        self.signed_paths = []
+
+    def create_signed_url(self, path, expires_in):
+        self.signed_paths.append((path, expires_in))
+        return SimpleNamespace(data={"signedUrl": f"https://signed.example/{path}"})
+
+
+class GalleryStorage:
+    def __init__(self):
+        self.bucket = GalleryBucket()
+
+    def from_(self, bucket_name):
+        assert bucket_name == "aea-design-assets"
+        return self.bucket
+
+
+class GalleryClient:
+    def __init__(self, rows):
+        self.query = GalleryQuery(rows)
+        self.storage = GalleryStorage()
+
+    def table(self, table_name):
+        assert table_name == "graphic_design_jobs"
+        return self.query
+
+
+def test_graphic_design_assets_lists_only_owner_paths_with_temporary_urls():
+    rows = [
+        {
+            "id": "asset-1",
+            "owner_id": "owner-123",
+            "prompt": "Tanzanian small business poster",
+            "aspect_ratio": "1:1",
+            "provider": "fal.ai",
+            "model": "fal-ai/z-image/turbo",
+            "status": "completed",
+            "asset_path": "owner-123/asset-1/original.png",
+            "mime_type": "image/png",
+            "width": 1024,
+            "height": 1024,
+            "created_at": "2026-11-18T10:00:00Z",
+        },
+        {
+            "id": "asset-foreign",
+            "owner_id": "another-user",
+            "prompt": "must not be exposed",
+            "aspect_ratio": "1:1",
+            "provider": "fal.ai",
+            "model": "fal-ai/z-image/turbo",
+            "status": "completed",
+            "asset_path": "another-user/asset-foreign/original.png",
+            "mime_type": "image/png",
+            "width": 1024,
+            "height": 1024,
+            "created_at": "2026-11-18T09:00:00Z",
+        },
+    ]
+    client = GalleryClient(rows)
+    app.dependency_overrides[get_user_scoped_client] = lambda: client
+
+    response = TestClient(app).get("/graphic-design/assets?limit=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["count"] == 1
+    assert payload["assets"][0]["job_id"] == "asset-1"
+    assert payload["assets"][0]["signed_url"] == (
+        "https://signed.example/owner-123/asset-1/original.png"
+    )
+    assert payload["assets"][0]["signed_url_expires_in"] == 3600
+    assert client.query.filters == [("owner_id", "owner-123"), ("status", "completed")]
+    assert client.query.limit_value == 10
+    assert client.storage.bucket.signed_paths == [
+        ("owner-123/asset-1/original.png", 3600)
+    ]
+
+
+def test_graphic_design_assets_requires_authentication():
+    app.dependency_overrides.clear()
+    response = TestClient(app).get("/graphic-design/assets")
+    assert response.status_code == 401
+
+
+def test_graphic_design_assets_rejects_invalid_limit():
+    response = TestClient(app).get("/graphic-design/assets?limit=1000")
+    assert response.status_code == 422
