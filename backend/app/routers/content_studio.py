@@ -492,6 +492,13 @@ def _prompt_hash(system_prompt: str, configuration: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _prompt_version_integrity_valid(version: dict[str, Any]) -> bool:
+    """Verify persisted prompt content against its canonical SHA-256 fingerprint."""
+    return version.get("content_sha256") == _prompt_hash(
+        version.get("system_prompt", ""), version.get("configuration") or {}
+    )
+
+
 @router.post("/prompts", status_code=status.HTTP_201_CREATED)
 def create_prompt_registry_entry(
     body: PromptRegistryCreateRequest,
@@ -584,10 +591,7 @@ def get_active_prompt_version(
     if not active:
         raise HTTPException(status_code=409, detail="The active prompt version is missing.")
 
-    expected_hash = _prompt_hash(
-        active["system_prompt"], active.get("configuration") or {}
-    )
-    if active.get("content_sha256") != expected_hash:
+    if not _prompt_version_integrity_valid(active):
         raise HTTPException(status_code=409, detail="Prompt version integrity check failed.")
 
     return {"success": True, "prompt": registry, "active_version": active}
