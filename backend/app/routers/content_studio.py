@@ -545,7 +545,9 @@ def create_prompt_version(
     registry = _response_row(current)
     if not registry:
         raise HTTPException(status_code=404, detail="Prompt registry entry not found.")
-    next_version = int(registry["active_version"]) + 1
+    latest_response = db.table("prompt_intelligence_versions").select("version").eq("owner_id", owner_id).eq("registry_id", str(registry_id)).order("version", desc=True).limit(1).execute()
+    latest = _response_row(latest_response)
+    next_version = int(latest["version"]) + 1 if latest else 1
     saved = db.table("prompt_intelligence_versions").insert({
         "registry_id": str(registry_id), "owner_id": owner_id, "version": next_version,
         "system_prompt": body.system_prompt, "configuration": body.configuration,
