@@ -77,7 +77,7 @@ def build_intelligence_context(*, prompt: str, content_type: str, niche: str,
             "Infer only low-risk creative details and label assumptions. Ask the fewest essential questions "
             "when a material fact cannot safely be inferred. Never invent prices, claims, identity, budget, dates or contact details."
         ),
-        "intent_preservation_policy": (
+        "language_style_policy": (\n            "For Tanzanian Swahili social content, use natural language familiar to online audiences. Common terms such as post, link, comment, inbox and follow may remain English when they are clearer. " \n            "For formal business content use professional Kiswahili. Avoid forced slang, literal translations and Swahilized English words such as specifikesheni."\n        ),\n        "intent_preservation_policy": (
             "Preserve the customer's objective, facts, constraints, language, brand identity and requested outcome. "
             "Improve the execution method, not the customer's intent. Do not reject an informal or incomplete prompt "
             "because it lacks professional terminology."
