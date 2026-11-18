@@ -270,7 +270,16 @@ class FalImageGenerationProvider:
         except Exception as exc:
             # Log only stage and exception class; never log prompts, response bodies,
             # signed URLs, headers, API keys, or exception messages.
-            logger.error("fal.ai generation failed at stage=%s submitted=%s error_type=%s", stage, submitted_to_provider, type(exc).__name__)
+            # Extract only an HTTP status code from the provider exception. Do not
+            # emit the exception message because it may contain response-body data.
+            status_match = re.search(r"\bHTTP\s+(\d{3})\b", str(exc))
+            logger.error(
+                "fal.ai generation failed at stage=%s submitted=%s error_type=%s provider_http_status=%s",
+                stage,
+                submitted_to_provider,
+                type(exc).__name__,
+                status_match.group(1) if status_match else "unknown",
+            )
             # Once fal accepts a request, its charge may be incurred even if
             # polling, download, or persistence fails. Keep the reservation in
             # that uncertain case; release only when submission never succeeded.
