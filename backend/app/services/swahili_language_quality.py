@@ -10,14 +10,14 @@ from typing import Any
 
 # Match whole phrases/words case-insensitively; preserve the surrounding text.
 _REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\\bspecifikesheni\\b", re.IGNORECASE), "maelezo"),
-    (re.compile(r"\\bdesign specification(s)?\\b", re.IGNORECASE), "mwongozo wa ubunifu"),
-    (re.compile(r"\\bcreative direction\\b", re.IGNORECASE), "mwelekeo wa ubunifu"),
-    (re.compile(r"\\bexport specifications\\b", re.IGNORECASE), "vipimo vya faili la mwisho"),
-    (re.compile(r"\\bvisual hierarchy\\b", re.IGNORECASE), "mpangilio wa vipaumbele vya kuona"),
-    (re.compile(r"\\bcall to action\\b", re.IGNORECASE), "wito wa kuchukua hatua"),
-    (re.compile(r"\\blayout\\b", re.IGNORECASE), "mpangilio"),
-    (re.compile(r"\\bapplication\\b", re.IGNORECASE), "programu tumizi"),
+    (re.compile(r"\bspecifikesheni\\b", re.IGNORECASE), "maelezo"),
+    (re.compile(r"\bdesign specification(s)?\\b", re.IGNORECASE), "mwongozo wa ubunifu"),
+    (re.compile(r"\bcreative direction\\b", re.IGNORECASE), "mwelekeo wa ubunifu"),
+    (re.compile(r"\bexport specifications\\b", re.IGNORECASE), "vipimo vya faili la mwisho"),
+    (re.compile(r"\bvisual hierarchy\\b", re.IGNORECASE), "mpangilio wa vipaumbele vya kuona"),
+    (re.compile(r"\bcall to action\\b", re.IGNORECASE), "wito wa kuchukua hatua"),
+    (re.compile(r"\blayout\\b", re.IGNORECASE), "mpangilio"),
+    (re.compile(r"\bapplication\\b", re.IGNORECASE), "programu tumizi"),
 )
 
 def normalize_swahili_text(value: str) -> str:
@@ -25,7 +25,7 @@ def normalize_swahili_text(value: str) -> str:
     result = value
     for pattern, replacement in _REPLACEMENTS:
         result = pattern.sub(replacement, result)
-    result = re.sub(r"[ \\t]{2,}", " ", result)
+    result = re.sub(r"[ \t]{2,}", " ", result)
     return result
 
 def apply_swahili_language_quality(value: Any) -> Any:
