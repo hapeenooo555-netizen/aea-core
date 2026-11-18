@@ -22,7 +22,7 @@ from app.services.world_bank_research import fetch_world_bank_indicators
 from app.services.country_intelligence import build_country_revenue_plan, list_country_markets
 from app.services.country_revenue_attribution import validate_revenue_event
 from app.services.swahili_language_quality import apply_swahili_language_quality
-from app.services.swahili_research import search_swahili_rss
+from app.services.swahili_research import list_swahili_research_sources, search_swahili_rss
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
 
@@ -308,6 +308,20 @@ async def get_world_bank_market_context(
         return await fetch_world_bank_indicators(country_codes, indicators)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/research/swahili/sources")
+def get_swahili_research_sources(
+    country_code: str = Query(default="TZ", min_length=2, max_length=6),
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """List Kiswahili publishers and their documented access/rights status."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return list_swahili_research_sources(country_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/research/swahili")
