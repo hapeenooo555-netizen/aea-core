@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.database import get_supabase_image_budget_client
@@ -29,6 +29,71 @@ def _row(response: Any) -> dict[str, Any] | None:
     if isinstance(data, list):
         return data[0] if data else None
     return data if isinstance(data, dict) else None
+
+
+@router.get("/assets")
+def list_graphic_design_assets(
+    limit: int = Query(default=30, ge=1, le=50),
+    owner_id: str = Depends(get_current_user_id),
+    user_client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List the signed-in owner's completed design assets from private storage."""
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user_client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database access is unavailable")
+
+    try:
+        response = (
+            user_client.table("graphic_design_jobs")
+            .select("id,prompt,aspect_ratio,provider,model,status,asset_path,mime_type,width,height,created_at")
+            .eq("owner_id", owner_id)
+            .eq("status", "completed")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        rows = getattr(response, "data", None) or []
+        if not isinstance(rows, list):
+            raise RuntimeError("Unexpected graphic-design asset listing response")
+
+        assets = []
+        bucket = user_client.storage.from_("aea-design-assets")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            asset_path = row.get("asset_path")
+            # Defense in depth: never sign a path outside the authenticated
+            # user's folder, even if a privileged writer inserted bad metadata.
+            if not isinstance(asset_path, str) or not asset_path.startswith(f"{owner_id}/"):
+                continue
+            signed = bucket.create_signed_url(asset_path, 3600)
+            signed_data = getattr(signed, "data", None) or {}
+            signed_url = signed_data.get("signedUrl") or signed_data.get("signedURL")
+            if not signed_url:
+                raise RuntimeError("Could not create a temporary asset URL")
+            assets.append({
+                "job_id": row.get("id"),
+                "prompt": row.get("prompt"),
+                "aspect_ratio": row.get("aspect_ratio"),
+                "provider": row.get("provider"),
+                "model": row.get("model"),
+                "status": "completed",
+                "signed_url": signed_url,
+                "signed_url_expires_in": 3600,
+                "mime_type": row.get("mime_type"),
+                "width": row.get("width"),
+                "height": row.get("height"),
+                "created_at": row.get("created_at"),
+            })
+        return {"success": True, "assets": assets, "count": len(assets)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not load private graphic-design assets",
+        ) from exc
 
 
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
