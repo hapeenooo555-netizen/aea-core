@@ -96,3 +96,62 @@ async def search_swahili_rss(
         ],
         "notice": "Utafutaji wa RSS umezimwa hadi AEA ipate ruhusa/leseni ya matumizi ya kibiashara kutoka kwa mchapishaji. Hakuna metadata iliyopakuliwa.",
     }
+
+
+# Registry entries are discovery metadata only. A source is not fetchable merely
+# because it appears here; access_mode and rights_status are enforced separately.
+_SOURCES = (
+    {
+        "source_id": "voa_swahili",
+        "publisher": "Voice of America - Kiswahili",
+        "publisher_url": "https://www.voaswahili.com/rssfeeds",
+        "country_scope": ["TZ", "KE", "UG", "RW", "CD", "GLOBAL"],
+        "language": "sw",
+        "categories": ["news", "health", "africa", "world", "culture"],
+        "source_type": "publisher_rss_directory",
+        "access_mode": "public_domain_original_voa_material_only",
+        "rights_status": "conditional_public_domain",
+        "rights_note": "VOA inaeleza kuwa maudhui yaliyotengenezwa pekee na VOA ni public domain; maudhui yenye leseni za AFP/AP/Reuters au wahusika wengine hayaruhusiwi kunakiliwa bila ruhusa. RSS feed URLs hazijawezeshwa hadi zichunguzwe moja moja.",
+        "enabled": False,
+        "verification_url": "https://www.voaafrica.com/p/8177.html",
+    },
+    {
+        "source_id": "bbc_swahili",
+        "publisher": "BBC News Swahili",
+        "publisher_url": "https://www.bbc.com/swahili",
+        "country_scope": ["TZ", "KE", "UG", "GLOBAL"],
+        "language": "sw",
+        "categories": ["news", "africa", "world", "business"],
+        "source_type": "publisher_rss",
+        "access_mode": "business_permission_required",
+        "rights_status": "permission_pending",
+        "rights_note": "Usomaji wa RSS hauchukuliwi kama ruhusa ya kutumia maudhui kibiashara.",
+        "enabled": False,
+        "verification_url": "https://www.bbc.com/usingthebbc/terms",
+    },
+)
+
+
+def list_swahili_research_sources(country_code: str = "TZ") -> dict[str, Any]:
+    """Return a rights-aware catalog; never fetch source content."""
+    country = country_code.strip().upper()
+    if country not in {"TZ", "KE", "UG", "RW", "CD", "GLOBAL"}:
+        raise ValueError("Unsupported Swahili market code.")
+    sources = [
+        {
+            **source,
+            "country_scope": list(source["country_scope"]),
+            "categories": list(source["categories"]),
+        }
+        for source in _SOURCES
+        if country == "GLOBAL" or country in source["country_scope"] or "GLOBAL" in source["country_scope"]
+    ]
+    return {
+        "provider": "aea_swahili_source_registry",
+        "country_code": country,
+        "language": "Kiswahili",
+        "source_count": len(sources),
+        "enabled_count": sum(1 for source in sources if source["enabled"]),
+        "sources": sources,
+        "notice": "Kuonekana kwenye registry hakumaanishi ruhusa ya kunakili au kutumia maudhui kibiashara. Hali ya haki na masharti ya kila chanzo lazima yaheshimiwe.",
+    }
