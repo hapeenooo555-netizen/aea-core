@@ -23,6 +23,8 @@ _FEEDS = (
         "language": "sw",
         "market_scope": ["TZ", "KE", "UG", "global"],
         "source_type": "news",
+        "access_mode": "business_permission_required",
+        "enabled": False,
     },
 )
 _MAX_ITEMS = 30
@@ -71,56 +73,26 @@ async def search_swahili_rss(
         raise ValueError("Limit must be between 1 and 20.")
 
     retrieved_at = datetime.now(timezone.utc).isoformat()
-    terms = [part.casefold() for part in re.findall(r"[\w'-]+", query) if len(part) > 1]
-    items: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
-        for feed in _FEEDS:
-            if country != "GLOBAL" and country not in feed["market_scope"]:
-                continue
-            try:
-                response = await client.get(
-                    feed["url"],
-                    headers={"Accept": "application/rss+xml, application/xml, text/xml"},
-                )
-                response.raise_for_status()
-                root = ET.fromstring(response.content)
-                for node in root.findall(".//item"):
-                    title = _plain_text(node.findtext("title"), 300)
-                    description = _plain_text(node.findtext("description"))
-                    link = (node.findtext("link") or "").strip()
-                    if not title or not _host_allowed(link):
-                        continue
-                    searchable = f"{title} {description}".casefold()
-                    if terms and not any(term in searchable for term in terms):
-                        continue
-                    items.append({
-                        "title": title,
-                        "publisher": feed["publisher"],
-                        "source_id": feed["id"],
-                        "source_type": feed["source_type"],
-                        "language": "Kiswahili",
-                        "country_scope": country,
-                        "url": link,
-                        "excerpt": description,
-                        "published_at": _published(node.findtext("pubDate")),
-                        "retrieved_at": retrieved_at,
-                        "verification_status": "publisher_feed_metadata_only",
-                        "reliability_note": "Chanzo cha habari kinachojulikana; dai mahususi bado linahitaji kuhakikiwa kwa kusoma chanzo na kulinganisha ushahidi.",
-                    })
-                    if len(items) >= _MAX_ITEMS:
-                        break
-            except (httpx.HTTPError, ET.ParseError, ValueError):
-                errors.append({"source_id": feed["id"], "error": "feed_unavailable_or_invalid"})
-    items.sort(key=lambda item: item["published_at"] or "", reverse=True)
+    # BBC terms require permission/licensing for business use of RSS metadata.
+    # Keep the connector dormant until AEA has documented that permission.
     return {
         "provider": "aea_swahili_rss_discovery",
-        "status": "retrieved" if items and not errors else ("partial" if items else "unavailable"),
+        "status": "source_permission_required",
         "query": query,
         "country_code": country,
         "language": "Kiswahili",
         "retrieved_at": retrieved_at,
-        "results": items[:limit],
-        "errors": errors,
-        "notice": "Matokeo haya ni metadata na dondoo fupi kutoka RSS ya mchapishaji. Si uthibitisho huru wa madai, si utafiti wa maoni ya wananchi, wala kipimo cha mahitaji ya soko. Fungua chanzo na linganisha vyanzo kabla ya kutumia dai kama ukweli.",
+        "results": [],
+        "sources": [
+            {
+                "source_id": feed["id"],
+                "publisher": feed["publisher"],
+                "feed_url": feed["url"],
+                "access_mode": feed["access_mode"],
+                "enabled": feed["enabled"],
+            }
+            for feed in _FEEDS
+            if country == "GLOBAL" or country in feed["market_scope"]
+        ],
+        "notice": "Utafutaji wa RSS umezimwa hadi AEA ipate ruhusa/leseni ya matumizi ya kibiashara kutoka kwa mchapishaji. Hakuna metadata iliyopakuliwa.",
     }
