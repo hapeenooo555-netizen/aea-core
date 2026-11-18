@@ -39,13 +39,18 @@ class ImageProviderNotConfigured(RuntimeError):
 
 
 def get_image_generation_provider() -> ImageGenerationProvider:
-    """Resolve an enabled image provider or fail closed.
+    """Resolve fal.ai using server-side credentials and the atomic budget ledger."""
+    import os
 
-    AEA's model registry currently stores provider/model metadata, not secrets.
-    Until a concrete adapter is registered and its deployment secret exists,
-    callers must receive an explicit unavailable result rather than a mock
-    image or an invented asset URL.
-    """
-    raise ImageProviderNotConfigured(
-        "No image-generation provider is configured for AEA Core."
-    )
+    from app.database import get_supabase_image_budget_client
+    from app.services.fal_image_generation_provider import FalImageGenerationProvider
+    from app.services.image_generation_budget import SupabaseImageBudget
+
+    if os.getenv("AEA_IMAGE_PROVIDER", "fal").lower() != "fal":
+        raise ImageProviderNotConfigured("Configured image provider is not supported")
+    client = get_supabase_image_budget_client()
+    if client is None:
+        raise ImageProviderNotConfigured(
+            "Supabase service-role configuration is required for image budget enforcement"
+        )
+    return FalImageGenerationProvider(SupabaseImageBudget(client))
