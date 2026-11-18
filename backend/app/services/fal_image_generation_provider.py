@@ -272,13 +272,25 @@ class FalImageGenerationProvider:
             # signed URLs, headers, API keys, or exception messages.
             # Extract only an HTTP status code from the provider exception. Do not
             # emit the exception message because it may contain response-body data.
+            safe_error_text = str(exc).lower()
+            if "exhausted balance" in safe_error_text or "top_up" in safe_error_text:
+                provider_error_category = "billing_balance"
+            elif "insufficient funds" in safe_error_text:
+                provider_error_category = "insufficient_funds"
+            elif "locked" in safe_error_text:
+                provider_error_category = "account_locked"
+            elif any(term in safe_error_text for term in ("permission", "access denied", "not authorized", "forbidden")):
+                provider_error_category = "access_denied"
+            else:
+                provider_error_category = "unclassified"
             status_match = re.search(r"\bHTTP\s+(\d{3})\b", str(exc))
             logger.error(
-                "fal.ai generation failed at stage=%s submitted=%s error_type=%s provider_http_status=%s",
+                "fal.ai generation failed at stage=%s submitted=%s error_type=%s provider_http_status=%s provider_error_category=%s",
                 stage,
                 submitted_to_provider,
                 type(exc).__name__,
                 status_match.group(1) if status_match else "unknown",
+                provider_error_category,
             )
             # Once fal accepts a request, its charge may be incurred even if
             # polling, download, or persistence fails. Keep the reservation in
