@@ -429,11 +429,13 @@ def plan_video_project_from_prompt(
             status_code=503,
             detail="Video story planning needs a live LLM provider. Configure GROQ_API_KEY and LLM_PROVIDER=groq.",
         )
+    minimum_scene_count = (body.target_duration_seconds + 9) // 10
     brief = {
         "user_prompt": body.prompt,
         "title": body.title,
         "format": body.format,
         "target_duration_seconds": body.target_duration_seconds,
+        "minimum_scene_count": minimum_scene_count,
         "aspect_ratio": body.aspect_ratio,
         "visual_style": body.visual_style,
         "presenter_mode": body.presenter_mode,
@@ -443,8 +445,9 @@ def plan_video_project_from_prompt(
         "production_rules": [
             "Create a complete beginning, middle and ending, not a short teaser.",
             "Return a character_bible object describing each recurring fictional character with stable appearance, age range, clothing, voice style and role; reference these exact descriptors consistently in scene prompts.",
-            "Break the full requested runtime into ordered scenes, each 2 to 10 seconds because each scene is generated separately.",
-            "Use enough scenes for the total scene durations to reach at least 90 percent of the requested runtime.",
+            "Plan for the full target duration, not a teaser or summary. For a 300-second target, create at least 30 scenes.",
+            "Break the runtime into ordered scenes, each 2 to 10 seconds because each scene is generated separately.",
+            "The sum of all duration_seconds must equal the target_duration_seconds as closely as possible and must never be below 90 percent of it.",
             "Keep recurring characters visually consistent; repeat stable character appearance, clothing and age descriptors in every relevant visual_prompt.",
             "For faceless mode, do not show a speaking presenter or visible identifiable face.",
             "For realistic_human or mixed, describe natural human appearance, expressions, gestures and camera movement.",
@@ -478,20 +481,62 @@ def plan_video_project_from_prompt(
             status_code=502,
             detail="AI provider returned an empty completion. Check the configured Groq model and retry planning.",
         )
-    try:
-        data = json.loads(raw)
-        if not isinstance(data, dict) or not isinstance(data.get("scenes"), list):
+    def parse_scenes(content: str) -> tuple[dict[str, Any], list[PlannedVideoScene]]:
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("scenes"), list):
             raise ValueError("Expected a scenes array")
-        scenes = [PlannedVideoScene.model_validate(item) for item in data["scenes"]]
+        parsed_scenes = [PlannedVideoScene.model_validate(item) for item in parsed["scenes"]]
+        if not parsed_scenes or len(parsed_scenes) > 720:
+            raise ValueError("Scene plan must contain between 1 and 720 scenes")
+        return parsed, parsed_scenes
+
+    try:
+        data, scenes = parse_scenes(raw)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI returned an invalid scene plan. Please retry with a more specific prompt.") from exc
-    if not scenes or len(scenes) > 720:
-        raise HTTPException(status_code=502, detail="AI scene plan must contain between 1 and 720 scenes.")
+
     planned_seconds = sum(scene.duration_seconds for scene in scenes)
-    if planned_seconds < int(body.target_duration_seconds * 0.9):
+    minimum_seconds = int(body.target_duration_seconds * 0.9)
+    if planned_seconds < minimum_seconds:
+        # One bounded repair call gives the model the exact deficit and scene-count
+        # target rather than asking the user to repeat the same failed request.
+        repair_brief = {
+            **brief,
+            "repair_instruction": (
+                f"The previous plan totalled {planned_seconds} seconds, below the required "
+                f"{minimum_seconds} seconds. Regenerate the complete storyboard with at least "
+                f"{minimum_scene_count} scenes, each 2-10 seconds, targeting exactly "
+                f"{body.target_duration_seconds} seconds. Do not summarize or shorten the story. "
+                "Return the full JSON object with every scene."
+            ),
+            "previous_plan": data,
+        }
+        try:
+            repaired = provider.generate(
+                prompt=json.dumps(repair_brief, ensure_ascii=False),
+                system_prompt=(
+                    "You are repairing an incomplete long-form video storyboard. "
+                    "Meet the requested runtime and scene count exactly; do not return a summary. "
+                    "Return only valid JSON."
+                ),
+            )
+            if not isinstance(repaired, dict) or repaired.get("success") is False:
+                raise ValueError("Provider could not repair the short storyboard")
+            repaired_content = repaired.get("content")
+            if not isinstance(repaired_content, str) or not repaired_content.strip():
+                raise ValueError("Provider returned an empty repaired storyboard")
+            data, scenes = parse_scenes(repaired_content)
+            planned_seconds = sum(scene.duration_seconds for scene in scenes)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="AI could not repair the storyboard to the requested duration. Retry planning or reduce the target duration.",
+            ) from exc
+
+    if planned_seconds < minimum_seconds:
         raise HTTPException(
             status_code=502,
-            detail=f"AI plan is too short ({planned_seconds}s) for the requested {body.target_duration_seconds}s. Retry planning.",
+            detail=f"AI plan is still too short ({planned_seconds}s) for the requested {body.target_duration_seconds}s after one repair attempt.",
         )
     project_id, scene_rows = _create_project_rows(
         db,
