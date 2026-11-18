@@ -216,7 +216,7 @@ async def generate_graphic_design_image(
             "mime_type": final_mime_type,
             "width": final_width,
             "height": final_height,
-            "provider_metadata": {**generated.provider_metadata, "visual_inspection": {"accepted": True, "reason": inspection.reason}},
+            "provider_metadata": {**generated.provider_metadata, "visual_inspection": {"accepted": True, "reason": inspection.reason, "quality_metrics": inspection.quality_metrics}},
         }).eq("id", job_id).eq("owner_id", owner_id).execute()
         if not _row(updated):
             raise RuntimeError("Could not finalize image-generation job")

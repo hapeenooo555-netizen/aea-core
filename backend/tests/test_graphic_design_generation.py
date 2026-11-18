@@ -79,7 +79,7 @@ def teardown_function():
 def test_graphic_design_generate_creates_private_unpublished_asset(monkeypatch):
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
-    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed"))
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))
     response = TestClient(app).post("/graphic-design/generate", json={
         "prompt": "Create a clean business poster for a Tanzanian small business.",
         "aspect_ratio": "1:1",
@@ -232,7 +232,7 @@ def test_graphic_design_assets_rejects_invalid_limit():
 def test_graphic_design_generate_renders_exact_text_overlay(monkeypatch):
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
-    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed"))
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))
     response = TestClient(app).post("/graphic-design/generate", json={
         "prompt": "Create a clean abstract blue and green business background without text.",
         "aspect_ratio": "4:5",
