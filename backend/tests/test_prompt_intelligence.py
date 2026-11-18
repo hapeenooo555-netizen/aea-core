@@ -72,3 +72,30 @@ def test_domain_detection_supports_swahi_plain_language():
     assert detect_domain("Nahitaji bango la duka langu") == "graphic_design"
     assert detect_domain("Nisaidie kuandika ripoti ya biashara") == "business_documents"
     assert detect_domain("Nataka kampeni ya kutafuta wateja") == "marketing"
+
+
+def test_prompt_version_integrity_accepts_unchanged_persisted_content():
+    from app.routers.content_studio import _prompt_hash, _prompt_version_integrity_valid
+
+    version = {
+        "system_prompt": "You are AEA.",
+        "configuration": {"temperature": 0.2},
+    }
+    version["content_sha256"] = _prompt_hash(
+        version["system_prompt"], version["configuration"]
+    )
+    assert _prompt_version_integrity_valid(version)
+
+
+def test_prompt_version_integrity_rejects_modified_persisted_content():
+    from app.routers.content_studio import _prompt_hash, _prompt_version_integrity_valid
+
+    version = {
+        "system_prompt": "You are AEA.",
+        "configuration": {"temperature": 0.2},
+    }
+    version["content_sha256"] = _prompt_hash(
+        version["system_prompt"], version["configuration"]
+    )
+    version["system_prompt"] = "You are a different assistant."
+    assert not _prompt_version_integrity_valid(version)
