@@ -159,7 +159,7 @@ class GalleryClient:
         return self.query
 
 
-def test_graphic_design_assets_lists_only_owner_paths_with_temporary_urls():
+def test_graphic_design_assets_lists_only_owner_paths_with_temporary_urls(monkeypatch):
     rows = [
         {
             "id": "asset-1",
@@ -191,6 +191,7 @@ def test_graphic_design_assets_lists_only_owner_paths_with_temporary_urls():
         },
     ]
     client = GalleryClient(rows)
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: client)
     app.dependency_overrides[get_user_scoped_client] = lambda: client
 
     response = TestClient(app).get("/graphic-design/assets?limit=10")
