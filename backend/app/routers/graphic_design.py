@@ -33,6 +33,14 @@ def _row(response: Any) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _storage_response_data(response: Any) -> dict[str, Any]:
+    """Normalize supabase-py storage responses across SDK response shapes."""
+    if isinstance(response, dict):
+        return response
+    data = getattr(response, "data", None)
+    return data if isinstance(data, dict) else {}
+
+
 @router.get("/assets")
 def list_graphic_design_assets(
     limit: int = Query(default=30, ge=1, le=50),
@@ -78,8 +86,12 @@ def list_graphic_design_assets(
             if not isinstance(asset_path, str) or not asset_path.startswith(f"{owner_id}/"):
                 continue
             signed = bucket.create_signed_url(asset_path, 3600)
-            signed_data = getattr(signed, "data", None) or {}
-            signed_url = signed_data.get("signedUrl") or signed_data.get("signedURL")
+            signed_data = _storage_response_data(signed)
+            signed_url = (
+                signed_data.get("signedUrl")
+                or signed_data.get("signedURL")
+                or signed_data.get("signed_url")
+            )
             if not signed_url:
                 raise RuntimeError("Could not create a temporary asset URL")
             assets.append({
@@ -189,8 +201,12 @@ async def generate_graphic_design_image(
         signed = worker_client.storage.from_("aea-design-assets").create_signed_url(
             asset_path, 3600
         )
-        signed_data = getattr(signed, "data", None) or {}
-        signed_url = signed_data.get("signedUrl") or signed_data.get("signedURL")
+        signed_data = _storage_response_data(signed)
+        signed_url = (
+            signed_data.get("signedUrl")
+            or signed_data.get("signedURL")
+            or signed_data.get("signed_url")
+        )
         return {
             "success": True,
             "job_id": job_id,
