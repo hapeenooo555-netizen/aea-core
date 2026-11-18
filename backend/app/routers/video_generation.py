@@ -465,9 +465,19 @@ def plan_video_project_from_prompt(
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI story planner failed to generate the video plan.") from exc
-    raw = generated.get("content") if isinstance(generated, dict) else None
+    if not isinstance(generated, dict) or generated.get("success") is False:
+        # Keep provider diagnostics out of the public response; detailed errors
+        # remain available to server-side logs without exposing credentials.
+        raise HTTPException(
+            status_code=502,
+            detail="AI story planner could not obtain a completion from the configured provider. Check Groq model availability and server logs.",
+        )
+    raw = generated.get("content")
     if not isinstance(raw, str) or not raw.strip():
-        raise HTTPException(status_code=502, detail="AI story planner returned an empty plan.")
+        raise HTTPException(
+            status_code=502,
+            detail="AI provider returned an empty completion. Check the configured Groq model and retry planning.",
+        )
     try:
         data = json.loads(raw)
         if not isinstance(data, dict) or not isinstance(data.get("scenes"), list):
