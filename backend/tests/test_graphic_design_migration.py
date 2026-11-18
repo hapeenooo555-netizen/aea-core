@@ -11,7 +11,7 @@ MIGRATION = (
 
 def test_graphic_design_assets_use_private_bucket_and_supported_image_types():
     sql = MIGRATION.read_text(encoding="utf-8")
-    assert "'aea-design-assets', 'aea-design-assets', false" in sql
+    assert "  'aea-design-assets',\n  'aea-design-assets',\n  false," in sql
     assert "array['image/png','image/jpeg','image/webp']" in sql
     assert "file_size_limit" in sql
 
