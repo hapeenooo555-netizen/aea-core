@@ -79,6 +79,7 @@ def teardown_function():
 def test_graphic_design_generate_creates_private_unpublished_asset(monkeypatch):
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed"))
     response = TestClient(app).post("/graphic-design/generate", json={
         "prompt": "Create a clean business poster for a Tanzanian small business.",
         "aspect_ratio": "1:1",
