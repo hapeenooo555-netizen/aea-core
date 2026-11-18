@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import database
-from app.routers import ai_models, video_generation, creator_store, content_studio, meta_oauth, affiliate_cj_connection, affiliate_cj_products, affiliate_cj_promotional_properties, affiliate_discovery, affiliate_automation, affiliate_digistore24_connection, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, affiliate_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers, freelancer_foundation
+from app.routers import graphic_design, ai_models, video_generation, creator_store, content_studio, meta_oauth, affiliate_cj_connection, affiliate_cj_products, affiliate_cj_promotional_properties, affiliate_discovery, affiliate_automation, affiliate_digistore24_connection, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, affiliate_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers, freelancer_foundation
 
 # Import supabase_client for test compatibility
 supabase_client = database.supabase_client
@@ -74,6 +74,7 @@ def root() -> dict[str, str]:
 app.include_router(video_generation.router, tags=["video-generation"])
 app.include_router(ai_models.router, tags=["ai-models"])
 app.include_router(content_studio.router, tags=["content-studio"])
+app.include_router(graphic_design.router, tags=["graphic-design"])
 app.include_router(creator_store.router, tags=["creator-store"])
 app.include_router(health.router, tags=["health"])
 app.include_router(atlas.router, tags=["atlas"])
