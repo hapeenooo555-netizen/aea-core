@@ -58,8 +58,8 @@ class SupabaseImageBudget:
             ).execute()
         except Exception as exc:
             raise ImageBudgetUnavailable("Image budget settlement failed") from exc
-        if getattr(result, "data", None) is None:
-            raise ImageBudgetUnavailable("Image budget settlement returned no confirmation")
+        if getattr(result, "data", None) is not True:
+            raise ImageBudgetUnavailable("Image budget settlement was not confirmed")
 
     def release(self, job_id: str) -> None:
         try:
