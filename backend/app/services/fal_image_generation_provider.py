@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -62,6 +63,54 @@ class FalImageGenerationProvider:
         self.poll_interval_seconds = poll_interval_seconds
         self.max_polls = max_polls
         self.client = client
+
+    @staticmethod
+    def _validated_json_response(
+        response: httpx.Response, *, operation: str, secret: str | None = None
+    ) -> dict[str, Any]:
+        """Require a successful HTTP response containing a JSON object.
+
+        Error diagnostics intentionally include only status, content type and a
+        short redacted body excerpt; request headers and signed URLs are omitted.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = (response.text or "")[:500]
+            if secret:
+                body = body.replace(secret, "[REDACTED]")
+            body = re.sub(r"(?i)(authorization\\s*[:=]\\s*)(?:key|bearer)\\s+[^\\s,;]+", r"\\1[REDACTED]", body)
+            content_type = response.headers.get("content-type", "unknown")
+            raise RuntimeError(
+                f"fal.ai {operation} returned HTTP {response.status_code} "
+                f"(content-type={content_type}): {body}"
+            ) from exc
+
+        try:
+            payload = response.json()
+        except (ValueError, TypeError) as exc:
+            content_type = response.headers.get("content-type", "unknown")
+            raise RuntimeError(
+                f"fal.ai {operation} returned invalid JSON "
+                f"(HTTP {response.status_code}, content-type={content_type})"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"fal.ai {operation} returned a non-object JSON payload "
+                f"(HTTP {response.status_code})"
+            )
+        return payload
+
+    @staticmethod
+    def _trusted_url(value: Any, *, hosts: tuple[str, ...], label: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"fal.ai returned a missing or invalid {label}")
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+        trusted = any(hostname == host or hostname.endswith("." + host) for host in hosts)
+        if parsed.scheme != "https" or not trusted or parsed.username or parsed.password:
+            raise RuntimeError(f"fal.ai returned an untrusted {label}")
+        return value
 
     @staticmethod
     def _dimensions(aspect_ratio: str) -> tuple[int, int]:
@@ -119,32 +168,39 @@ class FalImageGenerationProvider:
                     "output_format": "png",
                 },
             )
-            response.raise_for_status()
+            submitted = self._validated_json_response(
+                response, operation="queue submission", secret=self.api_key
+            )
             submitted_to_provider = True
-            submitted = response.json()
-            status_url = submitted.get("status_url")
-            response_url = submitted.get("response_url")
-            for queue_url in (status_url, response_url):
-                parsed_queue = urlparse(queue_url or "")
-                if parsed_queue.scheme != "https" or not (
-                    parsed_queue.hostname == "queue.fal.run"
-                    or (parsed_queue.hostname or "").endswith(".queue.fal.run")
-                ):
-                    raise RuntimeError("fal.ai returned an invalid queue URL")
+            status_url = self._trusted_url(
+                submitted.get("status_url"),
+                hosts=("queue.fal.run",),
+                label="queue status URL",
+            )
+            response_url = self._trusted_url(
+                submitted.get("response_url"),
+                hosts=("queue.fal.run",),
+                label="queue response URL",
+            )
 
             payload: dict[str, Any] | None = None
             for _ in range(self.max_polls):
                 status = await client.get(
                     status_url, headers={"Authorization": f"Key {self.api_key}"}
                 )
-                status.raise_for_status()
-                state = status.json().get("status")
+                status_payload = self._validated_json_response(
+                    status, operation="queue status", secret=self.api_key
+                )
+                state = status_payload.get("status")
+                if not isinstance(state, str):
+                    raise RuntimeError("fal.ai queue status response omitted a valid status")
                 if state == "COMPLETED":
                     result = await client.get(
                         response_url, headers={"Authorization": f"Key {self.api_key}"}
                     )
-                    result.raise_for_status()
-                    payload = result.json()
+                    payload = self._validated_json_response(
+                        result, operation="generation result", secret=self.api_key
+                    )
                     break
                 if state in {"FAILED", "CANCELLED"}:
                     raise RuntimeError(f"fal.ai generation ended with status {state}")
@@ -152,20 +208,21 @@ class FalImageGenerationProvider:
             if payload is None:
                 raise TimeoutError("fal.ai generation did not complete before timeout")
 
-            images = payload.get("images") or []
-            if not images or not images[0].get("url"):
-                raise RuntimeError("fal.ai response did not contain an image URL")
-            image_url = images[0]["url"]
-            parsed = urlparse(image_url)
-            image_host = parsed.hostname or ""
-            if parsed.scheme != "https" or not (
-                image_host == "storage.googleapis.com"
-                or image_host.endswith(".fal.media")
-                or image_host.endswith(".fal.ai")
-            ):
-                raise RuntimeError("fal.ai returned an untrusted image host")
+            images = payload.get("images")
+            if not isinstance(images, list) or not images or not isinstance(images[0], dict):
+                raise RuntimeError("fal.ai response did not contain a valid images array")
+            image_url = self._trusted_url(
+                images[0].get("url"),
+                hosts=("storage.googleapis.com", "fal.media", "fal.ai"),
+                label="generated image URL",
+            )
             media = await client.get(image_url)
-            media.raise_for_status()
+            try:
+                media.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(
+                    f"fal.ai generated-image download returned HTTP {media.status_code}"
+                ) from exc
             content = media.content
             if not content or len(content) > 20 * 1024 * 1024:
                 raise RuntimeError("Generated image is empty or exceeds the 20 MB limit")
@@ -173,12 +230,23 @@ class FalImageGenerationProvider:
             if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
                 raise RuntimeError(f"Unsupported fal.ai image MIME type: {mime_type}")
             actual = MODEL_ESTIMATED_COST_USD[model_key]
+            image_width = images[0].get("width") or width
+            image_height = images[0].get("height") or height
+            if (
+                isinstance(image_width, bool)
+                or isinstance(image_height, bool)
+                or not isinstance(image_width, int)
+                or not isinstance(image_height, int)
+                or image_width <= 0
+                or image_height <= 0
+            ):
+                raise RuntimeError("fal.ai returned invalid image dimensions")
             self.budget.settle(job_id, actual)
             return GeneratedImage(
                 content=content,
                 mime_type=mime_type,
-                width=int(images[0].get("width") or width),
-                height=int(images[0].get("height") or height),
+                width=image_width,
+                height=image_height,
                 provider=self.name,
                 model=FAL_MODEL_IDS[model_key],
                 provider_metadata={
