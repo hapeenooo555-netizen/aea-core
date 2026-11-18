@@ -52,3 +52,103 @@ def test_budget_exhaustion_is_a_hard_preflight_failure():
     with pytest.raises(ImageBudgetExceeded):
         budget.reserve("job-1", Decimal("0.15"))
     assert budget.reserved
+
+
+import asyncio
+
+import httpx
+
+
+class SettlingBudget(Budget):
+    def __init__(self, allow=True):
+        super().__init__(allow=allow)
+        self.settled = []
+
+    def settle(self, job_id, amount):
+        self.settled.append((job_id, amount))
+
+
+def test_generate_uses_injected_http_client_and_settles_budget():
+    requests = []
+    image_bytes = b"\x89PNG\r\n\x1a\nmock-image"
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "request_id": "request-123",
+                    "status_url": "https://queue.fal.run/tasks/123/status",
+                    "response_url": "https://queue.fal.run/tasks/123",
+                },
+            )
+        if request.url.path.endswith("/status"):
+            return httpx.Response(200, json={"status": "COMPLETED"})
+        if request.url.host == "queue.fal.run":
+            return httpx.Response(
+                200,
+                json={
+                    "images": [{
+                        "url": "https://cdn.fal.media/mock.png",
+                        "content_type": "image/png",
+                        "width": 1024,
+                        "height": 1024,
+                    }]
+                },
+            )
+        if request.url.host == "cdn.fal.media":
+            return httpx.Response(200, content=image_bytes, headers={"content-type": "image/png"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    async def run():
+        budget = SettlingBudget()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            provider = FalImageGenerationProvider(
+                budget,
+                api_key="test-fal-key",
+                client=client,
+                poll_interval_seconds=0,
+            )
+            generated = await provider.generate(
+                prompt="Create a clean AEA promotional graphic",
+                aspect_ratio="1:1",
+                model="z_image_turbo",
+            )
+            assert not client.is_closed
+
+        assert generated.content == image_bytes
+        assert generated.mime_type == "image/png"
+        assert (generated.width, generated.height) == (1024, 1024)
+        assert generated.provider == "fal.ai"
+        assert generated.model == "fal-ai/z-image/turbo"
+        assert generated.provider_metadata["request_id"] == "request-123"
+        assert len(budget.reserved) == 1
+        assert budget.settled == [(budget.reserved[0][0], Decimal("0.02"))]
+        assert budget.released == []
+        assert [request.method for request in requests] == ["POST", "GET", "GET", "GET"]
+        assert requests[0].headers["authorization"] == "Key test-fal-key"
+
+    asyncio.run(run())
+
+
+def test_generate_releases_budget_when_provider_rejects_submission():
+    def handler(request):
+        return httpx.Response(503, json={"error": "provider unavailable"})
+
+    async def run():
+        budget = SettlingBudget()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            provider = FalImageGenerationProvider(
+                budget, api_key="test-fal-key", client=client
+            )
+            with pytest.raises(RuntimeError, match="HTTP 503"):
+                await provider.generate(
+                    prompt="Create a clean AEA promotional graphic",
+                    aspect_ratio="1:1",
+                )
+        assert len(budget.reserved) == 1
+        assert budget.released == [budget.reserved[0][0]]
+        assert budget.settled == []
+
+    asyncio.run(run())
