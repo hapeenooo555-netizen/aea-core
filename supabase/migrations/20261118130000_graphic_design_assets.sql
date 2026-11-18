@@ -37,17 +37,19 @@ create policy "owners read own graphic design jobs"
   on public.graphic_design_jobs for select to authenticated
   using ((select auth.uid()) = owner_id);
 drop policy if exists "owners create own graphic design jobs" on public.graphic_design_jobs;
-create policy "owners create own graphic design jobs"
+create policy "owners create own pending graphic design jobs"
   on public.graphic_design_jobs for insert to authenticated
-  with check ((select auth.uid()) = owner_id);
-drop policy if exists "owners update own graphic design jobs" on public.graphic_design_jobs;
-create policy "owners update own graphic design jobs"
-  on public.graphic_design_jobs for update to authenticated
-  using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and status = 'pending'
+    and asset_path is null
+    and provider_task_id is null
+  );
 
+-- Browser users must never be able to mark a job complete or substitute an
+-- asset path/provider response. Only the trusted server-side worker may update.
 revoke all on public.graphic_design_jobs from anon, authenticated;
-grant select, insert, update on public.graphic_design_jobs to authenticated;
+grant select, insert on public.graphic_design_jobs to authenticated;
 grant all on public.graphic_design_jobs to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
