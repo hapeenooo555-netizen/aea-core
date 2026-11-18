@@ -28,7 +28,7 @@ _FEEDS = (
 _MAX_ITEMS = 30
 _MAX_EXCERPT = 500
 _TAG = re.compile(r"<[^>]+>")
-_SPACE = re.compile(r"\\s+")
+_SPACE = re.compile(r"\s+")
 
 
 def _plain_text(value: str | None, limit: int = _MAX_EXCERPT) -> str:
@@ -71,7 +71,7 @@ async def search_swahili_rss(
         raise ValueError("Limit must be between 1 and 20.")
 
     retrieved_at = datetime.now(timezone.utc).isoformat()
-    terms = [part.casefold() for part in re.findall(r"[\\w'-]+", query) if len(part) > 1]
+    terms = [part.casefold() for part in re.findall(r"[\w'-]+", query) if len(part) > 1]
     items: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
