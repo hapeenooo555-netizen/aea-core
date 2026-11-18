@@ -194,3 +194,27 @@ def get_supabase_client_for_user(user_access_token: str) -> Any:
 
 if is_supabase_configured():
     supabase_client = get_supabase_client()
+
+
+_image_budget_worker_client: Any = None
+
+
+def get_supabase_image_budget_client() -> Any:
+    """Return an isolated service-role client for atomic image budget RPCs.
+
+    This client is only used by the server-side provider adapter. Never return
+    it from an API route or use it for user-scoped application queries.
+    """
+    global _image_budget_worker_client
+    if _image_budget_worker_client is not None:
+        return _image_budget_worker_client
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+        _image_budget_worker_client = create_client(url, service_role_key)
+        return _image_budget_worker_client
+    except Exception:  # pragma: no cover - deployment configuration failure
+        return None

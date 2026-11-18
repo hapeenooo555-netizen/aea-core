@@ -6,6 +6,7 @@ each save creates a new immutable version, preserving version history.
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
+from app.services.prompt_intelligence import build_intelligence_context
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
@@ -287,7 +289,18 @@ def generate_studio_draft(
             detail="AI Content Studio is not configured with a production LLM provider. Configure GROQ_API_KEY and LLM_PROVIDER=groq before generating live content.",
         )
 
+    intelligence_context = build_intelligence_context(
+        prompt=body.prompt,
+        content_type=body.content_type,
+        niche=body.niche,
+        audience=body.audience,
+        objective=body.objective,
+        language=body.language,
+        tone=body.tone,
+        platforms=body.platforms,
+    )
     brief = {
+        "prompt_intelligence": intelligence_context,
         "prompt": body.prompt,
         "niche": body.niche,
         "content_type": body.content_type,
@@ -455,6 +468,166 @@ def revise_studio_asset(
     if not row:
         raise HTTPException(status_code=502, detail="Database did not confirm the new draft version.")
     return {"success": True, "asset": row, "replayed": False}
+
+
+class PromptRegistryCreateRequest(BaseModel):
+    prompt_key: str = Field(min_length=3, max_length=120, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    display_name: str = Field(min_length=1, max_length=200)
+    domain: Literal["video", "graphic_design", "marketing", "copywriting", "business_documents", "general"]
+    system_prompt: str = Field(min_length=10, max_length=20000)
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    change_note: str = Field(default="Initial version", max_length=1000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromptRegistryVersionRequest(BaseModel):
+    system_prompt: str = Field(min_length=10, max_length=20000)
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    change_note: str = Field(min_length=1, max_length=1000)
+    model_config = ConfigDict(extra="forbid")
+
+
+def _prompt_hash(system_prompt: str, configuration: dict[str, Any]) -> str:
+    canonical = json.dumps({"system_prompt": system_prompt, "configuration": configuration}, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _prompt_version_integrity_valid(version: dict[str, Any]) -> bool:
+    """Verify persisted prompt content against its canonical SHA-256 fingerprint."""
+    return version.get("content_sha256") == _prompt_hash(
+        version.get("system_prompt", ""), version.get("configuration") or {}
+    )
+
+
+@router.post("/prompts", status_code=status.HTTP_201_CREATED)
+def create_prompt_registry_entry(
+    body: PromptRegistryCreateRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a private prompt entry and immutable version 1."""
+    db = _require_user_client(client)
+    existing = db.table("prompt_intelligence_registry").select("id").eq("owner_id", owner_id).eq("prompt_key", body.prompt_key).limit(1).execute()
+    if _response_row(existing):
+        raise HTTPException(status_code=409, detail="A prompt with this key already exists.")
+    registry = db.table("prompt_intelligence_registry").insert({
+        "owner_id": owner_id, "prompt_key": body.prompt_key, "display_name": body.display_name,
+        "domain": body.domain, "active_version": 1,
+    }).execute()
+    row = _response_row(registry)
+    if not row:
+        raise HTTPException(status_code=502, detail="Prompt registry entry was not persisted.")
+    version = db.table("prompt_intelligence_versions").insert({
+        "registry_id": row["id"], "owner_id": owner_id, "version": 1,
+        "system_prompt": body.system_prompt, "configuration": body.configuration,
+        "change_note": body.change_note, "content_sha256": _prompt_hash(body.system_prompt, body.configuration),
+    }).execute()
+    version_row = _response_row(version)
+    if not version_row:
+        raise HTTPException(status_code=502, detail="Prompt version was not persisted.")
+    return {"success": True, "prompt": row, "version": version_row}
+
+
+@router.get("/prompts")
+def list_prompt_registry(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List prompt entries belonging only to the authenticated owner."""
+    db = _require_user_client(client)
+    result = db.table("prompt_intelligence_registry").select("id,prompt_key,display_name,domain,active_version,created_at,updated_at").eq("owner_id", owner_id).order("updated_at", desc=True).limit(200).execute()
+    return {"success": True, "prompts": getattr(result, "data", None) or []}
+
+
+@router.post("/prompts/{registry_id}/versions", status_code=status.HTTP_201_CREATED)
+def create_prompt_version(
+    registry_id: UUID,
+    body: PromptRegistryVersionRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Append a new immutable version; never overwrite earlier prompt content."""
+    db = _require_user_client(client)
+    current = db.table("prompt_intelligence_registry").select("*").eq("owner_id", owner_id).eq("id", str(registry_id)).limit(1).execute()
+    registry = _response_row(current)
+    if not registry:
+        raise HTTPException(status_code=404, detail="Prompt registry entry not found.")
+    latest_response = db.table("prompt_intelligence_versions").select("version").eq("owner_id", owner_id).eq("registry_id", str(registry_id)).order("version", desc=True).limit(1).execute()
+    latest = _response_row(latest_response)
+    next_version = int(latest["version"]) + 1 if latest else 1
+    saved = db.table("prompt_intelligence_versions").insert({
+        "registry_id": str(registry_id), "owner_id": owner_id, "version": next_version,
+        "system_prompt": body.system_prompt, "configuration": body.configuration,
+        "change_note": body.change_note, "content_sha256": _prompt_hash(body.system_prompt, body.configuration),
+    }).execute()
+    version = _response_row(saved)
+    if not version:
+        raise HTTPException(status_code=502, detail="Prompt version was not persisted.")
+    db.table("prompt_intelligence_registry").update({"active_version": next_version}).eq("owner_id", owner_id).eq("id", str(registry_id)).execute()
+    return {"success": True, "version": version, "active_version": next_version}
+
+
+@router.get("/prompts/{registry_id}/active")
+def get_active_prompt_version(
+    registry_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Resolve the active immutable prompt version for an owned registry entry."""
+    db = _require_user_client(client)
+    registry_response = db.table("prompt_intelligence_registry").select(
+        "id,prompt_key,display_name,domain,active_version"
+    ).eq("owner_id", owner_id).eq("id", str(registry_id)).limit(1).execute()
+    registry = _response_row(registry_response)
+    if not registry:
+        raise HTTPException(status_code=404, detail="Prompt registry entry not found.")
+
+    version_response = db.table("prompt_intelligence_versions").select(
+        "id,registry_id,version,system_prompt,configuration,change_note,content_sha256,created_at"
+    ).eq("owner_id", owner_id).eq("registry_id", str(registry_id)).eq(
+        "version", registry["active_version"]
+    ).limit(1).execute()
+    active = _response_row(version_response)
+    if not active:
+        raise HTTPException(status_code=409, detail="The active prompt version is missing.")
+
+    if not _prompt_version_integrity_valid(active):
+        raise HTTPException(status_code=409, detail="Prompt version integrity check failed.")
+
+    return {"success": True, "prompt": registry, "active_version": active}
+
+
+@router.get("/prompts/{registry_id}/versions")
+def list_prompt_versions(
+    registry_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return append-only version history for an owned prompt."""
+    db = _require_user_client(client)
+    result = db.table("prompt_intelligence_versions").select("id,registry_id,version,configuration,change_note,content_sha256,created_at").eq("owner_id", owner_id).eq("registry_id", str(registry_id)).order("version", desc=True).limit(100).execute()
+    return {"success": True, "versions": getattr(result, "data", None) or []}
+
+
+@router.post("/prompts/{registry_id}/rollback/{version}")
+def rollback_prompt_version(
+    registry_id: UUID,
+    version: int,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Point an owned prompt back to an existing immutable version."""
+    if version < 1:
+        raise HTTPException(status_code=422, detail="Version must be positive.")
+    db = _require_user_client(client)
+    selected = db.table("prompt_intelligence_versions").select("id,version").eq("owner_id", owner_id).eq("registry_id", str(registry_id)).eq("version", version).limit(1).execute()
+    if not _response_row(selected):
+        raise HTTPException(status_code=404, detail="Prompt version not found.")
+    updated = db.table("prompt_intelligence_registry").update({"active_version": version}).eq("owner_id", owner_id).eq("id", str(registry_id)).execute()
+    row = _response_row(updated)
+    if not row:
+        raise HTTPException(status_code=404, detail="Prompt registry entry not found.")
+    return {"success": True, "active_version": version}
 
 
 class CountryRevenueEventRequest(BaseModel):
