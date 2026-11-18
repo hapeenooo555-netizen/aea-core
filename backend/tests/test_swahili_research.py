@@ -39,3 +39,24 @@ async def test_search_does_not_fetch_bbc_rss_without_business_permission():
     assert result["results"] == []
     assert result["sources"][0]["enabled"] is False
     assert result["sources"][0]["access_mode"] == "business_permission_required"
+
+
+def test_swahili_source_registry_is_metadata_only_and_rights_aware():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    result = list_swahili_research_sources("TZ")
+    assert result["provider"] == "aea_swahili_source_registry"
+    assert result["source_count"] >= 2
+    assert result["enabled_count"] == 0
+    by_id = {source["source_id"]: source for source in result["sources"]}
+    assert by_id["bbc_swahili"]["rights_status"] == "permission_pending"
+    assert by_id["bbc_swahili"]["enabled"] is False
+    assert by_id["voa_swahili"]["rights_status"] == "mixed_content_rights_review"
+    assert by_id["voa_swahili"]["enabled"] is False
+
+
+def test_swahili_source_registry_rejects_unknown_market():
+    from app.services.swahili_research import list_swahili_research_sources
+
+    with pytest.raises(ValueError):
+        list_swahili_research_sources("XX")
