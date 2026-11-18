@@ -7,6 +7,7 @@ Supabase Storage rather than relying on fal CDN URLs.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -24,6 +25,8 @@ from app.services.image_generation_provider import (
     GeneratedImage,
     ImageProviderNotConfigured,
 )
+
+logger = logging.getLogger(__name__)
 
 FAL_QUEUE_BASE = "https://queue.fal.run"
 FAL_MODEL_IDS = {
@@ -142,7 +145,12 @@ class FalImageGenerationProvider:
         job_id = str(uuid.uuid4())
         reservation = MODEL_RESERVATIONS_USD[model_key]
         # Reservation is atomic and occurs before the first billable request.
-        self.budget.reserve(job_id, reservation)
+        stage = "budget_reservation"
+        try:
+            self.budget.reserve(job_id, reservation)
+        except Exception as exc:
+            logger.error("fal.ai generation failed at stage=%s error_type=%s", stage, type(exc).__name__)
+            raise
 
         own_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=self.timeout_seconds)
@@ -153,6 +161,7 @@ class FalImageGenerationProvider:
         }
         endpoint = f"{FAL_QUEUE_BASE}/{FAL_MODEL_IDS[model_key]}"
         submitted_to_provider = False
+        stage = "queue_submission"
         try:
             response = await client.post(
                 endpoint,
@@ -184,6 +193,7 @@ class FalImageGenerationProvider:
             )
 
             payload: dict[str, Any] | None = None
+            stage = "queue_polling"
             for _ in range(self.max_polls):
                 status = await client.get(
                     status_url, headers={"Authorization": f"Key {self.api_key}"}
@@ -211,6 +221,7 @@ class FalImageGenerationProvider:
             images = payload.get("images")
             if not isinstance(images, list) or not images or not isinstance(images[0], dict):
                 raise RuntimeError("fal.ai response did not contain a valid images array")
+            stage = "image_download"
             image_url = self._trusted_url(
                 images[0].get("url"),
                 hosts=("storage.googleapis.com", "fal.media", "fal.ai"),
@@ -241,6 +252,7 @@ class FalImageGenerationProvider:
                 or image_height <= 0
             ):
                 raise RuntimeError("fal.ai returned invalid image dimensions")
+            stage = "budget_settlement"
             self.budget.settle(job_id, actual)
             return GeneratedImage(
                 content=content,
@@ -255,7 +267,10 @@ class FalImageGenerationProvider:
                     "estimated_cost_usd": str(actual),
                 },
             )
-        except Exception:
+        except Exception as exc:
+            # Log only stage and exception class; never log prompts, response bodies,
+            # signed URLs, headers, API keys, or exception messages.
+            logger.error("fal.ai generation failed at stage=%s submitted=%s error_type=%s", stage, submitted_to_provider, type(exc).__name__)
             # Once fal accepts a request, its charge may be incurred even if
             # polling, download, or persistence fails. Keep the reservation in
             # that uncertain case; release only when submission never succeeded.
