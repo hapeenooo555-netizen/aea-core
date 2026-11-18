@@ -59,6 +59,9 @@ begin
   select * into r from public.aea_image_budget_reservations
     where job_id = p_job_id for update;
   if not found or r.status <> 'reserved' then return false; end if;
+  -- Refuse settlement above the preflight reservation; a model's configured
+  -- maximum price must never be silently exceeded by the application ledger.
+  if p_actual_usd > r.amount_usd then return false; end if;
   update public.aea_image_budget
     set reserved_usd = greatest(0, reserved_usd - r.amount_usd),
         spent_usd = spent_usd + p_actual_usd, updated_at = now()
