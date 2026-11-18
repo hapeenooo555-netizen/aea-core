@@ -103,18 +103,24 @@ class FalImageGenerationProvider:
             "X-Fal-Store-IO": "0",
         }
         endpoint = f"{FAL_QUEUE_BASE}/{FAL_MODEL_IDS[model_key]}"
+        submitted_to_provider = False
         try:
             response = await client.post(
                 endpoint,
                 headers=headers,
                 json={
                     "prompt": prompt,
-                    "image_size": {"width": width, "height": height},
+                    **(
+                        {"aspect_ratio": aspect_ratio}
+                        if model_key == "nano_banana_pro"
+                        else {"image_size": {"width": width, "height": height}}
+                    ),
                     "num_images": 1,
                     "output_format": "png",
                 },
             )
             response.raise_for_status()
+            submitted_to_provider = True
             submitted = response.json()
             status_url = submitted.get("status_url")
             response_url = submitted.get("response_url")
@@ -153,7 +159,7 @@ class FalImageGenerationProvider:
             content = media.content
             if not content or len(content) > 20 * 1024 * 1024:
                 raise RuntimeError("Generated image is empty or exceeds the 20 MB limit")
-            mime_type = media.headers.get("content-type", "").split(";")[0].lower()
+            mime_type = (images[0].get("content_type") or media.headers.get("content-type", "")).split(";")[0].lower()
             if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
                 raise RuntimeError(f"Unsupported fal.ai image MIME type: {mime_type}")
             actual = MODEL_ESTIMATED_COST_USD[model_key]
@@ -172,12 +178,14 @@ class FalImageGenerationProvider:
                 },
             )
         except Exception:
-            # Release only on known request failures. A settlement failure keeps
-            # the reservation conservative, preventing overspend.
-            try:
-                self.budget.release(job_id)
-            except Exception:
-                pass
+            # Once fal accepts a request, its charge may be incurred even if
+            # polling, download, or persistence fails. Keep the reservation in
+            # that uncertain case; release only when submission never succeeded.
+            if not submitted_to_provider:
+                try:
+                    self.budget.release(job_id)
+                except Exception:
+                    pass
             raise
         finally:
             if own_client:
