@@ -407,3 +407,43 @@ def test_country_intelligence_plan_endpoint_rejects_unknown_market():
         "country_codes": ["XX"], "offer": "A useful offer"
     })
     assert response.status_code == 422
+
+
+
+def test_studio_generate_accepts_json_inside_markdown_fence(monkeypatch):
+    class FencedProvider(FakeProvider):
+        def generate(self, prompt: str, system_prompt: str | None = None):
+            response = super().generate(prompt, system_prompt)
+            response["content"] = "```json\n" + response["content"] + "\n```"
+            return response
+
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FencedProvider())
+    response = TestClient(app).post("/content/studio/generate", json={
+        "prompt": "Create a practical introductory guide about AI for small businesses.",
+        "niche": "AI and business automation",
+        "content_type": "article",
+    })
+    assert response.status_code == 200
+    assert response.json()["draft"]["title"] == "AI for Small Business"
+
+
+def test_studio_generate_accepts_json_after_short_provider_preamble(monkeypatch):
+    class PreambleProvider(FakeProvider):
+        def generate(self, prompt: str, system_prompt: str | None = None):
+            response = super().generate(prompt, system_prompt)
+            response["content"] = "Here is the requested JSON:\n" + response["content"]
+            return response
+
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: PreambleProvider())
+    response = TestClient(app).post("/content/studio/generate", json={
+        "prompt": "Create a practical introductory guide about AI for small businesses.",
+        "niche": "AI and business automation",
+        "content_type": "article",
+    })
+    assert response.status_code == 200
+    assert response.json()["draft"]["title"] == "AI for Small Business"
+
+
+def test_studio_json_parser_rejects_non_object_and_malformed_output():
+    assert content_studio._parse_json_object('["not", "an", "object"]') is None
+    assert content_studio._parse_json_object('{"title": ') is None
