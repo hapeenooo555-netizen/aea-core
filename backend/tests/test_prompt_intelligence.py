@@ -1,0 +1,57 @@
+from app.services.prompt_intelligence import build_intelligence_context, detect_domain
+
+
+def test_detects_video_from_plain_language_without_professional_terms():
+    assert detect_domain("Nataka video ya kutangaza duka langu la nguo") == "video"
+
+
+def test_detects_graphic_design_from_simple_customer_request():
+    assert detect_domain("Nitengezee poster ya biashara yangu") == "graphic_design"
+
+
+def test_preserves_verbatim_intent_and_explicit_constraints():
+    prompt = "Tengeneza tangazo la duka langu, kwa Kiswahili, bila kubadilisha bei."
+    context = build_intelligence_context(
+        prompt=prompt,
+        content_type="custom",
+        niche="retail",
+        audience="Wateja wa Dar es Salaam",
+        objective="leads",
+        language="Swahili",
+        tone="professional",
+        platforms=["facebook", "instagram"],
+    )
+    assert context["customer_intent_verbatim"] == prompt
+    assert context["explicit_constraints"]["audience"] == "Wateja wa Dar es Salaam"
+    assert context["explicit_constraints"]["platforms"] == ["facebook", "instagram"]
+    assert "Do not reject" in context["intent_preservation_policy"]
+
+
+def test_missing_information_policy_does_not_allow_invented_facts():
+    context = build_intelligence_context(
+        prompt="Tengeneza poster ya biashara yangu",
+        content_type="custom",
+        niche="Graphic Design",
+        audience=None,
+        objective="reach",
+        language="Swahili",
+        tone="professional",
+        platforms=["facebook"],
+    )
+    assert "Never invent prices" in context["missing_information_policy"]
+
+
+def test_domain_profiles_include_quality_and_professional_roles():
+    context = build_intelligence_context(
+        prompt="Design a professional logo and brand identity",
+        content_type="custom",
+        niche="Graphic Design",
+        audience=None,
+        objective="reach",
+        language="English",
+        tone="professional",
+        platforms=["instagram"],
+    )
+    assert context["domain"] == "graphic_design"
+    assert "graphic_designer" in context["specialist_roles"]
+    assert "contrast" in context["quality_standards"]
