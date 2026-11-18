@@ -79,7 +79,7 @@ class FalImageGenerationProvider:
             body = (response.text or "")[:500]
             if secret:
                 body = body.replace(secret, "[REDACTED]")
-            body = re.sub(r"(?i)(authorization\\s*[:=]\\s*)(?:key|bearer)\\s+[^\\s,;]+", r"\\1[REDACTED]", body)
+            body = re.sub(r"(?i)(authorization\s*[:=]\s*)(?:key|bearer)\s+[^\s,;]+", r"\1[REDACTED]", body)
             content_type = response.headers.get("content-type", "unknown")
             raise RuntimeError(
                 f"fal.ai {operation} returned HTTP {response.status_code} "
