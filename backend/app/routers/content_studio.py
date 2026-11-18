@@ -81,6 +81,37 @@ class StudioAssetRevisionRequest(StudioAssetCreateRequest):
     expected_version: int = Field(ge=1)
 
 
+def _parse_json_object(raw: str) -> dict[str, Any] | None:
+    """Parse a JSON object from model output, tolerating common Markdown wrappers."""
+    candidate = raw.strip()
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if lines and lines[0].lstrip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        candidate = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else None
+    except (TypeError, ValueError):
+        pass
+
+    # Some providers prepend a short explanation despite being asked for JSON.
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(candidate):
+        if character != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(candidate[index:])
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def _system_prompt() -> str:
     return (
         "You are AEA Content Studio, a senior marketing strategist and professional Swahili copywriter for East African and international markets. "
@@ -331,12 +362,12 @@ def generate_studio_draft(
     raw = response.get("content")
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=502, detail="Configured AI provider returned an empty content draft.")
-    try:
-        draft = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="AI provider returned an invalid structured draft. Retry generation.") from exc
-    if not isinstance(draft, dict):
-        raise HTTPException(status_code=502, detail="AI provider returned an invalid draft structure.")
+    draft = _parse_json_object(raw)
+    if draft is None:
+        raise HTTPException(
+            status_code=502,
+            detail="AI provider returned an invalid structured draft. Please retry generation.",
+        )
 
     required = ("title", "core_content", "hooks", "caption", "cta", "hashtags")
     if any(key not in draft for key in required):
