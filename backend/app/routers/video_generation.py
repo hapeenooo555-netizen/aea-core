@@ -923,8 +923,29 @@ def export_video_project_subtitles(
     )
 
 
+@router.get("/narration/config")
+def get_narration_config(
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Expose only non-secret ElevenLabs readiness and the configured voice identifier."""
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    voice_id = (
+        os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip()
+        or os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+    )
+    return {
+        "success": True,
+        "configured": bool(api_key and voice_id),
+        "api_key_configured": bool(api_key),
+        "voice_id_configured": bool(voice_id),
+        "voice_id": voice_id,
+        "model_id": "eleven_v3",
+        "language_code": "sw",
+    }
+
+
 class SceneNarrationRequest(BaseModel):
-    voice_id: str = Field(min_length=5, max_length=100)
+    voice_id: str = Field(default="", max_length=100)
     model_id: Literal["eleven_v3"] = "eleven_v3"
     language_code: Literal["sw", "en"] = "sw"
     delivery: Literal["natural", "warm", "dramatic", "documentary"] = "natural"
@@ -944,7 +965,13 @@ async def generate_scene_narration_audio(
     api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Narration audio is not configured. Add ELEVENLABS_API_KEY to AEA Core.")
-    voice_id = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip() or body.voice_id
+    voice_id = (
+        os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip()
+        or os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+        or body.voice_id.strip()
+    )
+    if not voice_id:
+        raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
     project_rows = _rows(db.table("video_projects").select("id").eq(
         "id", str(project_id)
     ).eq("owner_id", owner_id).limit(1).execute())
