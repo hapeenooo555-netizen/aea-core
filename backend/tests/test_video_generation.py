@@ -471,6 +471,11 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
@@ -510,6 +515,11 @@ def test_runway_batch_transport_error_is_persisted(monkeypatch):
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs):
             raise video_generation.httpx.ConnectError("connection refused")
 
@@ -552,6 +562,11 @@ def test_runway_batch_missing_task_id_is_persisted(monkeypatch):
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
