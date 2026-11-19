@@ -790,8 +790,9 @@ def test_runway_batch_skips_scene_with_saved_video_url_even_if_status_is_stale(m
         f"/video/generations/projects/{project_id}/generate-batch",
         json={"scene_ids": [scene_id], "model": "gen4_turbo"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
+    assert payload["success"] is True
     assert payload["started"] == 0
     assert payload["results"][0]["status"] == "skipped_completed"
     assert db.tables["video_project_scenes"][0]["video_url"] == "https://assets.example.test/scene-8.mp4"
