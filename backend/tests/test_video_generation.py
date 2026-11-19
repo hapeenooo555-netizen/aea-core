@@ -760,3 +760,51 @@ def test_runway_provider_credits_endpoint_is_read_only(monkeypatch):
         "generation_started": False,
     }
     assert calls["credits"] == 1
+
+def test_runway_batch_skips_scene_with_saved_video_url_even_if_status_is_stale(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    scene_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    class ProjectionCheckingQuery(Query):
+        def select(self, *columns):
+            if self.table == "video_project_scenes":
+                assert columns and "video_url" in columns[0].split(","), (
+                    "Runway batch scene query must select video_url"
+                )
+            return super().select(*columns)
+
+    class ProjectionCheckingDB(DB):
+        def table(self, name):
+            return ProjectionCheckingQuery(self.tables, name)
+
+    db = ProjectionCheckingDB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 8, "visual_prompt": "Already generated scene",
+        "duration_seconds": 5, "status": "failed", "generation_job_id": None,
+        "video_url": "https://assets.example.test/scene-8.mp4",
+    }]
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            raise AssertionError("Saved scene must be skipped before credit lookup")
+        async def post(self, *_args, **_kwargs):
+            raise AssertionError("Saved scene must never trigger paid generation")
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id], "model": "gen4_turbo"},
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["started"] == 0
+    assert payload["results"][0]["status"] == "skipped_completed"
+    assert db.tables["video_project_scenes"][0]["video_url"] == "https://assets.example.test/scene-8.mp4"
