@@ -471,6 +471,11 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
@@ -510,6 +515,11 @@ def test_runway_batch_transport_error_is_persisted(monkeypatch):
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs):
             raise video_generation.httpx.ConnectError("connection refused")
 
@@ -552,6 +562,11 @@ def test_runway_batch_missing_task_id_is_persisted(monkeypatch):
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            class CreditResponse:
+                status_code = 200
+                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+            return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
@@ -568,3 +583,110 @@ def test_runway_batch_missing_task_id_is_persisted(monkeypatch):
     assert scene["status"] == "failed"
     assert scene["http_status"] == 200
     assert scene["provider_error"]["error"] == "missing_task_id"
+
+
+
+def test_runway_credit_estimator_uses_model_rate_and_duration():
+    assert video_generation._estimate_runway_credits("gen4.5", [5, 10]) == 180
+    assert video_generation._estimate_runway_credits("gen4_turbo", [5, 10]) == 75
+
+
+def test_runway_batch_blocks_before_any_paid_request_when_credits_insufficient(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "99999999-9999-4999-8999-999999999999"
+    scene_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+    calls = {"get": 0, "post": 0}
+    class CreditResponse:
+        status_code = 200
+        def json(self): return {"total": 40, "reserved": 0, "available": 40}
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs):
+            calls["get"] += 1
+            return CreditResponse()
+        async def post(self, *_args, **_kwargs):
+            calls["post"] += 1
+            raise AssertionError("Paid generation must not be called after failed preflight")
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(f"/video/generations/projects/{project_id}/generate-batch", json={"scene_ids": [scene_id]})
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "insufficient_credits"
+    assert detail["available_credits"] == 40
+    assert detail["estimated_credits"] == 60
+    assert detail["shortfall_credits"] == 20
+    assert calls == {"get": 1, "post": 0}
+    assert db.tables["video_project_scenes"][0]["status"] == "pending"
+
+
+def test_runway_batch_preflight_uses_available_not_total_credits(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    scene_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+    class CreditResponse:
+        status_code = 200
+        def json(self): return {"total": 100, "reserved": 50, "available": 50}
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs): return CreditResponse()
+        async def post(self, *_args, **_kwargs): raise AssertionError("Must use available balance")
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(f"/video/generations/projects/{project_id}/generate-batch", json={"scene_ids": [scene_id]})
+    assert response.status_code == 409
+    assert response.json()["detail"]["available_credits"] == 50
+
+
+
+def test_runway_batch_uses_user_selected_gen4_turbo_model(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    scene_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+    submitted = []
+    class CreditResponse:
+        status_code = 200
+        def json(self): return {"total": 100, "reserved": 0, "available": 100}
+    class ProviderResponse:
+        status_code = 200
+        def json(self): return {"id": "runway-task-turbo", "status": "PENDING"}
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs): return CreditResponse()
+        async def post(self, _url, **kwargs):
+            submitted.append(kwargs["json"])
+            return ProviderResponse()
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id], "model": "gen4_turbo"},
+    )
+    assert response.status_code == 202
+    assert submitted[0]["model"] == "gen4_turbo"
+    assert response.json()["results"][0]["status"] == "pending"
+    assert db.tables["video_generation_jobs"][0]["model"] == "gen4_turbo"
