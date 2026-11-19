@@ -30,7 +30,7 @@ class VideoGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
     duration_seconds: int = Field(default=5, ge=2, le=10)
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"
-    model: Literal["gen4.5", "gen4_turbo"] = "gen4.5"
+    model: Literal["gen4.5"] = "gen4.5"
     model_config = ConfigDict(extra="forbid")
 
 
@@ -60,7 +60,7 @@ def _ratio(value: str) -> str:
     return "720:1280" if value == "9:16" else "1280:720"
 
 
-RUNWAY_MODEL_CREDITS_PER_SECOND = {"gen4.5": 12, "gen4_turbo": 5}
+RUNWAY_MODEL_CREDITS_PER_SECOND = {"gen4.5": 12}
 
 
 async def _runway_available_credits(headers: dict[str, str]) -> int:
@@ -708,7 +708,7 @@ def plan_video_project_from_prompt(
 
 class VideoBatchGenerationRequest(BaseModel):
     scene_ids: list[UUID] = Field(min_length=1, max_length=20)
-    model: Literal["gen4.5", "gen4_turbo"] = "gen4.5"
+    model: Literal["gen4.5"] = "gen4.5"
 
 
 @router.post("/projects/{project_id}/generate-batch", status_code=status.HTTP_202_ACCEPTED)
