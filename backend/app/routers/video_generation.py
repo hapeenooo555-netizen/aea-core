@@ -733,6 +733,8 @@ async def generate_video_project_batch(
                 updated = db.table("video_project_scenes").update({
                     "generation_job_id": job_id,
                     "status": "generating",
+                    "provider_error": None,
+                    "http_status": None,
                 }).eq("id", str(scene["id"])).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
                 if not _rows(updated):
                     raise RuntimeError("Scene update not persisted")
