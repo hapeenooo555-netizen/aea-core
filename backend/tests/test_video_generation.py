@@ -450,7 +450,19 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
     monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
-    db = DB()
+    class ProjectionCheckingQuery(Query):
+        def select(self, *columns):
+            if self.table == "video_project_scenes":
+                assert columns and "video_url" in columns[0].split(","), (
+                    "Runway batch scene query must select video_url"
+                )
+            return super().select(*columns)
+
+    class ProjectionCheckingDB(DB):
+        def table(self, name):
+            return ProjectionCheckingQuery(self.tables, name)
+
+    db = ProjectionCheckingDB()
     db.tables["video_projects"] = [{
         "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
     }]
