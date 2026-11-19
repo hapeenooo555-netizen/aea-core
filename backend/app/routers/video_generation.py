@@ -938,7 +938,6 @@ def get_narration_config(
         "configured": bool(api_key and voice_id),
         "api_key_configured": bool(api_key),
         "voice_id_configured": bool(voice_id),
-        "voice_id": voice_id,
         "model_id": "eleven_v3",
         "language_code": "sw",
     }
@@ -968,10 +967,7 @@ async def generate_scene_narration_audio(
     voice_id = (
         os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip()
         or os.getenv("ELEVENLABS_VOICE_ID", "").strip()
-        or body.voice_id.strip()
     )
-    if not voice_id:
-        raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
     project_rows = _rows(db.table("video_projects").select("id").eq(
         "id", str(project_id)
     ).eq("owner_id", owner_id).limit(1).execute())
@@ -990,6 +986,8 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=409, detail="This scene has no narration text.")
     if len(narration) > 5000:
         raise HTTPException(status_code=422, detail="Eleven v3 supports up to 5,000 characters per request. Split this scene narration before generating audio.")
+    if not voice_id:
+        raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
     delivery_style = {
         "natural": 0.25,
         "warm": 0.4,
