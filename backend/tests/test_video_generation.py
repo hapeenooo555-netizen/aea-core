@@ -404,7 +404,7 @@ def test_video_project_list_returns_only_authenticated_owner_projects():
         {"id": "33333333-3333-4333-8333-333333333333", "owner_id": "user-1", "title": "My project", "selected_scene_ids": []},
         {"id": "66666666-6666-4666-8666-666666666666", "owner_id": "another-user", "title": "Private project", "selected_scene_ids": []},
     ]
-    response = make_client(db).get("/video/generations/projects")
+    response = make_client(db).get("/video/generations/projects/list")
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
