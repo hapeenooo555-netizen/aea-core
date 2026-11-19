@@ -264,7 +264,7 @@ class VideoProjectSelectionRequest(BaseModel):
     scene_ids: list[UUID] = Field(max_length=20)
 
 
-@router.get("/projects")
+@router.get("/projects/list")
 async def list_video_projects(
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
