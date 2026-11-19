@@ -450,19 +450,7 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
     monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
-    class ProjectionCheckingQuery(Query):
-        def select(self, *columns):
-            if self.table == "video_project_scenes":
-                assert columns and "video_url" in columns[0].split(","), (
-                    "Runway batch scene query must select video_url"
-                )
-            return super().select(*columns)
-
-    class ProjectionCheckingDB(DB):
-        def table(self, name):
-            return ProjectionCheckingQuery(self.tables, name)
-
-    db = ProjectionCheckingDB()
+    db = DB()
     db.tables["video_projects"] = [{
         "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
     }]
@@ -644,7 +632,19 @@ def test_runway_batch_preflight_uses_organization_credit_balance(monkeypatch):
     monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
     project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     scene_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-    db = DB()
+    class ProjectionCheckingQuery(Query):
+        def select(self, *columns):
+            if self.table == "video_project_scenes":
+                assert columns and "video_url" in columns[0].split(","), (
+                    "Runway batch scene query must select video_url"
+                )
+            return super().select(*columns)
+
+    class ProjectionCheckingDB(DB):
+        def table(self, name):
+            return ProjectionCheckingQuery(self.tables, name)
+
+    db = ProjectionCheckingDB()
     db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready"}]
     db.tables["video_project_scenes"] = [{
         "id": scene_id, "project_id": project_id, "owner_id": "user-1",
