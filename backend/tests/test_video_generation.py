@@ -447,8 +447,6 @@ def test_video_project_selection_rejects_scene_from_another_project():
 
 
 def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkeypatch):
-    import json
-
     monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
@@ -464,7 +462,7 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
 
     class ProviderResponse:
         status_code = 400
-        text = json.dumps({"error": "invalid_prompt", "message": "Prompt violates provider requirements"})
+        text = '{"error":"invalid_prompt","message":"Prompt violates provider requirements"}'
 
         def json(self):
             return {"error": "invalid_prompt", "message": "Prompt violates provider requirements"}
