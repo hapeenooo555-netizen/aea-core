@@ -490,3 +490,81 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
     assert scene["http_status"] == 400
     assert scene["provider_error"]["error"] == "invalid_prompt"
     assert "Prompt violates provider requirements" in scene["provider_error"]["message"]
+
+
+def test_runway_batch_transport_error_is_persisted(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "55555555-5555-4555-8555-555555555555"
+    scene_id = "66666666-6666-4666-8666-666666666666"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 2, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def post(self, *_args, **_kwargs):
+            raise video_generation.httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id]},
+    )
+    assert response.status_code == 202
+    assert response.json()["results"][0]["status"] == "provider_error"
+
+    refreshed = make_client(db).get(f"/video/generations/projects/{project_id}")
+    assert refreshed.status_code == 200
+    scene = refreshed.json()["scenes"][0]
+    assert scene["status"] == "failed"
+    assert scene["http_status"] is None
+    assert scene["provider_error"]["error"] == "provider_transport_error"
+
+
+def test_runway_batch_missing_task_id_is_persisted(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "77777777-7777-4777-8777-777777777777"
+    scene_id = "88888888-8888-4888-8888-888888888888"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 3, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+
+    class ProviderResponse:
+        status_code = 200
+        text = '{"status":"PENDING"}'
+        def json(self): return {"status": "PENDING"}
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def post(self, *_args, **_kwargs): return ProviderResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id]},
+    )
+    assert response.status_code == 202
+    assert response.json()["results"][0]["status"] == "missing_task_id"
+
+    refreshed = make_client(db).get(f"/video/generations/projects/{project_id}")
+    assert refreshed.status_code == 200
+    scene = refreshed.json()["scenes"][0]
+    assert scene["status"] == "failed"
+    assert scene["http_status"] == 200
+    assert scene["provider_error"]["error"] == "missing_task_id"
