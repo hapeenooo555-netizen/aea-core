@@ -690,3 +690,51 @@ def test_runway_batch_uses_user_selected_gen4_turbo_model(monkeypatch):
     assert submitted[0]["model"] == "gen4_turbo"
     assert response.json()["results"][0]["status"] == "pending"
     assert db.tables["video_generation_jobs"][0]["model"] == "gen4_turbo"
+
+
+def test_runway_credit_preflight_reads_organization_endpoint_and_credit_balance(monkeypatch):
+    requested = []
+
+    class OrganizationResponse:
+        status_code = 200
+        def json(self):
+            return {"creditBalance": 1040}
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, url, **kwargs):
+            requested.append((url, kwargs))
+            return OrganizationResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    balance = __import__("asyncio").run(
+        video_generation._runway_available_credits({"Authorization": "Bearer test-secret"})
+    )
+
+    assert balance == 1040
+    assert requested[0][0] == "https://api.dev.runwayml.com/v1/organization"
+    assert requested[0][1]["headers"]["Authorization"] == "Bearer test-secret"
+
+
+def test_runway_credit_preflight_blocks_unknown_organization_balance(monkeypatch):
+    class OrganizationResponse:
+        status_code = 200
+        def json(self):
+            return {"unexpected": 1040}
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs): return OrganizationResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    import asyncio
+    try:
+        asyncio.run(video_generation._runway_available_credits({"Authorization": "Bearer test-secret"}))
+        assert False, "Unknown balance must block generation"
+    except video_generation.HTTPException as exc:
+        assert exc.status_code == 503
+        assert "generation was not started" in exc.detail
