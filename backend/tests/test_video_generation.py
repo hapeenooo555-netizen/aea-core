@@ -444,3 +444,51 @@ def test_video_project_selection_rejects_scene_from_another_project():
         json={"scene_ids": [scene_id]},
     )
     assert response.status_code == 404
+
+
+def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkeypatch):
+    import json
+
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready",
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+
+    class ProviderResponse:
+        status_code = 400
+        text = json.dumps({"error": "invalid_prompt", "message": "Prompt violates provider requirements"})
+
+        def json(self):
+            return {"error": "invalid_prompt", "message": "Prompt violates provider requirements"}
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def post(self, *_args, **_kwargs): return ProviderResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id]},
+    )
+    assert response.status_code == 202
+    result = response.json()["results"][0]
+    assert result["status"] == "provider_rejected"
+    assert result["http_status"] == 400
+
+    refreshed = make_client(db).get(f"/video/generations/projects/{project_id}")
+    assert refreshed.status_code == 200
+    scene = refreshed.json()["scenes"][0]
+    assert scene["status"] == "failed"
+    assert scene["http_status"] == 400
+    assert scene["provider_error"]["error"] == "invalid_prompt"
+    assert "Prompt violates provider requirements" in scene["provider_error"]["message"]
