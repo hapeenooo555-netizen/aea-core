@@ -672,7 +672,30 @@ async def generate_video_project_batch(
                 results.append({"scene_id": scene["id"], "status": "provider_error"})
                 continue
             if response.status_code not in (200, 201):
-                results.append({"scene_id": scene["id"], "status": "provider_rejected", "http_status": response.status_code})
+                # Preserve a bounded, useful provider diagnostic without exposing
+                # request headers, API credentials, or an unbounded response body.
+                try:
+                    provider_error = response.json()
+                except ValueError:
+                    provider_error = {"message": response.text[:1200]}
+                if isinstance(provider_error, dict):
+                    allowed_keys = ("error", "message", "detail", "issues", "code", "type", "title")
+                    diagnostic = {
+                        key: provider_error[key]
+                        for key in allowed_keys
+                        if key in provider_error
+                    }
+                    if not diagnostic:
+                        diagnostic = {"message": json.dumps(provider_error, ensure_ascii=False)[:1200]}
+                else:
+                    diagnostic = {"message": str(provider_error)[:1200]}
+                results.append({
+                    "scene_id": scene["id"],
+                    "scene_number": scene.get("scene_number"),
+                    "status": "provider_rejected",
+                    "http_status": response.status_code,
+                    "provider_error": diagnostic,
+                })
                 continue
             try:
                 provider_data = response.json()
