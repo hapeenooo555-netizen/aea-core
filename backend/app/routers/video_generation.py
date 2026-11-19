@@ -320,7 +320,7 @@ async def get_video_project(
     if not projects:
         raise HTTPException(status_code=404, detail="Video project not found.")
     scenes_response = db.table("video_project_scenes").select(
-        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url"
+        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url,provider_error,http_status"
     ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute()
     return {"success": True, "project": projects[0], "scenes": _rows(scenes_response)}
 
@@ -689,6 +689,13 @@ async def generate_video_project_batch(
                         diagnostic = {"message": json.dumps(provider_error, ensure_ascii=False)[:1200]}
                 else:
                     diagnostic = {"message": str(provider_error)[:1200]}
+                # Persist the rejection so refresh/recovery does not erase the
+                # actionable provider diagnostic from the project scene.
+                db.table("video_project_scenes").update({
+                    "status": "failed",
+                    "http_status": response.status_code,
+                    "provider_error": diagnostic,
+                }).eq("id", str(scene["id"])).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
                 results.append({
                     "scene_id": scene["id"],
                     "scene_number": scene.get("scene_number"),
