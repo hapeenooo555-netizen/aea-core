@@ -474,7 +474,7 @@ def test_runway_batch_rejection_is_persisted_and_survives_project_refresh(monkey
         async def get(self, *_args, **_kwargs):
             class CreditResponse:
                 status_code = 200
-                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+                def json(self): return {"creditBalance": 10000}
             return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
@@ -518,7 +518,7 @@ def test_runway_batch_transport_error_is_persisted(monkeypatch):
         async def get(self, *_args, **_kwargs):
             class CreditResponse:
                 status_code = 200
-                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+                def json(self): return {"creditBalance": 10000}
             return CreditResponse()
         async def post(self, *_args, **_kwargs):
             raise video_generation.httpx.ConnectError("connection refused")
@@ -565,7 +565,7 @@ def test_runway_batch_missing_task_id_is_persisted(monkeypatch):
         async def get(self, *_args, **_kwargs):
             class CreditResponse:
                 status_code = 200
-                def json(self): return {"total": 10000, "reserved": 0, "available": 10000}
+                def json(self): return {"creditBalance": 10000}
             return CreditResponse()
         async def post(self, *_args, **_kwargs): return ProviderResponse()
 
@@ -605,7 +605,7 @@ def test_runway_batch_blocks_before_any_paid_request_when_credits_insufficient(m
     calls = {"get": 0, "post": 0}
     class CreditResponse:
         status_code = 200
-        def json(self): return {"total": 40, "reserved": 0, "available": 40}
+        def json(self): return {"creditBalance": 40}
     class AsyncClient:
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
@@ -628,7 +628,7 @@ def test_runway_batch_blocks_before_any_paid_request_when_credits_insufficient(m
     assert db.tables["video_project_scenes"][0]["status"] == "pending"
 
 
-def test_runway_batch_preflight_uses_available_not_total_credits(monkeypatch):
+def test_runway_batch_preflight_uses_organization_credit_balance(monkeypatch):
     monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
     project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     scene_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
@@ -641,7 +641,7 @@ def test_runway_batch_preflight_uses_available_not_total_credits(monkeypatch):
     }]
     class CreditResponse:
         status_code = 200
-        def json(self): return {"total": 100, "reserved": 50, "available": 50}
+        def json(self): return {"creditBalance": 50}
     class AsyncClient:
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
@@ -669,7 +669,7 @@ def test_runway_batch_uses_user_selected_gen4_turbo_model(monkeypatch):
     submitted = []
     class CreditResponse:
         status_code = 200
-        def json(self): return {"total": 100, "reserved": 0, "available": 100}
+        def json(self): return {"creditBalance": 100}
     class ProviderResponse:
         status_code = 200
         def json(self): return {"id": "runway-task-turbo", "status": "PENDING"}
