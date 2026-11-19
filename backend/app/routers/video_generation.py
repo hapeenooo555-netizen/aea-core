@@ -938,7 +938,6 @@ def get_narration_config(
         "configured": bool(api_key and voice_id),
         "api_key_configured": bool(api_key),
         "voice_id_configured": bool(voice_id),
-        "voice_id": voice_id,
         "model_id": "eleven_v3",
         "language_code": "sw",
     }
@@ -968,7 +967,6 @@ async def generate_scene_narration_audio(
     voice_id = (
         os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "").strip()
         or os.getenv("ELEVENLABS_VOICE_ID", "").strip()
-        or body.voice_id.strip()
     )
     if not voice_id:
         raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
