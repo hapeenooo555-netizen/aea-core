@@ -396,3 +396,51 @@ def test_final_video_url_is_owner_scoped():
     }]
     response = make_client(db).get(f"/video/generations/projects/{project_id}/final-video")
     assert response.status_code == 404
+
+
+def test_video_project_list_returns_only_authenticated_owner_projects():
+    db = DB()
+    db.tables["video_projects"] = [
+        {"id": "33333333-3333-4333-8333-333333333333", "owner_id": "user-1", "title": "My project", "selected_scene_ids": []},
+        {"id": "66666666-6666-4666-8666-666666666666", "owner_id": "another-user", "title": "Private project", "selected_scene_ids": []},
+    ]
+    response = make_client(db).get("/video/generations/projects")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert [project["title"] for project in payload["projects"]] == ["My project"]
+
+
+def test_video_project_selection_is_persisted_and_owner_scoped():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "selected_scene_ids": [],
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+    }]
+    response = make_client(db).patch(
+        f"/video/generations/projects/{project_id}/selection",
+        json={"scene_ids": [scene_id]},
+    )
+    assert response.status_code == 200
+    assert response.json()["selected_scene_ids"] == [scene_id]
+    assert db.tables["video_projects"][0]["selected_scene_ids"] == [scene_id]
+
+
+def test_video_project_selection_rejects_scene_from_another_project():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": "66666666-6666-4666-8666-666666666666",
+        "owner_id": "user-1",
+    }]
+    response = make_client(db).patch(
+        f"/video/generations/projects/{project_id}/selection",
+        json={"scene_ids": [scene_id]},
+    )
+    assert response.status_code == 404
