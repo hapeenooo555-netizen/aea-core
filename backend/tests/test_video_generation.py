@@ -683,7 +683,7 @@ def test_runway_batch_rejects_unsupported_gen4_turbo_before_provider_calls(monke
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/generate-batch",
-        json={"scene_ids": [scene_id], "model": "gen4.5"},
+        json={"scene_ids": [scene_id], "model": "gen4_turbo"},
     )
     assert response.status_code == 422
     assert calls == {"get": 0, "post": 0}
@@ -799,7 +799,7 @@ def test_runway_batch_skips_scene_with_saved_video_url_even_if_status_is_stale(m
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/generate-batch",
-        json={"scene_ids": [scene_id], "model": "gen4_turbo"},
+        json={"scene_ids": [scene_id], "model": "gen4.5"},
     )
     assert response.status_code == 202
     payload = response.json()
