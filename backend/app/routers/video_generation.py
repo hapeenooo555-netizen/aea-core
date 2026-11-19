@@ -736,15 +736,34 @@ async def generate_video_project_batch(
     if missing:
         raise HTTPException(status_code=404, detail="One or more scenes were not found in this project.")
     selected = [by_id[str(scene_id)] for scene_id in body.scene_ids]
-    already_started = [str(scene["id"]) for scene in selected if scene.get("generation_job_id") and scene.get("status") != "failed"]
-    if already_started:
-        raise HTTPException(status_code=409, detail="Some selected scenes already have generation jobs.")
-    headers = _headers()
-    # Fail closed before the first paid request: preflight the entire selected batch.
-    await _require_runway_credits(headers, body.model, [int(scene["duration_seconds"]) for scene in selected])
+    # Completed clips are immutable draft assets, not generation queue items.
+    # Active jobs are also skipped to avoid duplicate billable provider tasks.
+    eligible: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
+    for scene in selected:
+        scene_id = str(scene["id"])
+        scene_status = str(scene.get("status") or "pending").lower()
+        if scene_status == "completed" or scene.get("video_url"):
+            results.append({"scene_id": scene_id, "scene_number": scene.get("scene_number"), "status": "skipped_completed"})
+        elif scene.get("generation_job_id") and scene_status != "failed":
+            results.append({"scene_id": scene_id, "scene_number": scene.get("scene_number"), "status": "skipped_active"})
+        elif scene_status in {"pending", "failed"}:
+            eligible.append(scene)
+        else:
+            results.append({"scene_id": scene_id, "scene_number": scene.get("scene_number"), "status": "skipped_not_retryable"})
+    if not eligible:
+        return {
+            "success": True,
+            "requested": len(selected),
+            "started": 0,
+            "results": results,
+            "notice": "No new Runway jobs were started. Completed clips remain in drafts; active or non-retryable scenes were skipped.",
+        }
+    headers = _headers()
+    # Check credits only for eligible scenes and before the first paid request.
+    await _require_runway_credits(headers, body.model, [int(scene["duration_seconds"]) for scene in eligible])
     async with httpx.AsyncClient(timeout=45.0) as http:
-        for scene in selected:
+        for scene in eligible:
             payload = {
                 "model": body.model,
                 "promptText": scene["visual_prompt"],
