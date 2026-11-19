@@ -60,6 +60,51 @@ def _ratio(value: str) -> str:
     return "720:1280" if value == "9:16" else "1280:720"
 
 
+RUNWAY_MODEL_CREDITS_PER_SECOND = {"gen4.5": 12, "gen4_turbo": 5}
+
+
+async def _runway_available_credits(headers: dict[str, str]) -> int:
+    """Read spendable API credits; never confuse total or reserved credits with available."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            response = await http.get(f"{RUNWAY_BASE_URL}/credits", headers=headers)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Could not verify Runway API credit balance; generation was not started.") from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=503, detail=f"Could not verify Runway API credit balance (HTTP {response.status_code}); generation was not started.")
+    try:
+        payload = response.json()
+        available = payload.get("available")
+    except (ValueError, AttributeError):
+        available = None
+    if isinstance(available, bool) or not isinstance(available, int) or available < 0:
+        raise HTTPException(status_code=503, detail="Runway returned an invalid available-credit balance; generation was not started.")
+    return available
+
+
+def _estimate_runway_credits(model: str, durations: list[int]) -> int:
+    rate = RUNWAY_MODEL_CREDITS_PER_SECOND.get(model)
+    if rate is None:
+        raise HTTPException(status_code=422, detail="Unsupported Runway model for credit estimation.")
+    return rate * sum(durations)
+
+
+async def _require_runway_credits(headers: dict[str, str], model: str, durations: list[int]) -> dict[str, int | bool]:
+    available = await _runway_available_credits(headers)
+    estimated = _estimate_runway_credits(model, durations)
+    shortfall = max(0, estimated - available)
+    if shortfall:
+        raise HTTPException(status_code=409, detail={
+            "code": "insufficient_credits",
+            "message": "Insufficient Runway API credits. No generation requests were sent.",
+            "available_credits": available,
+            "estimated_credits": estimated,
+            "shortfall_credits": shortfall,
+            "model": model,
+        })
+    return {"available_credits": available, "estimated_credits": estimated, "can_generate": True}
+
+
 def _persist_scene_failure(
     db: Any,
     owner_id: str,
@@ -86,6 +131,7 @@ async def create_video_generation(
 ) -> dict[str, Any]:
     db = _db(client)
     headers = _headers()
+    await _require_runway_credits(headers, body.model, [body.duration_seconds])
     payload = {
         "model": body.model,
         "promptText": body.prompt.strip(),
@@ -369,6 +415,7 @@ async def generate_video_project_scene(
     if scene.get("generation_job_id") and scene.get("status") != "failed":
         raise HTTPException(status_code=409, detail="This scene already has an active or completed generation job. Only failed scenes can be retried.")
     headers = _headers()
+    await _require_runway_credits(headers, "gen4.5", [int(scene["duration_seconds"])])
     payload = {
         "model": "gen4.5",
         "promptText": scene["visual_prompt"],
@@ -675,6 +722,8 @@ async def generate_video_project_batch(
     if already_started:
         raise HTTPException(status_code=409, detail="Some selected scenes already have generation jobs.")
     headers = _headers()
+    # Fail closed before the first paid request: preflight the entire selected batch.
+    await _require_runway_credits(headers, "gen4.5", [int(scene["duration_seconds"]) for scene in selected])
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=45.0) as http:
         for scene in selected:
