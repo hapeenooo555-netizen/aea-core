@@ -691,6 +691,7 @@ def plan_video_project_from_prompt(
 
 class VideoBatchGenerationRequest(BaseModel):
     scene_ids: list[UUID] = Field(min_length=1, max_length=20)
+    model: Literal["gen4.5", "gen4_turbo"] = "gen4.5"
 
 
 @router.post("/projects/{project_id}/generate-batch", status_code=status.HTTP_202_ACCEPTED)
@@ -723,12 +724,12 @@ async def generate_video_project_batch(
         raise HTTPException(status_code=409, detail="Some selected scenes already have generation jobs.")
     headers = _headers()
     # Fail closed before the first paid request: preflight the entire selected batch.
-    await _require_runway_credits(headers, "gen4.5", [int(scene["duration_seconds"]) for scene in selected])
+    await _require_runway_credits(headers, body.model, [int(scene["duration_seconds"]) for scene in selected])
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=45.0) as http:
         for scene in selected:
             payload = {
-                "model": "gen4.5",
+                "model": body.model,
                 "promptText": scene["visual_prompt"],
                 "ratio": _ratio(project["aspect_ratio"]),
                 "duration": scene["duration_seconds"],
@@ -804,7 +805,7 @@ async def generate_video_project_batch(
                 "owner_id": owner_id,
                 "provider": "runway",
                 "provider_task_id": task_id,
-                "model": "gen4.5",
+                "model": body.model,
                 "prompt": scene["visual_prompt"],
                 "duration_seconds": scene["duration_seconds"],
                 "aspect_ratio": project["aspect_ratio"],
