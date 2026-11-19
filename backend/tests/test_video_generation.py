@@ -652,3 +652,41 @@ def test_runway_batch_preflight_uses_available_not_total_credits(monkeypatch):
     response = make_client(db).post(f"/video/generations/projects/{project_id}/generate-batch", json={"scene_ids": [scene_id]})
     assert response.status_code == 409
     assert response.json()["detail"]["available_credits"] == 50
+
+
+
+def test_runway_batch_uses_user_selected_gen4_turbo_model(monkeypatch):
+    monkeypatch.setenv("RUNWAYML_API_SECRET", "test-secret")
+    project_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    scene_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1", "aspect_ratio": "16:9", "status": "ready"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "visual_prompt": "A cinematic scene", "duration_seconds": 5,
+        "status": "pending", "generation_job_id": None,
+    }]
+    submitted = []
+    class CreditResponse:
+        status_code = 200
+        def json(self): return {"total": 100, "reserved": 0, "available": 100}
+    class ProviderResponse:
+        status_code = 200
+        def json(self): return {"id": "runway-task-turbo", "status": "PENDING"}
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, *_args, **_kwargs): return CreditResponse()
+        async def post(self, _url, **kwargs):
+            submitted.append(kwargs["json"])
+            return ProviderResponse()
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/generate-batch",
+        json={"scene_ids": [scene_id], "model": "gen4_turbo"},
+    )
+    assert response.status_code == 202
+    assert submitted[0]["model"] == "gen4_turbo"
+    assert response.json()["results"][0]["status"] == "pending"
+    assert db.tables["video_generation_jobs"][0]["model"] == "gen4_turbo"
