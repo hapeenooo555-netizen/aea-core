@@ -60,6 +60,24 @@ def _ratio(value: str) -> str:
     return "720:1280" if value == "9:16" else "1280:720"
 
 
+def _persist_scene_failure(
+    db: Any,
+    owner_id: str,
+    project_id: UUID,
+    scene_id: str,
+    diagnostic: dict[str, Any],
+    http_status: int | None = None,
+) -> None:
+    """Persist a bounded, credential-free failure so project refresh is authoritative."""
+    updated = db.table("video_project_scenes").update({
+        "status": "failed",
+        "provider_error": diagnostic,
+        "http_status": http_status,
+    }).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+    if not _rows(updated):
+        raise RuntimeError("Scene failure diagnostic was not persisted")
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_video_generation(
     body: VideoGenerationRequest,
@@ -668,8 +686,14 @@ async def generate_video_project_batch(
             }
             try:
                 response = await http.post(f"{RUNWAY_BASE_URL}/text_to_video", headers=headers, json=payload)
-            except httpx.HTTPError:
-                results.append({"scene_id": scene["id"], "status": "provider_error"})
+            except httpx.HTTPError as exc:
+                diagnostic = {"error": "provider_transport_error", "message": str(exc)[:500] or "Could not reach Runway."}
+                try:
+                    _persist_scene_failure(db, owner_id, project_id, str(scene["id"]), diagnostic)
+                except Exception:
+                    results.append({"scene_id": scene["id"], "status": "diagnostic_persistence_error"})
+                    continue
+                results.append({"scene_id": scene["id"], "status": "provider_error", "provider_error": diagnostic})
                 continue
             if response.status_code not in (200, 201):
                 # Preserve a bounded, useful provider diagnostic without exposing
@@ -691,11 +715,11 @@ async def generate_video_project_batch(
                     diagnostic = {"message": str(provider_error)[:1200]}
                 # Persist the rejection so refresh/recovery does not erase the
                 # actionable provider diagnostic from the project scene.
-                db.table("video_project_scenes").update({
-                    "status": "failed",
-                    "http_status": response.status_code,
-                    "provider_error": diagnostic,
-                }).eq("id", str(scene["id"])).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+                try:
+                    _persist_scene_failure(db, owner_id, project_id, str(scene["id"]), diagnostic, response.status_code)
+                except Exception:
+                    results.append({"scene_id": scene["id"], "status": "diagnostic_persistence_error", "http_status": response.status_code})
+                    continue
                 results.append({
                     "scene_id": scene["id"],
                     "scene_number": scene.get("scene_number"),
@@ -707,11 +731,23 @@ async def generate_video_project_batch(
             try:
                 provider_data = response.json()
             except ValueError:
-                results.append({"scene_id": scene["id"], "status": "invalid_provider_response"})
+                diagnostic = {"error": "invalid_provider_response", "message": "Runway returned a non-JSON response."}
+                try:
+                    _persist_scene_failure(db, owner_id, project_id, str(scene["id"]), diagnostic, response.status_code)
+                except Exception:
+                    results.append({"scene_id": scene["id"], "status": "diagnostic_persistence_error", "http_status": response.status_code})
+                    continue
+                results.append({"scene_id": scene["id"], "status": "invalid_provider_response", "provider_error": diagnostic, "http_status": response.status_code})
                 continue
             task_id = provider_data.get("id")
             if not isinstance(task_id, str) or not task_id:
-                results.append({"scene_id": scene["id"], "status": "missing_task_id"})
+                diagnostic = {"error": "missing_task_id", "message": "Runway response did not contain a task ID."}
+                try:
+                    _persist_scene_failure(db, owner_id, project_id, str(scene["id"]), diagnostic, response.status_code)
+                except Exception:
+                    results.append({"scene_id": scene["id"], "status": "diagnostic_persistence_error", "http_status": response.status_code})
+                    continue
+                results.append({"scene_id": scene["id"], "status": "missing_task_id", "provider_error": diagnostic, "http_status": response.status_code})
                 continue
             job_id = str(uuid4())
             job = {
