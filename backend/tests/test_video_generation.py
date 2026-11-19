@@ -738,3 +738,25 @@ def test_runway_credit_preflight_blocks_unknown_organization_balance(monkeypatch
     except video_generation.HTTPException as exc:
         assert exc.status_code == 503
         assert "generation was not started" in exc.detail
+
+
+def test_runway_provider_credits_endpoint_is_read_only(monkeypatch):
+    calls = {"credits": 0}
+    monkeypatch.setattr(video_generation, "_headers", lambda: {"Authorization": "Bearer test-secret"})
+
+    async def read_balance(_headers):
+        calls["credits"] += 1
+        return 1040
+
+    monkeypatch.setattr(video_generation, "_runway_available_credits", read_balance)
+    import asyncio
+    result = asyncio.run(video_generation.get_runway_provider_credits(owner_id="test-user"))
+
+    assert result == {
+        "success": True,
+        "provider": "runway",
+        "connected": True,
+        "credit_balance": 1040,
+        "generation_started": False,
+    }
+    assert calls["credits"] == 1

@@ -183,6 +183,23 @@ async def create_video_generation(
     }
 
 
+@router.get("/provider/credits")
+async def get_runway_provider_credits(
+    owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Read-only connectivity check; never submits a generation request."""
+    del owner_id
+    headers = _headers()
+    balance = await _runway_available_credits(headers)
+    return {
+        "success": True,
+        "provider": "runway",
+        "connected": True,
+        "credit_balance": balance,
+        "generation_started": False,
+    }
+
+
 @router.get("/{job_id}")
 async def get_video_generation(
     job_id: UUID,
