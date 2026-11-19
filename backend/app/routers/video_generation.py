@@ -260,6 +260,54 @@ async def create_video_project(
     }
 
 
+class VideoProjectSelectionRequest(BaseModel):
+    scene_ids: list[UUID] = Field(max_length=20)
+
+
+@router.get("/projects/list")
+async def list_video_projects(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List the authenticated user's saved video projects for workspace recovery."""
+    db = _db(client)
+    found = db.table("video_projects").select(
+        "id,title,format,target_duration_seconds,aspect_ratio,visual_style,presenter_mode,status,character_bible,final_video_path,created_at,updated_at,prompt,selected_scene_ids"
+    ).eq("owner_id", owner_id).order("created_at", desc=True).limit(50).execute()
+    return {"success": True, "projects": _rows(found)}
+
+
+@router.patch("/projects/{project_id}/selection")
+async def update_video_project_selection(
+    project_id: UUID,
+    body: VideoProjectSelectionRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Persist selected scene IDs without triggering paid generation."""
+    db = _db(client)
+    project = _rows(db.table("video_projects").select("id").eq(
+        "id", str(project_id)
+    ).eq("owner_id", owner_id).limit(1).execute())
+    if not project:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    scene_rows = _rows(db.table("video_project_scenes").select("id").eq(
+        "project_id", str(project_id)
+    ).eq("owner_id", owner_id).execute())
+    allowed = {str(row["id"]) for row in scene_rows}
+    requested = [str(scene_id) for scene_id in body.scene_ids]
+    if len(set(requested)) != len(requested):
+        raise HTTPException(status_code=422, detail="scene_ids must be unique.")
+    if any(scene_id not in allowed for scene_id in requested):
+        raise HTTPException(status_code=404, detail="One or more selected scenes were not found in this project.")
+    updated = _rows(db.table("video_projects").update({
+        "selected_scene_ids": requested,
+    }).eq("id", str(project_id)).eq("owner_id", owner_id).execute())
+    if not updated:
+        raise HTTPException(status_code=502, detail="AEA could not confirm the saved scene selection.")
+    return {"success": True, "project_id": str(project_id), "selected_scene_ids": requested}
+
+
 @router.get("/projects/{project_id}")
 async def get_video_project(
     project_id: UUID,
@@ -543,6 +591,8 @@ def plan_video_project_from_prompt(
         owner_id,
         {
             "title": str(data.get("title") or body.title)[:180],
+            "prompt": body.prompt,
+            "selected_scene_ids": [],
             "character_bible": data.get("character_bible", {}),
             "format": body.format,
             "target_duration_seconds": body.target_duration_seconds,
