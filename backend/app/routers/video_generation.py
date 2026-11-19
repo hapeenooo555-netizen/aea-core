@@ -729,7 +729,7 @@ async def generate_video_project_batch(
     if len(set(body.scene_ids)) != len(body.scene_ids):
         raise HTTPException(status_code=422, detail="scene_ids must be unique.")
     scenes_response = db.table("video_project_scenes").select(
-        "id,owner_id,visual_prompt,duration_seconds,status,generation_job_id,scene_number"
+        "id,owner_id,visual_prompt,duration_seconds,status,generation_job_id,scene_number,video_url"
     ).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
     by_id = {str(scene["id"]): scene for scene in _rows(scenes_response)}
     missing = [str(scene_id) for scene_id in body.scene_ids if str(scene_id) not in by_id]
