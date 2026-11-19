@@ -817,6 +817,12 @@ def test_scene_narration_rejects_client_voice_id_without_server_configuration(mo
     scene_id = "44444444-4444-4444-8444-444444444444"
     db = DB()
     db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "narration": "Test narration",
+    }]
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
         json={"voice_id": "client-controlled-voice"},
