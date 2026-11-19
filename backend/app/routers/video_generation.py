@@ -64,21 +64,21 @@ RUNWAY_MODEL_CREDITS_PER_SECOND = {"gen4.5": 12, "gen4_turbo": 5}
 
 
 async def _runway_available_credits(headers: dict[str, str]) -> int:
-    """Read spendable API credits; never confuse total or reserved credits with available."""
+    """Read the Runway API organization credit balance before any billable generation."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.get(f"{RUNWAY_BASE_URL}/credits", headers=headers)
+            response = await http.get(f"{RUNWAY_BASE_URL}/organization", headers=headers)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail="Could not verify Runway API credit balance; generation was not started.") from exc
     if response.status_code != 200:
         raise HTTPException(status_code=503, detail=f"Could not verify Runway API credit balance (HTTP {response.status_code}); generation was not started.")
     try:
         payload = response.json()
-        available = payload.get("available")
+        available = payload.get("creditBalance")
     except (ValueError, AttributeError):
         available = None
     if isinstance(available, bool) or not isinstance(available, int) or available < 0:
-        raise HTTPException(status_code=503, detail="Runway returned an invalid available-credit balance; generation was not started.")
+        raise HTTPException(status_code=503, detail="Runway returned an invalid organization credit balance; generation was not started.")
     return available
 
 
