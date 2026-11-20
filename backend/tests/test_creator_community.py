@@ -171,3 +171,21 @@ def test_creator_cannot_follow_self():
         "/community/creators/11111111-1111-4111-8111-111111111111/follow"
     )
     assert response.status_code == 422
+
+
+
+def test_feed_hides_public_products_when_creator_profile_is_private():
+    db = Database()
+    db.tables["creator_profiles"][0]["is_public"] = False
+    response = client(db).get("/community/feed")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_visibility_rejects_18_plus_without_sensitive_warning():
+    api = client(Database(), user="owner-1")
+    response = api.patch(
+        "/community/products/11111111-1111-4111-8111-111111111111/visibility",
+        json={"visibility": "community_public", "is_sensitive": False, "age_rating": "18_plus"},
+    )
+    assert response.status_code == 422
