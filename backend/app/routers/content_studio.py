@@ -62,7 +62,7 @@ class StudioGenerateRequest(BaseModel):
     objective: Literal["reach", "engagement", "traffic", "leads", "sales", "education", "authority"] = "engagement"
     language: str = Field(default="English", min_length=2, max_length=40)
     tone: str = Field(default="helpful", min_length=2, max_length=80)
-    platforms: list[Literal["pinterest", "facebook", "instagram", "whatsapp", "youtube"]] = Field(default_factory=list, max_length=5)
+    platforms: list[Literal["pinterest", "facebook", "instagram", "tiktok", "whatsapp", "youtube"]] = Field(default_factory=list, max_length=6)
     market_scope: Literal["tanzania_and_international", "tanzania_only", "international_only"] = "tanzania_and_international"
     target_countries: list[str] = Field(default_factory=list, max_length=20)
     research_sources: list[ResearchSourceInput] = Field(default_factory=list, max_length=10)

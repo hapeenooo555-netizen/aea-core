@@ -144,4 +144,67 @@ def update_product_status(
     }
 
 
+class DistributionJobCreateRequest(BaseModel):
+    destination: Literal["pinterest", "facebook", "instagram", "tiktok", "youtube"]
+    scheduled_at: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/distribution/jobs")
+def list_my_distribution_jobs(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List only the caller's distribution requests."""
+    db = _db(client)
+    result = db.table("creator_distribution_jobs").select(
+        "id,product_id,destination,status,scheduled_at,approval_required,approved_at,external_id,external_url,error,created_at"
+    ).eq("owner_id", owner_id).order("created_at", desc=True).limit(100).execute()
+    return {"success": True, "jobs": _rows(result)}
+
+
+@router.post("/{product_id}/distribution", status_code=status.HTTP_201_CREATED)
+def request_product_distribution(
+    product_id: UUID,
+    body: DistributionJobCreateRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create an owner-authorized distribution request; publishing remains approval-gated."""
+    db = _db(client)
+    existing = db.table("creator_products").select(
+        "id,owner_id,title,product_type,status"
+    ).eq("id", str(product_id)).eq("owner_id", owner_id).limit(1).execute()
+    products = _rows(existing)
+    if not products:
+        raise HTTPException(status_code=404, detail="Creator product not found.")
+    product = products[0]
+    product_type = str(product.get("product_type") or "").lower()
+    if body.destination == "youtube" and product_type not in {"video", "digital_pack"}:
+        raise HTTPException(status_code=422, detail="YouTube publishing requires a video product.")
+    if body.destination == "tiktok" and product_type not in {"video", "digital_pack"}:
+        raise HTTPException(status_code=422, detail="TikTok publishing requires a video product.")
+    payload = {
+        "product_id": str(product_id),
+        "owner_id": owner_id,
+        "destination": body.destination,
+        "status": "pending_approval",
+        "scheduled_at": body.scheduled_at,
+        "approval_required": True,
+    }
+    try:
+        saved = db.table("creator_distribution_jobs").insert(payload).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Distribution request could not be saved.") from exc
+    rows = _rows(saved)
+    if not rows:
+        raise HTTPException(status_code=502, detail="Database did not confirm distribution request.")
+    return {
+        "success": True,
+        "job": rows[0],
+        "published": False,
+        "notice": "Request saved. Platform publishing requires explicit approval and a connected, authorized account.",
+    }
+
+
 __all__ = ["router"]
