@@ -1,7 +1,7 @@
 """Evidence-first affiliate product scoring.
 
 This module ranks *provided marketplace records*; it does not scrape websites,
-invent performance metrics, or claim to fetch live Digistore24 listings. Callers
+invent performance metrics, or claim to fetch live listings. Callers
 must supply records obtained through an authorized marketplace/API integration.
 All ranked items remain research candidates until a human approves promotion.
 """
