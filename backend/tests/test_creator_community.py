@@ -181,12 +181,12 @@ def test_creator_cannot_follow_self():
 
 def test_creator_can_follow_another_public_creator_and_receives_saved_record():
     response = client(Database(), user="viewer-1").post(
-        "/community/creators/owner-1/follow"
+        "/community/creators/11111111-1111-4111-8111-111111111111/follow"
     )
     assert response.status_code == 201
     assert response.json()["created"] is True
     assert response.json()["follow"]["follower_id"] == "viewer-1"
-    assert response.json()["follow"]["creator_id"] == "owner-1"
+    assert response.json()["follow"]["creator_id"] == "11111111-1111-4111-8111-111111111111"
 
 
 def test_feed_hides_public_products_when_creator_profile_is_private():
