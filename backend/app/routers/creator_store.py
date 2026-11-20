@@ -42,6 +42,21 @@ class DistributionRequest(BaseModel):
     destination: Destination
     model_config = ConfigDict(extra="forbid")
 
+class MarketplaceOptInRequest(BaseModel):
+    enabled: bool
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromotionRequestCreate(BaseModel):
+    listing_id: UUID
+    message: str = Field(default="", max_length=2000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromotionDecision(BaseModel):
+    status: Literal["approved", "rejected"]
+    model_config = ConfigDict(extra="forbid")
+
 
 def _db(client: Any) -> Any:
     if client is None:
@@ -146,6 +161,103 @@ def request_product_distribution(
             "Request saved as a draft with a capability warning. This destination needs its official OAuth and publishing integration."
         ),
     }
+
+
+
+@router.get("/marketplace")
+def browse_marketplace(owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    """Browse approved listings; RLS filters the associated product."""
+    db = _db(client)
+    listings = _rows(db.table("creator_marketplace_listings").select(
+        "id,product_id,owner_id,status,price_amount,currency,created_at"
+    ).eq("status", "approved").order("created_at", desc=True).limit(100).execute())
+    output = []
+    for listing in listings:
+        products = _rows(db.table("creator_products").select(
+            "id,title,description,product_type,price_amount,currency,age_rating,is_sensitive"
+        ).eq("id", listing["product_id"]).eq("status", "listed").eq("marketplace_enabled", True).limit(1).execute())
+        profiles = _rows(db.table("creator_profiles").select(
+            "user_id,display_name"
+        ).eq("user_id", listing["owner_id"]).eq("is_public", True).limit(1).execute())
+        if products and profiles and str(listing["owner_id"]) != owner_id:
+            output.append({"listing": listing, "product": products[0], "vendor": profiles[0]})
+    return {"success": True, "listings": output}
+
+
+@router.post("/marketplace/requests", status_code=status.HTTP_201_CREATED)
+def create_promotion_request(body: PromotionRequestCreate, promoter_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    db = _db(client)
+    listings = _rows(db.table("creator_marketplace_listings").select(
+        "id,product_id,owner_id,status"
+    ).eq("id", str(body.listing_id)).eq("status", "approved").limit(1).execute())
+    if not listings:
+        raise HTTPException(status_code=404, detail="Approved marketplace listing not found.")
+    listing = listings[0]
+    if str(listing["owner_id"]) == promoter_id:
+        raise HTTPException(status_code=422, detail="You cannot request promotion for your own product.")
+    products = _rows(db.table("creator_products").select("id,status,marketplace_enabled").eq(
+        "id", listing["product_id"]).eq("status", "listed").eq("marketplace_enabled", True).limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Marketplace product is not available.")
+    existing = _rows(db.table("creator_promotion_requests").select(
+        "id,listing_id,product_id,owner_id,promoter_id,status,message,created_at"
+    ).eq("listing_id", str(body.listing_id)).eq("promoter_id", promoter_id).limit(1).execute())
+    if existing:
+        return {"success": True, "created": False, "request": existing[0]}
+    try:
+        saved = db.table("creator_promotion_requests").insert({
+            "listing_id": str(body.listing_id), "product_id": listing["product_id"],
+            "owner_id": listing["owner_id"], "promoter_id": promoter_id,
+            "message": body.message.strip(), "status": "pending"
+        }).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Promotion request was not accepted by database policy.") from exc
+    rows = _rows(saved)
+    if not rows:
+        raise HTTPException(status_code=409, detail="Promotion request save was not confirmed.")
+    return {"success": True, "created": True, "request": rows[0]}
+
+
+@router.get("/marketplace/requests/mine")
+def list_my_promotion_requests(owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    rows = _rows(_db(client).table("creator_promotion_requests").select(
+        "id,listing_id,product_id,owner_id,promoter_id,status,message,created_at,updated_at"
+    ).or_(f"owner_id.eq.{owner_id},promoter_id.eq.{owner_id}").order("created_at", desc=True).limit(200).execute())
+    return {"success": True, "requests": rows}
+
+
+@router.patch("/marketplace/requests/{request_id}")
+def review_promotion_request(request_id: UUID, body: PromotionDecision, owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    db = _db(client)
+    existing = _rows(db.table("creator_promotion_requests").select("id,status").eq(
+        "id", str(request_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not existing:
+        raise HTTPException(status_code=404, detail="Promotion request not found.")
+    if existing[0]["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Only pending requests can be reviewed.")
+    saved = db.table("creator_promotion_requests").update({"status": body.status}).eq(
+        "id", str(request_id)).eq("owner_id", owner_id).eq("status", "pending").select(
+        "id,status,owner_id,promoter_id,product_id,listing_id").execute()
+    rows = _rows(saved)
+    if not rows:
+        raise HTTPException(status_code=409, detail="Promotion request was not updated.")
+    return {"success": True, "request": rows[0]}
+
+
+@router.patch("/{product_id}/marketplace")
+def set_marketplace_opt_in(product_id: UUID, body: MarketplaceOptInRequest, owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    db = _db(client)
+    existing = _rows(db.table("creator_products").select("id,status").eq(
+        "id", str(product_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product listing not found.")
+    if body.enabled and existing[0].get("status") != "listed":
+        raise HTTPException(status_code=409, detail="List the product before enabling marketplace discovery.")
+    rows = _rows(db.table("creator_products").update({"marketplace_enabled": body.enabled}).eq(
+        "id", str(product_id)).eq("owner_id", owner_id).select("id,marketplace_enabled,status").execute())
+    if not rows:
+        raise HTTPException(status_code=409, detail="Marketplace preference was not saved.")
+    return {"success": True, "product": rows[0]}
 
 
 @router.get("")
