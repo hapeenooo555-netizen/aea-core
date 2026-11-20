@@ -235,4 +235,38 @@ def unfollow_creator(creator_id: UUID, owner_id: str = Depends(get_current_user_
     return {"success": True}
 
 
+
+class CreatorProfileRequest(BaseModel):
+    display_name: str = Field(min_length=2, max_length=100)
+    bio: str = Field(default="", max_length=1000)
+    avatar_url: str | None = Field(default=None, max_length=2048)
+    is_public: bool = False
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/me/profile")
+def get_my_creator_profile(owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client)):
+    result = _db(client).table("creator_profiles").select(
+        "user_id,display_name,bio,avatar_url,is_public"
+    ).eq("user_id", owner_id).limit(1).execute()
+    rows = _rows(result)
+    return {"success": True, "profile": rows[0] if rows else None}
+
+
+@router.put("/me/profile")
+def save_my_creator_profile(body: CreatorProfileRequest,
+    owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)):
+    payload = {"user_id": owner_id, "display_name": body.display_name.strip(),
+        "bio": body.bio.strip(), "avatar_url": body.avatar_url, "is_public": body.is_public}
+    try:
+        result = _db(client).table("creator_profiles").upsert(payload, on_conflict="user_id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Creator profile could not be saved.") from exc
+    rows = _rows(result)
+    if not rows:
+        raise HTTPException(status_code=409, detail="Creator profile save was not confirmed.")
+    return {"success": True, "profile": rows[0]}
+
+
 __all__ = ["router"]
