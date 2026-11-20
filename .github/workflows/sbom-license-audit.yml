@@ -26,26 +26,25 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             backend/requirements.txt
-            backend/requirements-test.txt
 
-      - name: Install declared application and test dependencies
+      - name: Install declared application dependencies
         run: |
           python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r backend/requirements.txt -r backend/requirements-test.txt
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt -r backend/requirements.txt
 
-      - name: Generate CycloneDX SBOM from installed Python environment
+      - name: Set up isolated audit tools
         run: |
-          . .venv/bin/activate
-          python -m pip install cyclonedx-bom==7.2.0
-          cyclonedx-py environment .venv --output-format JSON --output-file sbom-python.cdx.json
+          python -m venv .audit-venv
+          .audit-venv/bin/python -m pip install cyclonedx-bom==7.2.0 pip-licenses==5.5.5
 
-      - name: Generate package license inventory
+      - name: Generate CycloneDX SBOM from application environment
         run: |
-          . .venv/bin/activate
-          python -m pip install pip-licenses
-          pip-licenses --format=json --with-urls --with-description --output-file=python-licenses.json
+          .audit-venv/bin/cyclonedx-py environment .venv --output-format JSON --output-file sbom-python.cdx.json
+
+      - name: Generate application-only license inventory and license texts
+        run: |
+          .audit-venv/bin/pip-licenses --python .venv/bin/python --format=json --with-urls --with-description --with-license-file --with-notice-file --output-file=python-licenses.json
 
       - name: Upload Python SBOM and license inventory
         uses: actions/upload-artifact@v4
