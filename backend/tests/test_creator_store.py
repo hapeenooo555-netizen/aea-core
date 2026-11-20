@@ -191,3 +191,71 @@ def test_archived_product_cannot_be_distributed():
         json={"destination": "pinterest"},
     )
     assert response.status_code == 409
+
+
+
+def test_marketplace_admin_queue_rejects_non_admin_users():
+    db = Database()
+    db.tables["aea_marketplace_admins"] = []
+    db.tables["creator_marketplace_listings"] = []
+    response = client(db, owner_id="ordinary-user").get(
+        "/store/products/marketplace/admin/listings"
+    )
+    assert response.status_code == 403
+
+
+def test_marketplace_admin_can_approve_pending_listing():
+    db = Database()
+    db.tables["aea_marketplace_admins"] = [{"user_id": "aea-admin", "active": True}]
+    db.tables["creator_marketplace_listings"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "vendor-123",
+        "status": "pending",
+        "price_amount": 15000,
+        "currency": "TZS",
+        "created_at": "2026-11-21T00:00:00Z",
+    }]
+    db.tables["creator_products"][0].update({
+        "title": "Vendor Starter Guide",
+        "description": "A product submitted by an AEA vendor.",
+        "product_type": "guide",
+        "age_rating": "general",
+        "is_sensitive": False,
+        "marketplace_enabled": True,
+    })
+    db.tables["creator_profiles"] = [{
+        "user_id": "vendor-123",
+        "display_name": "Vendor One",
+    }]
+
+    api = client(db, owner_id="aea-admin")
+    queue = api.get("/store/products/marketplace/admin/listings")
+    assert queue.status_code == 200
+    assert len(queue.json()["listings"]) == 1
+    assert queue.json()["listings"][0]["vendor"]["display_name"] == "Vendor One"
+
+    decision = api.patch(
+        "/store/products/marketplace/admin/listings/33333333-3333-4333-8333-333333333333",
+        json={"status": "approved"},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["listing"]["status"] == "approved"
+    assert db.tables["creator_marketplace_listings"][0]["status"] == "approved"
+
+
+def test_marketplace_admin_cannot_review_without_active_role():
+    db = Database()
+    db.tables["aea_marketplace_admins"] = [{"user_id": "aea-admin", "active": False}]
+    db.tables["creator_marketplace_listings"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "vendor-123",
+        "status": "pending",
+    }]
+    response = client(db, owner_id="aea-admin").patch(
+        "/store/products/marketplace/admin/listings/33333333-3333-4333-8333-333333333333",
+        json={"status": "approved"},
+    )
+    assert response.status_code == 403
+    assert db.tables["creator_marketplace_listings"][0]["status"] == "pending"
