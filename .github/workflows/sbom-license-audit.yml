@@ -46,12 +46,40 @@ jobs:
         run: |
           .audit-venv/bin/pip-licenses --python .venv/bin/python --format=json --with-urls --with-description --with-license-file --with-notice-file --output-file=python-licenses.json
 
-      - name: Upload Python SBOM and license inventory
+      - name: Build consolidated third-party notices
+        run: |
+          .audit-venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          packages = json.loads(Path("python-licenses.json").read_text())
+          lines = [
+              "AEA CORE — THIRD-PARTY SOFTWARE INVENTORY",
+              "Generated from the application-only Python environment in CI.",
+              "This inventory is not legal advice. Verify deployed versions and retain upstream notices.",
+              "",
+          ]
+          for p in sorted(packages, key=lambda x: (x.get("Name", ""), x.get("Version", ""))):
+              lines += [
+                  f"## {p.get('Name')} {p.get('Version')}",
+                  f"License: {p.get('License', 'UNKNOWN')}",
+                  f"Upstream: {p.get('URL', 'not recorded')}",
+                  "",
+                  p.get("LicenseText", "LICENSE TEXT NOT CAPTURED"),
+                  "",
+                  "-----",
+                  "",
+              ]
+          Path("THIRD_PARTY_NOTICES.txt").write_text("\\n".join(lines), encoding="utf-8")
+          PY
+
+      - name: Upload Python SBOM, license inventory, and notices
         uses: actions/upload-artifact@v4
         with:
           name: aea-core-python-sbom-and-licenses
           path: |
             sbom-python.cdx.json
             python-licenses.json
+            THIRD_PARTY_NOTICES.txt
           if-no-files-found: error
           retention-days: 30
