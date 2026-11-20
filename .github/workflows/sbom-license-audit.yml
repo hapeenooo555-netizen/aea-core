@@ -70,7 +70,7 @@ jobs:
                   "-----",
                   "",
               ]
-          Path("THIRD_PARTY_NOTICES.txt").write_text("\\n".join(lines), encoding="utf-8")
+          Path("THIRD_PARTY_NOTICES.txt").write_text("\n".join(lines), encoding="utf-8")
           PY
 
       - name: Upload Python SBOM, license inventory, and notices
