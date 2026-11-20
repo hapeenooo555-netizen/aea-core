@@ -1,0 +1,58 @@
+name: SBOM and license audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            backend/requirements.txt
+            backend/requirements-test.txt
+
+      - name: Install declared application and test dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r backend/requirements.txt -r backend/requirements-test.txt
+
+      - name: Generate CycloneDX SBOM from installed Python environment
+        run: |
+          . .venv/bin/activate
+          python -m pip install cyclonedx-bom==7.2.0
+          cyclonedx-py environment .venv --output-format JSON --output-file sbom-python.cdx.json
+
+      - name: Generate package license inventory
+        run: |
+          . .venv/bin/activate
+          python -m pip install pip-licenses
+          pip-licenses --format=json --with-urls --with-description --output-file=python-licenses.json
+
+      - name: Upload Python SBOM and license inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: aea-core-python-sbom-and-licenses
+          path: |
+            sbom-python.cdx.json
+            python-licenses.json
+          if-no-files-found: error
+          retention-days: 30
