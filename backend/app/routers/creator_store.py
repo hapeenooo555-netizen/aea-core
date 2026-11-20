@@ -374,4 +374,68 @@ def update_product_status(
     }
 
 
+class MarketplaceListingReview(BaseModel):
+    status: Literal["approved", "rejected"]
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/marketplace/admin/listings")
+def list_marketplace_review_queue(
+    admin_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List pending vendor submissions; the database role policy is authoritative."""
+    db = _db(client)
+    role = _rows(db.table("aea_marketplace_admins").select("user_id").eq(
+        "user_id", admin_id).eq("active", True).limit(1).execute())
+    if not role:
+        raise HTTPException(status_code=403, detail="AEA Marketplace Admin access required.")
+    listings = _rows(db.table("creator_marketplace_listings").select(
+        "id,product_id,owner_id,status,price_amount,currency,created_at"
+    ).eq("status", "pending").order("created_at").limit(100).execute())
+    queue = []
+    for listing in listings:
+        products = _rows(db.table("creator_products").select(
+            "id,title,description,product_type,age_rating,is_sensitive,status,marketplace_enabled"
+        ).eq("id", listing["product_id"]).limit(1).execute())
+        profiles = _rows(db.table("creator_profiles").select(
+            "user_id,display_name"
+        ).eq("user_id", listing["owner_id"]).limit(1).execute())
+        if products:
+            queue.append({
+                "listing": listing,
+                "product": products[0],
+                "vendor": profiles[0] if profiles else {"user_id": listing["owner_id"], "display_name": None},
+            })
+    return {"success": True, "listings": queue}
+
+
+@router.patch("/marketplace/admin/listings/{listing_id}")
+def review_marketplace_listing(
+    listing_id: UUID,
+    body: MarketplaceListingReview,
+    admin_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Approve or reject a pending listing as an explicitly provisioned AEA admin."""
+    db = _db(client)
+    role = _rows(db.table("aea_marketplace_admins").select("user_id").eq(
+        "user_id", admin_id).eq("active", True).limit(1).execute())
+    if not role:
+        raise HTTPException(status_code=403, detail="AEA Marketplace Admin access required.")
+    pending = _rows(db.table("creator_marketplace_listings").select(
+        "id,status"
+    ).eq("id", str(listing_id)).eq("status", "pending").limit(1).execute())
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending marketplace listing not found.")
+    updated = _rows(db.table("creator_marketplace_listings").update({
+        "status": body.status
+    }).eq("id", str(listing_id)).eq("status", "pending").select(
+        "id,product_id,owner_id,status,price_amount,currency,updated_at"
+    ).execute())
+    if not updated:
+        raise HTTPException(status_code=409, detail="Marketplace listing review was not saved.")
+    return {"success": True, "listing": updated[0]}
+
+
 __all__ = ["router"]
