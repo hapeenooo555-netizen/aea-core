@@ -9,7 +9,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 
@@ -140,6 +140,99 @@ def request_age_verification(
     if not saved_rows:
         raise HTTPException(status_code=409, detail="Age verification request could not be saved.")
     return {"success": True, "verification": saved_rows[0], "notice": "Request submitted for manual review. This does not grant 18+ access until verified."}
+
+
+
+class ReactionRequest(BaseModel):
+    reaction: Literal["like", "love", "insightful", "inspiring"]
+    model_config = ConfigDict(extra="forbid")
+
+
+class CommentRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=3000)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/products/{product_id}/engagement")
+def product_engagement(product_id: UUID, limit: int = Query(default=30, ge=1, le=100),
+    owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)):
+    db = _db(client)
+    reactions = _rows(db.table("creator_product_reactions").select("user_id,reaction,created_at")
+        .eq("product_id", str(product_id)).order("created_at", desc=True).limit(limit).execute())
+    comments = _rows(db.table("creator_product_comments").select("id,user_id,body,created_at")
+        .eq("product_id", str(product_id)).order("created_at", desc=True).limit(limit).execute())
+    return {"success": True, "reactions": reactions, "comments": comments}
+
+
+@router.put("/products/{product_id}/reaction")
+def set_product_reaction(product_id: UUID, body: ReactionRequest,
+    owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)):
+    db = _db(client)
+    try:
+        result = db.table("creator_product_reactions").upsert(
+            {"product_id": str(product_id), "user_id": owner_id, "reaction": body.reaction},
+            on_conflict="product_id,user_id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Reaction is not allowed for this product or account.") from exc
+    rows = _rows(result)
+    if not rows:
+        raise HTTPException(status_code=403, detail="Reaction was not accepted by database policy.")
+    return {"success": True, "reaction": rows[0]}
+
+
+@router.delete("/products/{product_id}/reaction")
+def remove_product_reaction(product_id: UUID, owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client)):
+    _db(client).table("creator_product_reactions").delete().eq(
+        "product_id", str(product_id)).eq("user_id", owner_id).execute()
+    return {"success": True}
+
+
+@router.post("/products/{product_id}/comments", status_code=201)
+def add_product_comment(product_id: UUID, body: CommentRequest,
+    owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)):
+    db = _db(client)
+    try:
+        result = db.table("creator_product_comments").insert(
+            {"product_id": str(product_id), "user_id": owner_id, "body": body.body.strip()}).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Comment is not allowed for this product or account.") from exc
+    rows = _rows(result)
+    if not rows:
+        raise HTTPException(status_code=403, detail="Comment was not accepted by database policy.")
+    return {"success": True, "comment": rows[0]}
+
+
+@router.delete("/products/{product_id}/comments/{comment_id}")
+def delete_product_comment(product_id: UUID, comment_id: UUID,
+    owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)):
+    _db(client).table("creator_product_comments").delete().eq(
+        "id", str(comment_id)).eq("product_id", str(product_id)).eq("user_id", owner_id).execute()
+    return {"success": True}
+
+
+@router.post("/creators/{creator_id}/follow", status_code=201)
+def follow_creator(creator_id: UUID, owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client)):
+    if str(creator_id) == owner_id:
+        raise HTTPException(status_code=422, detail="You cannot follow your own creator profile.")
+    db = _db(client)
+    try:
+        result = db.table("creator_follows").upsert(
+            {"follower_id": owner_id, "creator_id": str(creator_id)},
+            on_conflict="follower_id,creator_id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Follow request was not accepted.") from exc
+    rows = _rows(result)
+    return {"success": True, "follow": rows[0] if rows else {"creator_id": str(creator_id)}}
+
+
+@router.delete("/creators/{creator_id}/follow")
+def unfollow_creator(creator_id: UUID, owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client)):
+    _db(client).table("creator_follows").delete().eq(
+        "follower_id", owner_id).eq("creator_id", str(creator_id)).execute()
+    return {"success": True}
 
 
 __all__ = ["router"]
