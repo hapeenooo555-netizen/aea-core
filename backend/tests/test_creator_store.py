@@ -137,3 +137,56 @@ def test_owner_cannot_change_another_users_product():
         json={"status": "listed"},
     )
     assert response.status_code == 404
+
+
+def test_owner_can_request_youtube_distribution_pending_approval():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "title": "Creator video",
+        "product_type": "video",
+        "status": "draft",
+    })
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/distribution",
+        json={"destination": "youtube"},
+    )
+    assert response.status_code == 201
+    assert response.json()["job"]["destination"] == "youtube"
+    assert response.json()["job"]["status"] == "pending_approval"
+    assert response.json()["job"]["approval_required"] is True
+    assert response.json()["published"] is False
+
+
+def test_non_video_product_cannot_be_sent_to_youtube_or_tiktok():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "title": "Creator ebook",
+        "product_type": "ebook",
+        "status": "draft",
+    })
+    for destination in ("youtube", "tiktok"):
+        response = client(db).post(
+            "/store/products/22222222-2222-4222-8222-222222222222/distribution",
+            json={"destination": destination},
+        )
+        assert response.status_code == 422
+
+
+def test_user_cannot_request_distribution_for_another_users_product():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "someone-else",
+        "title": "Private video",
+        "product_type": "video",
+        "status": "draft",
+    })
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/distribution",
+        json={"destination": "youtube"},
+    )
+    assert response.status_code == 404
