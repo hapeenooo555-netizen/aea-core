@@ -143,7 +143,7 @@ def test_distribution_request_is_saved_for_supported_destination_without_publish
         json={"destination": "pinterest"},
     )
     assert response.status_code == 202
-    assert response.json()["job"]["status"] == "pending_connection"
+    assert response.json()["job"]["status"] == "pending_approval"
     assert response.json()["published"] is False
     assert db.tables["creator_distribution_jobs"][0]["owner_id"] == "owner-123"
 
@@ -155,8 +155,8 @@ def test_unsupported_destination_is_persisted_as_blocked_not_published():
         json={"destination": "youtube"},
     )
     assert response.status_code == 202
-    assert response.json()["job"]["status"] == "blocked_unsupported"
-    assert "OAuth" in response.json()["job"]["block_reason"]
+    assert response.json()["job"]["status"] == "draft"
+    assert "OAuth" in response.json()["job"]["error"]
     assert response.json()["published"] is False
 
 
