@@ -66,7 +66,7 @@ def list_my_products(
 ) -> dict[str, Any]:
     db = _db(client)
     result = db.table("creator_products").select(
-        "id,asset_id,title,slug,description,product_type,price_amount,currency,status,created_at,updated_at"
+        "id,asset_id,title,slug,description,product_type,price_amount,currency,status,visibility,is_sensitive,age_rating,created_at,updated_at"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(100).execute()
     return {"success": True, "products": _rows(result)}
 
