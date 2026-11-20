@@ -90,3 +90,32 @@ jobs:
             THIRD_PARTY_NOTICES.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: Verify SBOM and license inventory reconcile
+        run: |
+          .audit-venv/bin/python - <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          bom = json.loads(Path("sbom-python.cdx.json").read_text())
+          licenses = json.loads(Path("python-licenses.json").read_text())
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          sbom_packages = {
+              (normalize(item["name"]), item.get("version", ""))
+              for item in bom.get("components", [])
+          }
+          license_packages = {
+              (normalize(item["Name"]), item["Version"])
+              for item in licenses
+          }
+          missing_from_inventory = sorted(sbom_packages - license_packages)
+          missing_from_sbom = sorted(license_packages - sbom_packages)
+          if missing_from_inventory or missing_from_sbom:
+              print("SBOM/license inventory mismatch")
+              print("Missing from license inventory:", missing_from_inventory)
+              print("Missing from SBOM:", missing_from_sbom)
+              sys.exit(1)
+          print(f"Reconciled {len(sbom_packages)} application components.")
+          PY
