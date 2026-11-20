@@ -1,8 +1,8 @@
-"""Creator-owned digital product listings for the AEA storefront.
+"""Creator-owned digital product listings and safe social distribution requests.
 
-This phase creates product listings only. It does not accept payments or deliver
-paid files; those actions must wait for a verified payment provider and secure
-order-scoped delivery implementation.
+Distribution requests are persisted for review/connection checks. This router does
+not publish directly to social networks; provider adapters and approval execution
+must complete that separately.
 """
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 
 router = APIRouter(prefix="/store/products", tags=["creator-store"])
 
+Destination = Literal["pinterest", "facebook", "instagram", "tiktok", "youtube"]
+# Only Pinterest and Meta are currently integrated in AEA Core. This is not
+# equivalent to a connected account or permission to publish.
+INTEGRATED_DESTINATIONS = {"pinterest", "facebook", "instagram"}
+
 
 class ProductCreateRequest(BaseModel):
     asset_id: UUID
@@ -30,6 +35,11 @@ class ProductCreateRequest(BaseModel):
 
 class ProductStatusRequest(BaseModel):
     status: Literal["listed", "archived"]
+    model_config = ConfigDict(extra="forbid")
+
+
+class DistributionRequest(BaseModel):
+    destination: Destination
     model_config = ConfigDict(extra="forbid")
 
 
@@ -59,6 +69,82 @@ def list_my_products(
         "id,asset_id,title,slug,description,product_type,price_amount,currency,status,created_at,updated_at"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(100).execute()
     return {"success": True, "products": _rows(result)}
+
+
+@router.get("/mine/distribution")
+def list_my_distribution_requests(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    result = db.table("creator_distribution_jobs").select(
+        "id,product_id,destination,status,block_reason,created_at,updated_at"
+    ).eq("owner_id", owner_id).order("created_at", desc=True).limit(200).execute()
+    return {"success": True, "jobs": _rows(result)}
+
+
+@router.post("/{product_id}/distribution", status_code=status.HTTP_202_ACCEPTED)
+def request_product_distribution(
+    product_id: UUID,
+    body: DistributionRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Persist an owner-authorized distribution request without publishing."""
+    db = _db(client)
+    product_result = db.table("creator_products").select("id,owner_id,status,asset_id").eq(
+        "id", str(product_id)
+    ).eq("owner_id", owner_id).limit(1).execute()
+    products = _rows(product_result)
+    if not products:
+        raise HTTPException(status_code=404, detail="Product listing not found.")
+    if products[0].get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Archived products cannot be distributed.")
+
+    existing_result = db.table("creator_distribution_jobs").select(
+        "id,product_id,destination,status,block_reason,created_at"
+    ).eq("owner_id", owner_id).eq("product_id", str(product_id)).eq(
+        "destination", body.destination
+    ).limit(1).execute()
+    existing = _rows(existing_result)
+    if existing:
+        return {
+            "success": True,
+            "created": False,
+            "job": existing[0],
+            "published": False,
+            "notice": "An existing distribution request was returned; no duplicate was created.",
+        }
+
+    supported = body.destination in INTEGRATED_DESTINATIONS
+    payload = {
+        "owner_id": owner_id,
+        "product_id": str(product_id),
+        "destination": body.destination,
+        "status": "pending_connection" if supported else "blocked_unsupported",
+        "block_reason": None if supported else (
+            f"{body.destination.title()} OAuth and publishing adapter are not yet integrated in AEA Core."
+        ),
+    }
+    try:
+        saved = db.table("creator_distribution_jobs").insert(payload).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Distribution request could not be saved.") from exc
+    rows = _rows(saved)
+    if not rows:
+        raise HTTPException(status_code=502, detail="Database did not confirm distribution request creation.")
+    job = rows[0]
+    return {
+        "success": True,
+        "created": True,
+        "job": job,
+        "published": False,
+        "notice": (
+            "Request saved. Connect and authorize the destination, then complete the approval workflow."
+            if supported else
+            "Request saved as blocked. This destination needs its official OAuth and publishing integration."
+        ),
+    }
 
 
 @router.get("")
