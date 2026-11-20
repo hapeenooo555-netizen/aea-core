@@ -151,6 +151,7 @@ def test_creator_profile_is_saved_with_owner_identity_from_auth():
     assert response.status_code == 200
     assert response.json()["profile"]["user_id"] == "owner-1"
     assert response.json()["profile"]["is_public"] is True
+    assert response.json()["profile"]["display_name"] == "Creator One"
 
 
 
@@ -163,7 +164,11 @@ def test_user_can_react_and_comment_on_public_general_content():
     assert reaction.status_code == 200
     assert comment.status_code == 201
     assert db.tables["creator_product_reactions"][0]["user_id"] == "viewer-1"
+    assert reaction.json()["reaction"]["reaction"] == "like"
+    assert reaction.json()["reaction"]["product_id"] == product_id
     assert db.tables["creator_product_comments"][0]["user_id"] == "viewer-1"
+    assert comment.json()["comment"]["body"] == "Very useful work."
+    assert comment.json()["comment"]["product_id"] == product_id
 
 
 def test_creator_cannot_follow_self():
@@ -172,6 +177,16 @@ def test_creator_cannot_follow_self():
     )
     assert response.status_code == 422
 
+
+
+def test_creator_can_follow_another_public_creator_and_receives_saved_record():
+    response = client(Database(), user="viewer-1").post(
+        "/community/creators/owner-1/follow"
+    )
+    assert response.status_code == 201
+    assert response.json()["created"] is True
+    assert response.json()["follow"]["follower_id"] == "viewer-1"
+    assert response.json()["follow"]["creator_id"] == "owner-1"
 
 
 def test_feed_hides_public_products_when_creator_profile_is_private():
