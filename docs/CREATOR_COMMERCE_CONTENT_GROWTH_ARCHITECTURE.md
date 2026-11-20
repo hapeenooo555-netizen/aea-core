@@ -4,7 +4,7 @@
 AEA Core is the AI, orchestration, security, commerce and integration backend. AEA Hub is the only user-facing product. No ChatPlus or third interface. The primary outcome is ethical social traffic, qualified leads, creator sales and measurable revenue.
 
 ## Capabilities
-1. Affiliate marketing across Awin, Digistore24, CJ and PartnerStack with provider-specific product search, promotion/application status, tracking links and confirmed commission events.
+1. Affiliate content using user-supplied product facts and affiliate destination URLs, with Pinterest draft creation, disclosure and explicit publishing approval.
 2. AI content production across any lawful niche: research, writing, storytelling, education, e-books, courses, video/audio packages, graphics and social assets.
 3. Creator commerce: users list and sell original/licensed digital products in an AEA storefront and marketplace.
 4. Social distribution to Pinterest and authorized Meta assets; other platforms via their own integrations.
@@ -54,7 +54,7 @@ D. Leads/services: qualified leads and revenue only when a transaction is record
 Never mix estimates or pending amounts into withdrawable balances. Every metric includes currency, period, source, last sync and estimated/pending/confirmed/paid status.
 
 ## Affiliate adapters
-Awin, Digistore24, CJ and PartnerStack each implement connection state, product search/details, factual provenance, application capability/status, tracking-link support, commission events, pagination/rate limits and safe errors. Never claim approval, tracking link or commission without provider confirmation.
+Meta and Pinterest are the only supported external platform integrations. Product details and affiliate URLs must be supplied by the user; never fabricate approval, tracking links or commissions. Pinterest publication requires explicit approval.
 
 ## Publishing adapters
 Pinterest requires board, media, title/description, destination, disclosure and verified Pin ID/URL. Facebook requires authorized Page and supported post type. Instagram requires professional account, media container and permissions. WhatsApp Business uses approved templates and conversation rules; it is not a public-feed destination. YouTube/others require their own authorized API. A connected identity does not imply Page, Instagram, WhatsApp or monetization access. External publishing requires approval, idempotency and provider receipt verification.

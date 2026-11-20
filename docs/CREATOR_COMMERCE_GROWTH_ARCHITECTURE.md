@@ -53,7 +53,7 @@ For every content package generate multiple truthful hooks, platform-native capt
 
 ## Affiliate content context
 
-Connect Awin, Digistore24, CJ and PartnerStack through separate adapters. Each adapter declares connection state, supported product search/detail, product data provenance, promotion/application capabilities, tracking link support, commission/event support, pagination/rate limits and safe errors. Do not assume equivalent APIs or capabilities. Preserve vendor facts, terms, allowed claims and affiliate disclosure. AEA cannot fabricate vendor approval, partnership status, tracking links, conversions or commissions.
+Keep Meta and Pinterest as the only external platform integrations. Affiliate Pin drafts use product facts and destination URLs supplied by the user. Preserve provenance, required affiliate disclosure and explicit approval before publishing. AEA cannot fabricate vendor approval, tracking links, conversions or commissions.
 
 ## Shared content mission lifecycle
 

@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import database
-from app.routers import graphic_design, ai_models, video_generation, creator_store, content_studio, meta_oauth, affiliate_cj_connection, affiliate_cj_products, affiliate_cj_promotional_properties, affiliate_discovery, affiliate_automation, affiliate_digistore24_connection, affiliate_jobs, affiliate_partnerize, affiliate_research, approvals, atlas, affiliate_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers, freelancer_foundation
+from app.routers import graphic_design, ai_models, video_generation, creator_store, content_studio, meta_oauth, affiliate_automation, affiliate_jobs, approvals, atlas, affiliate_pinterest, connectors, employee, freelancer, freelancer_projects, hape_marketing, meta_webhooks, health, missions, workers, freelancer_foundation
 
 # Import supabase_client for test compatibility
 supabase_client = database.supabase_client
@@ -87,15 +87,8 @@ app.include_router(employee.router, tags=["employee"])
 app.include_router(freelancer.router, tags=["freelancer-employee"])
 app.include_router(freelancer_projects.router, tags=["freelancer-projects"])
 app.include_router(freelancer_foundation.router, tags=["freelancer-foundation"])
-app.include_router(affiliate_discovery.router, tags=["affiliate-discovery"])
 app.include_router(affiliate_jobs.router, tags=["affiliate"])
-app.include_router(affiliate_research.router, tags=["affiliate-research"])
-app.include_router(affiliate_digistore24_connection.router, tags=["digistore24-connection"])
-app.include_router(affiliate_partnerize.router, tags=["affiliate-partnerize"])
 app.include_router(affiliate_automation.router, tags=["affiliate-automation"])
-app.include_router(affiliate_cj_connection.router, tags=["affiliate-cj"])
-app.include_router(affiliate_cj_products.router, tags=["affiliate-cj"])
-app.include_router(affiliate_cj_promotional_properties.router, tags=["affiliate-cj"])
 app.include_router(affiliate_pinterest.router, tags=["affiliate-pinterest"])
 app.include_router(hape_marketing.router, tags=["hape-brothers-marketing"])
 app.include_router(meta_webhooks.router, tags=["meta-webhooks"])
