@@ -164,6 +164,37 @@ def request_product_distribution(
 
 
 
+
+@router.post("/{product_id}/marketplace/listing", status_code=status.HTTP_202_ACCEPTED)
+def submit_marketplace_listing(product_id: UUID, owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
+    """Submit an explicitly opted-in, listed product for marketplace review."""
+    db = _db(client)
+    products = _rows(db.table("creator_products").select(
+        "id,owner_id,status,marketplace_enabled,price_amount,currency"
+    ).eq("id", str(product_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Product listing not found.")
+    product = products[0]
+    if product.get("status") != "listed" or not product.get("marketplace_enabled"):
+        raise HTTPException(status_code=409, detail="List the product and enable Marketplace discovery first.")
+    existing = _rows(db.table("creator_marketplace_listings").select(
+        "id,product_id,owner_id,status,price_amount,currency"
+    ).eq("product_id", str(product_id)).limit(1).execute())
+    if existing:
+        return {"success": True, "created": False, "listing": existing[0], "notice": "Marketplace listing already exists."}
+    try:
+        saved = db.table("creator_marketplace_listings").insert({
+            "product_id": str(product_id), "owner_id": owner_id, "status": "pending",
+            "price_amount": product["price_amount"], "currency": product["currency"]
+        }).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Marketplace listing request could not be saved.") from exc
+    rows = _rows(saved)
+    if not rows:
+        raise HTTPException(status_code=502, detail="Marketplace listing save was not confirmed.")
+    return {"success": True, "created": True, "listing": rows[0], "notice": "Listing submitted for marketplace review."}
+
+
 @router.get("/marketplace")
 def browse_marketplace(owner_id: str = Depends(get_current_user_id), client: Any = Depends(get_user_scoped_client)) -> dict[str, Any]:
     """Browse approved listings; RLS filters the associated product."""
