@@ -1,0 +1,133 @@
+name: SBOM and license audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            backend/requirements.txt
+
+      - name: Install declared application dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt -r backend/requirements.txt
+
+      - name: Remove virtualenv bootstrap tooling from application inventory
+        run: |
+          # pip is bundled into a fresh venv for installation, but is not an
+          # application dependency declared by AEA Core. Keep it out of the
+          # application SBOM so its component count matches pip-licenses.
+          .venv/bin/python -m pip uninstall -y pip
+
+      - name: Set up isolated audit tools
+        run: |
+          python -m venv .audit-venv
+          .audit-venv/bin/python -m pip install cyclonedx-bom==7.2.0 pip-licenses==5.5.5
+
+      - name: Generate CycloneDX SBOM from application environment
+        run: |
+          .audit-venv/bin/cyclonedx-py environment .venv --output-format JSON --output-file sbom-python.cdx.json
+
+      - name: Generate application-only license inventory and license texts
+        run: |
+          .audit-venv/bin/pip-licenses --python .venv/bin/python --format=json --with-urls --with-description --with-license-file --with-notice-file --output-file=python-licenses.json
+
+      - name: Build consolidated third-party notices
+        run: |
+          .audit-venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          packages = json.loads(Path("python-licenses.json").read_text())
+          lines = [
+              "AEA CORE — THIRD-PARTY SOFTWARE INVENTORY",
+              "Generated from the application-only Python environment in CI.",
+              "This inventory is not legal advice. Verify deployed versions and retain upstream notices.",
+              "",
+          ]
+          for p in sorted(packages, key=lambda x: (x.get("Name", ""), x.get("Version", ""))):
+              lines += [
+                  f"## {p.get('Name')} {p.get('Version')}",
+                  f"License: {p.get('License', 'UNKNOWN')}",
+                  f"Upstream: {p.get('URL', 'not recorded')}",
+                  "",
+                  p.get("LicenseText", "LICENSE TEXT NOT CAPTURED"),
+                  "",
+                  "-----",
+                  "",
+              ]
+          Path("THIRD_PARTY_NOTICES.txt").write_text("\n".join(lines), encoding="utf-8")
+          PY
+
+      - name: Upload Python SBOM, license inventory, and notices
+        uses: actions/upload-artifact@v4
+        with:
+          name: aea-core-python-sbom-and-licenses
+          path: |
+            sbom-python.cdx.json
+            python-licenses.json
+            THIRD_PARTY_NOTICES.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verify SBOM and license inventory reconcile
+        run: |
+          .audit-venv/bin/python - <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          bom = json.loads(Path("sbom-python.cdx.json").read_text())
+          licenses = json.loads(Path("python-licenses.json").read_text())
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          sbom_packages = {
+              (normalize(item["name"]), item.get("version", ""))
+              for item in bom.get("components", [])
+          }
+          license_packages = {
+              (normalize(item["Name"]), item["Version"])
+              for item in licenses
+          }
+          missing_from_inventory = sorted(sbom_packages - license_packages)
+          missing_from_sbom = sorted(license_packages - sbom_packages)
+          missing_license_metadata = sorted(
+              f"{item.get('Name')}@{item.get('Version')}"
+              for item in licenses
+              if not item.get("License") or item.get("License", "").strip().upper() in {"UNKNOWN", "UNKNOWN LICENSE"}
+          )
+          missing_license_text = sorted(
+              f"{item.get('Name')}@{item.get('Version')}"
+              for item in licenses
+              if not item.get("LicenseText", "").strip() or item.get("LicenseText", "").strip() == "LICENSE TEXT NOT CAPTURED"
+          )
+          if missing_from_inventory or missing_from_sbom or missing_license_metadata or missing_license_text:
+              print("SBOM/license compliance inventory check failed")
+              print("Missing from license inventory:", missing_from_inventory)
+              print("Missing from SBOM:", missing_from_sbom)
+              print("Missing license metadata:", missing_license_metadata)
+              print("Missing license text:", missing_license_text)
+              sys.exit(1)
+          print(f"Reconciled {len(sbom_packages)} application components; license identifiers and texts are present for all packages.")
+          PY
