@@ -78,7 +78,7 @@ def list_my_distribution_requests(
 ) -> dict[str, Any]:
     db = _db(client)
     result = db.table("creator_distribution_jobs").select(
-        "id,product_id,destination,status,block_reason,created_at,updated_at"
+        "id,product_id,destination,status,error,created_at,updated_at"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(200).execute()
     return {"success": True, "jobs": _rows(result)}
 
@@ -102,7 +102,7 @@ def request_product_distribution(
         raise HTTPException(status_code=409, detail="Archived products cannot be distributed.")
 
     existing_result = db.table("creator_distribution_jobs").select(
-        "id,product_id,destination,status,block_reason,created_at"
+        "id,product_id,destination,status,error,created_at"
     ).eq("owner_id", owner_id).eq("product_id", str(product_id)).eq(
         "destination", body.destination
     ).limit(1).execute()
@@ -121,8 +121,9 @@ def request_product_distribution(
         "owner_id": owner_id,
         "product_id": str(product_id),
         "destination": body.destination,
-        "status": "pending_connection" if supported else "blocked_unsupported",
-        "block_reason": None if supported else (
+        "status": "pending_approval" if supported else "draft",
+        "approval_required": True,
+        "error": None if supported else (
             f"{body.destination.title()} OAuth and publishing adapter are not yet integrated in AEA Core."
         ),
     }
@@ -140,9 +141,9 @@ def request_product_distribution(
         "job": job,
         "published": False,
         "notice": (
-            "Request saved. Connect and authorize the destination, then complete the approval workflow."
+            "Request saved for human approval. A connected, authorized destination is still required before publishing."
             if supported else
-            "Request saved as blocked. This destination needs its official OAuth and publishing integration."
+            "Request saved as a draft with a capability warning. This destination needs its official OAuth and publishing integration."
         ),
     }
 
