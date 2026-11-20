@@ -112,10 +112,22 @@ jobs:
           }
           missing_from_inventory = sorted(sbom_packages - license_packages)
           missing_from_sbom = sorted(license_packages - sbom_packages)
-          if missing_from_inventory or missing_from_sbom:
-              print("SBOM/license inventory mismatch")
+          missing_license_metadata = sorted(
+              f"{item.get('Name')}@{item.get('Version')}"
+              for item in licenses
+              if not item.get("License") or item.get("License", "").strip().upper() in {"UNKNOWN", "UNKNOWN LICENSE"}
+          )
+          missing_license_text = sorted(
+              f"{item.get('Name')}@{item.get('Version')}"
+              for item in licenses
+              if not item.get("LicenseText", "").strip() or item.get("LicenseText", "").strip() == "LICENSE TEXT NOT CAPTURED"
+          )
+          if missing_from_inventory or missing_from_sbom or missing_license_metadata or missing_license_text:
+              print("SBOM/license compliance inventory check failed")
               print("Missing from license inventory:", missing_from_inventory)
               print("Missing from SBOM:", missing_from_sbom)
+              print("Missing license metadata:", missing_license_metadata)
+              print("Missing license text:", missing_license_text)
               sys.exit(1)
-          print(f"Reconciled {len(sbom_packages)} application components.")
+          print(f"Reconciled {len(sbom_packages)} application components; license identifiers and texts are present for all packages.")
           PY
