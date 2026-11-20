@@ -217,14 +217,20 @@ def follow_creator(creator_id: UUID, owner_id: str = Depends(get_current_user_id
     if str(creator_id) == owner_id:
         raise HTTPException(status_code=422, detail="You cannot follow your own creator profile.")
     db = _db(client)
+    existing = db.table("creator_follows").select("follower_id,creator_id").eq(
+        "follower_id", owner_id).eq("creator_id", str(creator_id)).limit(1).execute()
+    existing_rows = _rows(existing)
+    if existing_rows:
+        return {"success": True, "created": False, "follow": existing_rows[0]}
     try:
-        result = db.table("creator_follows").upsert(
-            {"follower_id": owner_id, "creator_id": str(creator_id)},
-            on_conflict="follower_id,creator_id").execute()
+        result = db.table("creator_follows").insert(
+            {"follower_id": owner_id, "creator_id": str(creator_id)}).execute()
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Follow request was not accepted.") from exc
     rows = _rows(result)
-    return {"success": True, "follow": rows[0] if rows else {"creator_id": str(creator_id)}}
+    if not rows:
+        raise HTTPException(status_code=403, detail="Follow request was not accepted by database policy.")
+    return {"success": True, "created": True, "follow": rows[0]}
 
 
 @router.delete("/creators/{creator_id}/follow")
