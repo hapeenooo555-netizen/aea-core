@@ -33,6 +33,13 @@ jobs:
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r requirements.txt -r backend/requirements.txt
 
+      - name: Remove virtualenv bootstrap tooling from application inventory
+        run: |
+          # pip is bundled into a fresh venv for installation, but is not an
+          # application dependency declared by AEA Core. Keep it out of the
+          # application SBOM so its component count matches pip-licenses.
+          .venv/bin/python -m pip uninstall -y pip
+
       - name: Set up isolated audit tools
         run: |
           python -m venv .audit-venv
@@ -70,7 +77,7 @@ jobs:
                   "-----",
                   "",
               ]
-          Path("THIRD_PARTY_NOTICES.txt").write_text("\n".join(lines), encoding="utf-8")
+          Path("THIRD_PARTY_NOTICES.txt").write_text("\\n".join(lines), encoding="utf-8")
           PY
 
       - name: Upload Python SBOM, license inventory, and notices
