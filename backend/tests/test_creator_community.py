@@ -151,3 +151,23 @@ def test_creator_profile_is_saved_with_owner_identity_from_auth():
     assert response.status_code == 200
     assert response.json()["profile"]["user_id"] == "owner-1"
     assert response.json()["profile"]["is_public"] is True
+
+
+
+def test_user_can_react_and_comment_on_public_general_content():
+    db = Database()
+    api = client(db, user="viewer-1")
+    product_id = "11111111-1111-4111-8111-111111111111"
+    reaction = api.put(f"/community/products/{product_id}/reaction", json={"reaction": "like"})
+    comment = api.post(f"/community/products/{product_id}/comments", json={"body": "Very useful work."})
+    assert reaction.status_code == 200
+    assert comment.status_code == 201
+    assert db.tables["creator_product_reactions"][0]["user_id"] == "viewer-1"
+    assert db.tables["creator_product_comments"][0]["user_id"] == "viewer-1"
+
+
+def test_creator_cannot_follow_self():
+    response = client(Database(), user="11111111-1111-4111-8111-111111111111").post(
+        "/community/creators/11111111-1111-4111-8111-111111111111/follow"
+    )
+    assert response.status_code == 422
