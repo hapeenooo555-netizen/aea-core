@@ -50,7 +50,7 @@ with check (
       and l.status = 'approved'
       and p.status = 'listed'
       and p.marketplace_enabled = true
-      and p.owner_id = owner_id
+      and p.owner_id = creator_promotion_requests.owner_id
       and p.owner_id <> (select auth.uid())
   )
 );
