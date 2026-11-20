@@ -171,7 +171,7 @@ def set_product_reaction(product_id: UUID, body: ReactionRequest,
     try:
         result = db.table("creator_product_reactions").upsert(
             {"product_id": str(product_id), "user_id": owner_id, "reaction": body.reaction},
-            on_conflict="product_id,user_id").execute()
+            on_conflict="product_id,user_id").select("product_id,user_id,reaction,created_at").execute()
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Reaction is not allowed for this product or account.") from exc
     rows = _rows(result)
@@ -194,7 +194,7 @@ def add_product_comment(product_id: UUID, body: CommentRequest,
     db = _db(client)
     try:
         result = db.table("creator_product_comments").insert(
-            {"product_id": str(product_id), "user_id": owner_id, "body": body.body.strip()}).execute()
+            {"product_id": str(product_id), "user_id": owner_id, "body": body.body.strip()}).select("id,product_id,user_id,body,created_at").execute()
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Comment is not allowed for this product or account.") from exc
     rows = _rows(result)
@@ -224,7 +224,7 @@ def follow_creator(creator_id: UUID, owner_id: str = Depends(get_current_user_id
         return {"success": True, "created": False, "follow": existing_rows[0]}
     try:
         result = db.table("creator_follows").insert(
-            {"follower_id": owner_id, "creator_id": str(creator_id)}).execute()
+            {"follower_id": owner_id, "creator_id": str(creator_id)}).select("follower_id,creator_id,created_at").execute()
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Follow request was not accepted.") from exc
     rows = _rows(result)
@@ -266,7 +266,7 @@ def save_my_creator_profile(body: CreatorProfileRequest,
     payload = {"user_id": owner_id, "display_name": body.display_name.strip(),
         "bio": body.bio.strip(), "avatar_url": body.avatar_url, "is_public": body.is_public}
     try:
-        result = _db(client).table("creator_profiles").upsert(payload, on_conflict="user_id").execute()
+        result = _db(client).table("creator_profiles").upsert(payload, on_conflict="user_id").select("user_id,display_name,bio,avatar_url,is_public").execute()
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Creator profile could not be saved.") from exc
     rows = _rows(result)
