@@ -1013,7 +1013,7 @@ def test_scene_script_translation_preserves_original_and_clears_old_voice(monkey
         def generate(self, **kwargs):
             prompt = json.loads(kwargs["prompt"])
             return {"success": True, "content": json.dumps({
-                "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["scenes"]]
+                "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["selected_scenes_to_return"]]
             })}
 
     monkeypatch.setattr(video_generation, "get_llm_provider", lambda: Provider())
