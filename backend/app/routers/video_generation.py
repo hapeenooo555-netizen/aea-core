@@ -1333,7 +1333,7 @@ async def generate_scene_narration_audio(
     if not project_rows:
         raise HTTPException(status_code=404, detail="Video project not found.")
     scene_rows = _rows(db.table("video_project_scenes").select(
-        "id,narration,narration_audio_path"
+        "id,narration,narration_audio_path,script_language"
     ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
         "owner_id", owner_id
     ).limit(1).execute())
@@ -1347,6 +1347,8 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=422, detail="Eleven v3 supports up to 5,000 characters per request. Split this scene narration before generating audio.")
     if not voice_id:
         raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
+    if body.language_code != str(scene.get("script_language") or "en"):
+        raise HTTPException(status_code=409, detail="Voice-over language must match the saved scene script language. Translate or change the script first.")
     delivery_style = {
         "natural": 0.25,
         "warm": 0.4,
@@ -1370,8 +1372,6 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=502, detail="Could not reach the narration provider.") from exc
     if response.status_code != 200 or not response.content:
         raise HTTPException(status_code=502, detail=f"Narration provider rejected the request (HTTP {response.status_code}). Check voice access, model availability and account billing.")
-    if body.language_code != str(scene.get("script_language") or "en"):
-        raise HTTPException(status_code=409, detail="Voice-over language must match the saved scene script language. Translate or change the script first.")
     storage_path = f"{owner_id}/{project_id}/{scene_id}.mp3"
     storage_client = database_module.get_supabase_video_storage_client()
     if storage_client is None:
