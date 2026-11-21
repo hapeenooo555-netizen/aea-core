@@ -862,6 +862,7 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
             return DownloadResponse()
 
     monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: Client())
     path = asyncio.run(video_generation._persist_runway_video(
         Client(),
         "11111111-1111-4111-8111-111111111111",
@@ -876,7 +877,7 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
     assert uploaded["options"] == {"content-type": "video/mp4", "upsert": "true"}
 
 
-def test_runway_video_persistence_rejects_untrusted_hosts():
+def test_runway_video_persistence_rejects_untrusted_hosts(monkeypatch):
     import asyncio
 
     class Client:
@@ -892,7 +893,7 @@ def test_runway_video_persistence_rejects_untrusted_hosts():
 
 
 
-def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url():
+def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypatch):
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
 
@@ -909,6 +910,7 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url():
     class StorageDB(DB):
         storage = Storage()
 
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
     db = StorageDB()
     db.tables["video_project_scenes"] = [{
         "id": scene_id,
@@ -946,7 +948,7 @@ def test_scene_video_stream_is_owner_scoped():
     assert response.status_code == 404
 
 
-def test_scene_video_endpoint_returns_fresh_private_signed_url():
+def test_scene_video_endpoint_returns_fresh_private_signed_url(monkeypatch):
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
 
@@ -964,6 +966,7 @@ def test_scene_video_endpoint_returns_fresh_private_signed_url():
     class StorageDB(DB):
         storage = Storage()
 
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
     db = StorageDB()
     db.tables["video_project_scenes"] = [{
         "id": scene_id,

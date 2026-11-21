@@ -218,3 +218,28 @@ def get_supabase_image_budget_client() -> Any:
         return _image_budget_worker_client
     except Exception:  # pragma: no cover - deployment configuration failure
         return None
+
+
+_video_storage_client: Any = None
+
+
+def get_supabase_video_storage_client() -> Any:
+    """Return an isolated service-role client for private video asset Storage operations.
+
+    Use only after a request has authenticated the user and checked ownership
+    through its user-scoped database client. Never expose this client to a
+    browser or use it for general user-scoped table queries.
+    """
+    global _video_storage_client
+    if _video_storage_client is not None:
+        return _video_storage_client
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+        _video_storage_client = create_client(url, service_role_key)
+        return _video_storage_client
+    except Exception:  # pragma: no cover - deployment configuration failure
+        return None
