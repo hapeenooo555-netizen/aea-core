@@ -14,8 +14,9 @@ packages are installed inside the image at build time.
 In Render Dashboard > `aea-core` > Settings > Build > Source > Edit:
 
 - Runtime: **Docker**
-- Dockerfile Path: `backend/Dockerfile`
-- Docker Context: `backend` (if the field is shown)
+- Keep Root Directory: `backend/`
+- Dockerfile Path: `Dockerfile` (relative to the Root Directory)
+- Docker Context: `.` (relative to the Root Directory, if the field is shown)
 - Keep repository: `hapeenooo555-netizen/aea-core`
 - Keep branch: `main`
 
