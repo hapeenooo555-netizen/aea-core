@@ -434,23 +434,42 @@ def translate_video_project_scripts(
     if not selected_ids or not selected_ids.issubset({str(s["id"]) for s in scenes}):
         raise HTTPException(status_code=422, detail="Select one or more valid scenes from this project.")
     selected = [s for s in scenes if str(s["id"]) in selected_ids]
-    language_names = {"sw": "natural, fluent Tanzanian Kiswahili", "en": "natural, fluent English"}
+    language_names = {"sw": "Kiswahili sanifu cha mazungumzo kinachotumika Tanzania, chenye mtiririko wa asili", "en": "clear, natural spoken English"}
     source_rows = []
-    for scene in selected:
+    context_rows = []
+    for scene in scenes:
         source = scene.get("original_narration") or scene.get("narration") or ""
         if body.target_language == "en" and scene.get("script_language") == "sw" and scene.get("original_narration"):
             source = scene.get("original_narration") or source
-        source_rows.append({"id": str(scene["id"]), "scene_number": scene["scene_number"], "text": source})
+        context_rows.append({
+            "scene_number": scene["scene_number"],
+            "title": scene.get("title") or "",
+            "story_text": source,
+            "selected_for_rewrite": str(scene["id"]) in selected_ids,
+        })
+        if str(scene["id"]) in selected_ids:
+            source_rows.append({"id": str(scene["id"]), "scene_number": scene["scene_number"], "title": scene.get("title") or "", "text": source})
     provider = get_llm_provider()
     try:
         generated = provider.generate(
             prompt=json.dumps({
-                "task": "Translate each narration text faithfully. Preserve meaning, names, story facts, tone and scene order. Do not summarize or add information.",
+                "task": "Professionally localize and adapt the selected narration as a broadcast-ready audiovisual voice-over script in the target language. This is not word-for-word or mechanical translation.",
                 "target_language": language_names[body.target_language],
-                "scenes": source_rows,
-                "output_schema": {"translations": [{"id": "exact input id", "text": "complete translated narration"}]},
+                "audience_and_dialect": "Tanzanian general audience. Use idiomatic, grammatically correct Kiswahili when requested, not stiff textbook phrasing or awkward English-Swahili code-switching. Keep globally recognized brand names, personal names and necessary technical terms unchanged.",
+                "story_context": context_rows,
+                "selected_scenes_to_return": source_rows,
+                "editorial_requirements": [
+                    "Preserve every fact, character, intention, cause-and-effect relationship and emotional beat from the source.",
+                    "Keep continuity with the scenes immediately before and after each selected scene; do not make a scene sound like an isolated paragraph.",
+                    "Write for spoken delivery: natural cadence, concise sentences, clear transitions, varied rhythm and pronounceable wording.",
+                    "Retain the original level of emotion and cinematic tone. Do not add claims, statistics, dialogue, events or promotional exaggeration.",
+                    "Do not summarize, omit meaningful details, or change character names and places.",
+                    "Return the complete narration for each selected scene, not notes or an explanation."
+                ],
+                "quality_review": "Before returning JSON, silently review each scene for semantic fidelity, natural spoken delivery, grammar, terminology consistency and continuity. Revise any awkward or literal phrasing.",
+                "output_schema": {"translations": [{"id": "exact input id", "text": "complete final voice-over script for this scene"}]},
             }, ensure_ascii=False),
-            system_prompt="You are a professional audiovisual script translator. Return only valid JSON with a translations array. Preserve every scene ID exactly. Do not translate proper names.",
+            system_prompt="You are AEA Core's senior audiovisual localization editor and professional voice-over scriptwriter. Work as a translator, cultural localizer and spoken-script editor. Produce publication-quality narration, not a literal translation. Return only valid JSON with a translations array. Preserve every selected scene ID exactly, return each selected scene once, and do not translate proper names.",
         )
         raw = generated.get("content") if isinstance(generated, dict) else None
         payload = json.loads(raw) if isinstance(raw, str) else None
