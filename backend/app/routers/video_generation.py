@@ -95,8 +95,11 @@ async def _persist_runway_video(
     if not video_bytes or len(video_bytes) > MAX_VIDEO_ASSET_BYTES:
         raise RuntimeError("Runway video is empty or exceeds the AEA video storage limit.")
     object_path = _video_object_path(owner_id, job_id, project_id, scene_id)
+    storage_client = database_module.get_supabase_video_storage_client()
+    if storage_client is None:
+        raise RuntimeError("Private video storage is not configured on AEA Core.")
     try:
-        client.storage.from_(VIDEO_ASSET_BUCKET).upload(
+        storage_client.storage.from_(VIDEO_ASSET_BUCKET).upload(
             object_path,
             video_bytes,
             file_options={"content-type": "video/mp4", "upsert": "true"},
@@ -107,8 +110,12 @@ async def _persist_runway_video(
 
 
 def _create_video_signed_url(client: Any, object_path: str) -> str:
+    del client  # User-scoped database clients must never perform privileged Storage operations.
+    storage_client = database_module.get_supabase_video_storage_client()
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Private video storage is not configured on AEA Core.")
     try:
-        signed = client.storage.from_(VIDEO_ASSET_BUCKET).create_signed_url(object_path, 900)
+        signed = storage_client.storage.from_(VIDEO_ASSET_BUCKET).create_signed_url(object_path, 900)
         url = signed.get("signedURL") or signed.get("signedUrl")
         if not url:
             raise RuntimeError("Storage did not return a signed URL.")
@@ -660,8 +667,11 @@ async def stream_video_project_scene(
     object_path = scene.get("video_storage_path")
     if not object_path:
         object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    storage_client = database_module.get_supabase_video_storage_client()
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Private video storage is not configured on AEA Core.")
     try:
-        video_bytes = client.storage.from_(VIDEO_ASSET_BUCKET).download(str(object_path))
+        video_bytes = storage_client.storage.from_(VIDEO_ASSET_BUCKET).download(str(object_path))
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AEA could not retrieve this private video asset.") from exc
     if not isinstance(video_bytes, (bytes, bytearray)) or not video_bytes:
