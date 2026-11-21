@@ -1370,9 +1370,14 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=502, detail="Could not reach the narration provider.") from exc
     if response.status_code != 200 or not response.content:
         raise HTTPException(status_code=502, detail=f"Narration provider rejected the request (HTTP {response.status_code}). Check voice access, model availability and account billing.")
+    if body.language_code != str(scene.get("script_language") or "en"):
+        raise HTTPException(status_code=409, detail="Voice-over language must match the saved scene script language. Translate or change the script first.")
     storage_path = f"{owner_id}/{project_id}/{scene_id}.mp3"
+    storage_client = database_module.get_supabase_video_storage_client()
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Private audio storage is not configured on AEA Core.")
     try:
-        database_module.get_supabase_video_storage_client().storage.from_("aea-video-assets").upload(
+        storage_client.storage.from_("aea-video-assets").upload(
             storage_path,
             response.content,
             file_options={"content-type": "audio/mpeg", "upsert": "true"},
@@ -1446,6 +1451,9 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
         temp_root = Path(tempfile.mkdtemp(prefix="aea-video-"))
         ffmpeg = __import__("imageio_ffmpeg").get_ffmpeg_exe()
         segment_paths: list[Path] = []
+        video_storage = database_module.get_supabase_video_storage_client()
+        if video_storage is None:
+            raise RuntimeError("Private video storage is not configured.")
         width, height = (720, 1280) if project.get("aspect_ratio") == "9:16" else (1280, 720)
 
         with httpx.Client(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True) as http:
