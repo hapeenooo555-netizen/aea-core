@@ -83,3 +83,23 @@ def test_inspector_does_not_reject_composition_using_saliency_heuristics(monkeyp
     # Metrics remain available for diagnostics and future model calibration.
     assert "saliency_center_x" in result.quality_metrics
     assert "bottom_saliency_ratio" in result.quality_metrics
+
+def test_readable_ocr_tokens_detects_confident_numbers_and_mixed_tokens():
+    result = inspector._readable_ocr_tokens({
+        "text": ["2026", "AEA2026", "x", "??"],
+        "conf": ["96", "91", "99", "99"],
+    })
+    assert result == ("2026", "AEA2026")
+
+
+def test_detector_uses_multiple_ocr_passes(monkeypatch):
+    calls = []
+    def fake_ocr(image, *, output_type, config):
+        calls.append(config)
+        if config == "--psm 6":
+            return _ocr_result(("EXCLUSION",), ("93",))
+        return _ocr_result()
+    monkeypatch.setattr(inspector.pytesseract, "image_to_data", fake_ocr)
+    found = inspector._detect_unwanted_text(Image.new("RGB", (1024, 1280), "white"))
+    assert found == ("EXCLUSION",)
+    assert len(calls) >= 3
