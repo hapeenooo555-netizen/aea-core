@@ -375,6 +375,7 @@ def test_final_assembly_queues_only_owner_completed_project(monkeypatch):
         "id": "44444444-4444-4444-8444-444444444444",
         "project_id": project_id, "owner_id": "user-1",
         "status": "completed", "video_url": "https://example.test/scene.mp4",
+        "narration": "Karibu Tanzania.", "narration_audio_path": "user-1/project/scene.mp3",
     }]
     response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
     assert response.status_code == 202
@@ -984,3 +985,55 @@ def test_scene_video_endpoint_returns_fresh_private_signed_url(monkeypatch):
     assert response.status_code == 200
     assert response.json()["video_url"] == "https://storage.example.test/signed?token=fresh"
     assert response.json()["expires_in_seconds"] == 900
+
+def test_scene_script_translation_preserves_original_and_clears_old_voice(monkeypatch):
+    import json
+
+    class Provider:
+        name = "groq"
+        def generate(self, **kwargs):
+            prompt = json.loads(kwargs["prompt"])
+            return {"success": True, "content": json.dumps({
+                "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["scenes"]]
+            })}
+
+    monkeypatch.setattr(video_generation, "get_llm_provider", lambda: Provider())
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "title": "Dream of Entrepreneurship",
+        "narration": "In the bustling streets of Dar es Salaam, Juma dreams of a business.",
+        "script_language": "en", "narration_audio_path": "old/voice.mp3",
+    }]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/translate-scripts",
+        json={"target_language": "sw", "scene_ids": [scene_id]},
+    )
+    assert response.status_code == 200
+    scene = db.tables["video_project_scenes"][0]
+    assert scene["original_narration"].startswith("In the bustling")
+    assert scene["narration"].startswith("Katika mitaa")
+    assert scene["script_language"] == "sw"
+    assert scene["narration_audio_path"] is None
+
+
+def test_final_assembly_requires_voice_over_for_every_scene():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    db = DB()
+    db.tables["video_projects"] = [{
+        "id": project_id, "owner_id": "user-1", "status": "ready", "final_video_path": None,
+    }]
+    db.tables["video_project_scenes"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "project_id": project_id, "owner_id": "user-1",
+        "status": "completed", "video_url": "https://example.test/scene.mp4",
+        "narration": "Karibu Tanzania.", "narration_audio_path": None,
+    }]
+    response = make_client(db).post(f"/video/generations/projects/{project_id}/assemble")
+    assert response.status_code == 409
+    assert "voice-over" in response.json()["detail"]
+
+
