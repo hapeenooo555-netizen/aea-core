@@ -62,4 +62,4 @@ def test_renderer_keeps_long_kiswahili_copy_inside_mobile_poster_canvas():
         assert result.format == "PNG"
         # The larger mobile-first copy panel is opaque and reaches into
         # the lower half of the portrait poster.
-        assert result.convert("RGB").getpixel((12, 700)) == (5, 16, 34)
+        assert result.convert("RGB").getpixel((60, 700)) == (5, 16, 34)
