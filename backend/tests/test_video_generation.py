@@ -1012,6 +1012,10 @@ def test_scene_script_translation_preserves_original_and_clears_old_voice(monkey
         name = "groq"
         def generate(self, **kwargs):
             prompt = json.loads(kwargs["prompt"])
+            assert prompt["task"].startswith("Professionally localize")
+            assert prompt["story_context"][0]["title"] == "Dream of Entrepreneurship"
+            assert "not stiff textbook phrasing" in prompt["audience_and_dialect"]
+            assert any("spoken delivery" in item for item in prompt["editorial_requirements"])
             return {"success": True, "content": json.dumps({
                 "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["selected_scenes_to_return"]]
             })}
