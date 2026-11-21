@@ -640,6 +640,45 @@ async def get_video_project_scene_video_url(
     }
 
 
+@router.get("/projects/{project_id}/scenes/{scene_id}/video/stream")
+async def stream_video_project_scene(
+    project_id: UUID,
+    scene_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> Response:
+    """Serve a private MP4 through the authenticated API, avoiding CDN signed-token playback failures."""
+    db = _db(client)
+    rows = _rows(db.table("video_project_scenes").select(
+        "id,project_id,owner_id,status,generation_job_id,video_url,video_storage_path"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+        "owner_id", owner_id
+    ).limit(1).execute())
+    if not rows:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    scene = rows[0]
+    object_path = scene.get("video_storage_path")
+    if not object_path:
+        object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    try:
+        video_bytes = client.storage.from_(VIDEO_ASSET_BUCKET).download(str(object_path))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AEA could not retrieve this private video asset.") from exc
+    if not isinstance(video_bytes, (bytes, bytearray)) or not video_bytes:
+        raise HTTPException(status_code=502, detail="The stored video asset is empty or unavailable.")
+    if len(video_bytes) > MAX_VIDEO_ASSET_BYTES:
+        raise HTTPException(status_code=413, detail="The stored video asset exceeds the playback limit.")
+    return Response(
+        content=bytes(video_bytes),
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": 'inline; filename="aea-scene.mp4"',
+            "Accept-Ranges": "none",
+        },
+    )
+
+
 @router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=status.HTTP_202_ACCEPTED)
 async def generate_video_project_scene(
     project_id: UUID,
