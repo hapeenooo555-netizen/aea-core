@@ -1043,6 +1043,33 @@ def test_scene_script_translation_preserves_original_and_clears_old_voice(monkey
     assert scene["narration_audio_path"] is None
 
 
+
+def test_scene_script_translation_provider_failure_keeps_database_unchanged(monkeypatch):
+    class FailingProvider:
+        name = "groq"
+        def generate(self, **kwargs):
+            return {"success": False, "error": "upstream timeout"}
+
+    monkeypatch.setattr(video_generation, "get_llm_provider", lambda: FailingProvider())
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    original = {
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "scene_number": 1, "title": "Dream of Entrepreneurship",
+        "narration": "Original English script.", "script_language": "en",
+        "narration_audio_path": "private/voice.mp3",
+    }
+    db.tables["video_project_scenes"] = [dict(original)]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/translate-scripts",
+        json={"target_language": "sw", "scene_ids": [scene_id]},
+    )
+    assert response.status_code == 503
+    assert db.tables["video_project_scenes"][0] == original
+
+
 def test_final_assembly_requires_voice_over_for_every_scene():
     project_id = "33333333-3333-4333-8333-333333333333"
     db = DB()
