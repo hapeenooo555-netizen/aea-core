@@ -1269,17 +1269,12 @@ def export_video_project_subtitles(
             start = cursor_ms
             end = cursor_ms + duration_ms
             cues.append(
-                f"{len(cues) + 1}
-{_srt_timestamp(start)} --> {_srt_timestamp(end)}
-{narration}"
+                f"{len(cues) + 1}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{narration}"
             )
         cursor_ms += duration_ms
     if not cues:
         raise HTTPException(status_code=409, detail="No scene narration is available to export as subtitles.")
-    content = "
-
-".join(cues) + "
-"
+    content = "\n\n".join(cues) + "\n"
     return Response(
         content=content,
         media_type="application/x-subrip; charset=utf-8",
@@ -1504,8 +1499,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
                 segment_paths.append(segment_path)
 
         concat_file = temp_root / "concat.txt"
-        concat_file.write_text("".join(f"file '{p.as_posix()}'
-" for p in segment_paths), encoding="utf-8")
+        concat_file.write_text("".join(f"file '{p.as_posix()}'\n" for p in segment_paths), encoding="utf-8")
         output_path = temp_root / "final.mp4"
         rendered = subprocess.run(
             [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
