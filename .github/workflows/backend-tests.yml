@@ -49,7 +49,7 @@ jobs:
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_fal_provider_response_validation.py backend/tests/test_fal_image_generation_provider.py
 
       - name: Run Graphic Design generation and private asset tests
-        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_graphic_design_generation.py backend/tests/test_graphic_design_migration.py
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_graphic_design_generation.py backend/tests/test_graphic_design_migration.py backend/tests/test_graphic_visual_inspector.py
 
       - name: Run Pinterest OAuth security tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_pinterest_oauth_config_security.py

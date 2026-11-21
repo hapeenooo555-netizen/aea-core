@@ -183,7 +183,14 @@ async def generate_graphic_design_image(
         stage = "visual_quality_inspection"
         inspection = inspect_generated_background(generated.content)
         if not inspection.accepted:
-            raise ValueError("Generated background failed AEA visual quality inspection")
+            # Rejection reason and numeric metrics are safe diagnostics: never log
+            # prompts, image bytes, signed URLs, or provider credentials.
+            logger.warning(
+                "Graphic design visual inspection rejected image reason=%s metrics=%s",
+                inspection.reason,
+                inspection.quality_metrics or {},
+            )
+            raise ValueError(f"Visual inspection rejected image: {inspection.reason}")
         final_content = generated.content
         final_mime_type = generated.mime_type
         final_width = generated.width
