@@ -172,25 +172,59 @@ async def generate_graphic_design_image(
     stage = "provider_configuration"
     try:
         provider = get_image_generation_provider()
-        stage = "provider_generation"
-        generated = await provider.generate(
-            prompt=body.prompt,
-            aspect_ratio=body.aspect_ratio,
-            model=body.model,
-        )
-        if generated.provider != provider_name:
-            raise RuntimeError("Unexpected image provider returned")
-        stage = "visual_quality_inspection"
-        inspection = inspect_generated_background(generated.content)
-        if not inspection.accepted:
+        # A text-bearing background is a common image-model failure. Retry only
+        # that rejection with a stronger background-only instruction; keep OCR
+        # strict so accidental text is never silently accepted.
+        inspection = None
+        generated = None
+        max_generation_attempts = 3
+        for attempt in range(1, max_generation_attempts + 1):
+            stage = "provider_generation"
+            retry_instruction = (
+                ""
+                if attempt == 1
+                else (
+                    "\\n\\nCreate a fresh variation. BACKGROUND ART ONLY: absolutely no "
+                    "letters, words, numbers, typography, logos, watermarks, labels, "
+                    "signage, signatures, or pseudo-text anywhere in the image. "
+                    "Leave all copy areas as clean visual space."
+                )
+            )
+            generated = await provider.generate(
+                prompt=body.prompt + retry_instruction,
+                aspect_ratio=body.aspect_ratio,
+                model=body.model,
+            )
+            if generated.provider != provider_name:
+                raise RuntimeError("Unexpected image provider returned")
+
+            stage = "visual_quality_inspection"
+            inspection = inspect_generated_background(generated.content)
+            if inspection.accepted:
+                if attempt > 1:
+                    logger.info(
+                        "Graphic design background passed inspection after retry attempt=%s",
+                        attempt,
+                    )
+                break
+
             # Rejection reason and numeric metrics are safe diagnostics: never log
             # prompts, image bytes, signed URLs, or provider credentials.
             logger.warning(
-                "Graphic design visual inspection rejected image reason=%s metrics=%s",
+                "Graphic design visual inspection rejected image attempt=%s reason=%s metrics=%s",
+                attempt,
                 inspection.reason,
                 inspection.quality_metrics or {},
             )
-            raise ValueError(f"Visual inspection rejected image: {inspection.reason}")
+            if inspection.reason != "unwanted_text_detected":
+                raise ValueError(
+                    f"Visual inspection rejected image: {inspection.reason}"
+                )
+
+        if generated is None or inspection is None or not inspection.accepted:
+            raise ValueError(
+                "Generated backgrounds repeatedly contained unwanted text"
+            )
         final_content = generated.content
         final_mime_type = generated.mime_type
         final_width = generated.width
