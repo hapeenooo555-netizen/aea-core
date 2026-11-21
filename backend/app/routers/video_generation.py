@@ -405,6 +405,82 @@ class VideoSceneInput(BaseModel):
     duration_seconds: int = Field(default=5, ge=2, le=10)
 
 
+class SceneScriptTranslationRequest(BaseModel):
+    target_language: Literal["sw", "en"] = "sw"
+    scene_ids: list[UUID] | None = Field(default=None, max_length=720)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/projects/{project_id}/translate-scripts")
+def translate_video_project_scripts(
+    project_id: UUID,
+    body: SceneScriptTranslationRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Translate selected scene narration while preserving the original source text."""
+    db = _db(client)
+    projects = _rows(db.table("video_projects").select("id").eq(
+        "id", str(project_id)
+    ).eq("owner_id", owner_id).limit(1).execute())
+    if not projects:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+    scenes = _rows(db.table("video_project_scenes").select(
+        "id,scene_number,title,narration,original_narration,script_language"
+    ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute())
+    if not scenes:
+        raise HTTPException(status_code=409, detail="This project has no scenes to translate.")
+    selected_ids = {str(value) for value in body.scene_ids} if body.scene_ids is not None else {str(s["id"]) for s in scenes}
+    if not selected_ids or not selected_ids.issubset({str(s["id"]) for s in scenes}):
+        raise HTTPException(status_code=422, detail="Select one or more valid scenes from this project.")
+    selected = [s for s in scenes if str(s["id"]) in selected_ids]
+    language_names = {"sw": "natural, fluent Tanzanian Kiswahili", "en": "natural, fluent English"}
+    source_rows = []
+    for scene in selected:
+        source = scene.get("original_narration") or scene.get("narration") or ""
+        if body.target_language == "en" and scene.get("script_language") == "sw" and scene.get("original_narration"):
+            source = scene.get("original_narration") or source
+        source_rows.append({"id": str(scene["id"]), "scene_number": scene["scene_number"], "text": source})
+    provider = get_llm_provider()
+    try:
+        generated = provider.generate(
+            prompt=json.dumps({
+                "task": "Translate each narration text faithfully. Preserve meaning, names, story facts, tone and scene order. Do not summarize or add information.",
+                "target_language": language_names[body.target_language],
+                "scenes": source_rows,
+                "output_schema": {"translations": [{"id": "exact input id", "text": "complete translated narration"}]},
+            }, ensure_ascii=False),
+            system_prompt="You are a professional audiovisual script translator. Return only valid JSON with a translations array. Preserve every scene ID exactly. Do not translate proper names.",
+        )
+        raw = generated.get("content") if isinstance(generated, dict) else None
+        payload = json.loads(raw) if isinstance(raw, str) else None
+        translations = payload.get("translations") if isinstance(payload, dict) else None
+        if not isinstance(translations, list):
+            raise ValueError("Missing translations array")
+        translated = {str(item["id"]): str(item["text"]).strip() for item in translations if isinstance(item, dict) and item.get("id") and isinstance(item.get("text"), str) and item["text"].strip()}
+        if set(translated) != selected_ids:
+            raise ValueError("Translation response did not include every selected scene")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AEA could not translate every selected scene. No script changes were saved.") from exc
+    saved = []
+    try:
+        for scene in selected:
+            translated_text = translated[str(scene["id"])]
+            original = scene.get("original_narration") or scene.get("narration") or ""
+            updated = _rows(db.table("video_project_scenes").update({
+                "original_narration": original,
+                "narration": translated_text,
+                "script_language": body.target_language,
+                "narration_audio_path": None,
+            }).eq("id", str(scene["id"])).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute())
+            if not updated:
+                raise RuntimeError("Scene script update was not confirmed")
+            saved.append({"id": str(scene["id"]), "narration": translated_text, "script_language": body.target_language})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AEA translated the script but could not confirm all scene updates. Reload the project before continuing.") from exc
+    return {"success": True, "project_id": str(project_id), "target_language": body.target_language, "translated": len(saved), "scenes": saved, "voice_over_reset": True, "notice": "Script translation saved. Existing voice-over audio was cleared for these scenes; regenerate voice-over using the new script."}
+
+
 class VideoProjectRequest(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     format: Literal["short", "long_form", "storytelling", "documentary", "advertisement"] = "storytelling"
@@ -528,7 +604,7 @@ async def get_video_project(
     if not projects:
         raise HTTPException(status_code=404, detail="Video project not found.")
     scenes_response = db.table("video_project_scenes").select(
-        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url,video_storage_path,provider_error,http_status"
+        "id,scene_number,title,narration,original_narration,script_language,visual_prompt,duration_seconds,status,generation_job_id,video_url,video_storage_path,narration_audio_path,provider_error,http_status"
     ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute()
     scenes = _rows(scenes_response)
     for scene in scenes:
@@ -1296,7 +1372,7 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=502, detail=f"Narration provider rejected the request (HTTP {response.status_code}). Check voice access, model availability and account billing.")
     storage_path = f"{owner_id}/{project_id}/{scene_id}.mp3"
     try:
-        client.storage.from_("aea-video-assets").upload(
+        database_module.get_supabase_video_storage_client().storage.from_("aea-video-assets").upload(
             storage_path,
             response.content,
             file_options={"content-type": "audio/mpeg", "upsert": "true"},
@@ -1366,7 +1442,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
             "id,scene_number,duration_seconds,status,video_url,video_storage_path,narration_audio_path"
         ).eq("project_id", project_id).eq("owner_id", owner_id).order("scene_number").execute())
         if not scenes or any(s.get("status") != "completed" or not (s.get("video_storage_path") or s.get("video_url")) for s in scenes):
-            raise RuntimeError("Every scene must have a completed video before assembly.")
+            raise RuntimeError("Every scene must have a completed video before assembly.")\n        if any(not s.get("narration_audio_path") for s in scenes):\n            raise RuntimeError("Every scene must have an approved script and generated voice-over before final MP4 assembly.")
         temp_root = Path(tempfile.mkdtemp(prefix="aea-video-"))
         ffmpeg = __import__("imageio_ffmpeg").get_ffmpeg_exe()
         segment_paths: list[Path] = []
@@ -1376,7 +1452,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
             for index, scene in enumerate(scenes, start=1):
                 video_path = temp_root / f"scene-{index:04d}-source.mp4"
                 if scene.get("video_storage_path"):
-                    video_bytes = client.storage.from_(VIDEO_ASSET_BUCKET).download(scene["video_storage_path"])
+                    video_storage = database_module.get_supabase_video_storage_client()\n                    if video_storage is None:\n                        raise RuntimeError("Private video storage is not configured.")\n                    video_bytes = video_storage.storage.from_(VIDEO_ASSET_BUCKET).download(scene["video_storage_path"])
                     video_path.write_bytes(video_bytes)
                 else:
                     # Backward compatibility for legacy projects created before private asset persistence.
@@ -1387,7 +1463,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
                 command = [ffmpeg, "-y", "-i", str(video_path)]
                 narration_path = None
                 if scene.get("narration_audio_path"):
-                    audio_bytes = client.storage.from_("aea-video-assets").download(scene["narration_audio_path"])
+                    audio_bytes = video_storage.storage.from_("aea-video-assets").download(scene["narration_audio_path"])
                     narration_path = temp_root / f"scene-{index:04d}.mp3"
                     narration_path.write_bytes(audio_bytes)
                     command += ["-i", str(narration_path)]
@@ -1420,7 +1496,7 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
         if rendered.returncode != 0 or not output_path.exists():
             raise RuntimeError("FFmpeg could not join the rendered scene files.")
         storage_path = f"{owner_id}/{project_id}/final.mp4"
-        client.storage.from_("aea-video-assets").upload(
+        video_storage.storage.from_("aea-video-assets").upload(
             storage_path, output_path.read_bytes(),
             file_options={"content-type": "video/mp4", "upsert": "true"},
         )
@@ -1471,7 +1547,7 @@ def assemble_video_project(
     if not scenes:
         raise HTTPException(status_code=409, detail="This project has no scenes.")
     if any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
-        raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")
+        raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")\n    narration_rows = _rows(db.table("video_project_scenes").select("id,narration,narration_audio_path").eq("project_id", str(project_id)).eq("owner_id", owner_id).execute())\n    if any(not str(s.get("narration") or "").strip() or not s.get("narration_audio_path") for s in narration_rows):\n        raise HTTPException(status_code=409, detail="Translate/review every scene script and generate its voice-over before final MP4 assembly.")
     job_id = str(uuid4())
     try:
         queued = db.table("video_assembly_jobs").insert({
@@ -1523,7 +1599,7 @@ def get_video_project_final_url(
             "video_url": None,
         }
     try:
-        signed = client.storage.from_("aea-video-assets").create_signed_url(path, 900)
+        storage_client = database_module.get_supabase_video_storage_client()\n        if storage_client is None:\n            raise RuntimeError("Private video storage is not configured.")\n        signed = storage_client.storage.from_("aea-video-assets").create_signed_url(path, 900)
         url = signed.get("signedURL") or signed.get("signedUrl")
         if not url:
             raise RuntimeError("Storage did not return a signed URL.")
