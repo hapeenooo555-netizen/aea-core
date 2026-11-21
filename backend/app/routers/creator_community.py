@@ -136,7 +136,7 @@ def save_my_creator_profile(
     try:
         rows = _rows(db.table("creator_profiles").upsert(
             payload, on_conflict="user_id"
-        ).execute())
+        ).select("*").execute())
         if not rows:
             raise HTTPException(status_code=502, detail="Database did not confirm the creator profile update.")
         profile = rows[0]
@@ -188,7 +188,7 @@ def request_age_verification(
             "status": "pending",
             "verification_method": body.verification_method,
             "verified_at": None,
-        }, on_conflict="user_id").execute())
+        }, on_conflict="user_id").select("*").execute())
         if not rows:
             raise HTTPException(status_code=502, detail="Database did not confirm the age-verification request.")
         return {"success": True, "verification": rows[0], "notice": "Ombi limetumwa kwa ukaguzi wa manual."}
@@ -232,13 +232,13 @@ def set_product_reaction(
         if existing:
             saved = db.table("creator_product_reactions").update({
                 "reaction": body.reaction
-            }).eq("id", existing[0]["id"]).execute()
+            }).eq("id", existing[0]["id"]).select("*").execute()
         else:
             saved = db.table("creator_product_reactions").insert({
                 "product_id": str(product_id),
                 "user_id": owner_id,
                 "reaction": body.reaction,
-            }).execute()
+            }).select("*").execute()
         if not _rows(saved):
             raise HTTPException(status_code=502, detail="Database did not confirm the reaction.")
         return {"success": True, "reaction": body.reaction}
@@ -261,7 +261,7 @@ def create_product_comment(
             "product_id": str(product_id),
             "user_id": owner_id,
             "body": body.body.strip(),
-        }).execute())
+        }).select("*").execute())
         if not rows:
             raise HTTPException(status_code=502, detail="Database did not confirm the comment.")
         return {"success": True, "comment": rows[0]}
