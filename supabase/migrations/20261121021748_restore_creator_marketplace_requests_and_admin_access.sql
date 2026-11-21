@@ -91,3 +91,6 @@ GRANT UPDATE (status) ON TABLE public.creator_promotion_requests TO authenticate
 INSERT INTO public.aea_marketplace_admins (user_id, active)
 VALUES ('e1e4e8c7-5f57-47bd-8d6c-186ce1d4afb7', true)
 ON CONFLICT (user_id) DO UPDATE SET active = true;
+
+-- Remove the legacy permissive owner policy; use the narrower vendor/admin policies above.
+DROP POLICY IF EXISTS "owners manage own marketplace listings" ON public.creator_marketplace_listings;
