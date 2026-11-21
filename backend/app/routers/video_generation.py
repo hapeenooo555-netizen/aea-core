@@ -1338,8 +1338,11 @@ def get_scene_narration_audio_url(
     path = rows[0].get("narration_audio_path")
     if not path:
         raise HTTPException(status_code=404, detail="Narration audio has not been generated for this scene.")
+    storage_client = database_module.get_supabase_video_storage_client()
+    if storage_client is None:
+        raise HTTPException(status_code=503, detail="Private video storage is not configured on AEA Core.")
     try:
-        signed = client.storage.from_("aea-video-assets").create_signed_url(path, 900)
+        signed = storage_client.storage.from_("aea-video-assets").create_signed_url(path, 900)
         url = signed.get("signedURL") or signed.get("signedUrl")
         if not url:
             raise RuntimeError("Storage did not return a signed URL.")
