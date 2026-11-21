@@ -63,3 +63,24 @@ def test_renderer_keeps_long_kiswahili_copy_inside_mobile_poster_canvas():
         # The larger mobile-first copy panel is opaque and reaches into
         # the lower half of the portrait poster.
         assert result.convert("RGB").getpixel((60, 700)) == (5, 16, 34)
+
+
+def test_renderer_cleans_placeholders_without_regex_warnings():
+    import warnings
+
+    source = BytesIO()
+    Image.new("RGB", (600, 750), (220, 220, 220)).save(source, format="PNG")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", FutureWarning)
+        rendered, _, _ = render_design_copy(
+            source.getvalue(),
+            DesignCopy(
+                title="Tangazo la AEA",
+                body="Jifunze zaidi [AUDIENCE_PLACEHOLDER] leo",
+                cta="Tembelea [LINK_PLACEHOLDER]",
+            ),
+        )
+
+    assert rendered.startswith(b"\\x89PNG")
+    assert not [warning for warning in caught if issubclass(warning.category, FutureWarning)]
