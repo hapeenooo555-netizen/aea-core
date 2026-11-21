@@ -1,34 +1,43 @@
 # Render image-generation runtime dependency
 
-AEA Core's Graphic Design generation pipeline runs local OCR through
-`pytesseract` in `app/services/graphic_visual_inspector.py`. The Python
-package is only a wrapper; the native Tesseract executable must also exist in
-the Render service runtime. Without it, image inspection raises
-`TesseractNotFoundError` and Graphic Design generation returns HTTP 502.
+AEA Core's Graphic Design pipeline uses local OCR through `pytesseract` in
+`app/services/graphic_visual_inspector.py`. The Python package is a wrapper;
+the native Tesseract executable must also be present. The native Python Render
+build attempt failed because its build environment rejected writes to
+`/var/lib/apt/lists` (read-only filesystem).
 
-## Render service configuration
+## Render configuration
 
-For the existing `aea-core` native Python web service:
+Use the Docker runtime for the existing `aea-core` web service so OS-level
+packages are installed inside the image at build time.
 
-- Keep the repository root directory as `backend/`.
-- Change the Build Command to:
+In Render Dashboard > `aea-core` > Settings > Build > Source > Edit:
 
-```bash
-bash render-build.sh
-```
+- Runtime: **Docker**
+- Keep Root Directory: `backend/`
+- Dockerfile Path: `Dockerfile` (relative to the Root Directory)
+- Docker Context: `.` (relative to the Root Directory, if the field is shown)
+- Keep repository: `hapeenooo555-netizen/aea-core`
+- Keep branch: `main`
 
-- Keep the existing Start Command:
+The Dockerfile installs Debian's `tesseract-ocr` package, installs the
+existing Python requirements and Uvicorn, and starts the existing FastAPI
+application using Render's `PORT` environment variable.
 
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
+Do not change environment variables, credentials, Supabase configuration,
+Fal.ai settings, budgets, or the service URL. The runtime change should be
+made through Render's Source editor; do not replace the service with a new
+service unless Render explicitly requires it.
 
-The build script installs Debian's `tesseract-ocr` package, verifies the
-binary is available, then installs the existing Python requirements and
-Uvicorn. It does not change API keys, Supabase settings, model selection,
-budgets, or user data.
+## Verification
 
-After the service redeploys, verify `tesseract --version` in the build log
-and run one Graphic Design generation request. The image should only be marked
-completed after OCR/visual inspection and private Supabase Storage upload
-succeed.
+1. Confirm the Docker image build succeeds and the service becomes Live.
+2. Check runtime logs for successful FastAPI startup.
+3. Verify the OCR binary in a controlled runtime check with
+   `tesseract --version`.
+4. Run one authenticated Graphic Design generation request.
+5. Confirm visual inspection passes and the generated image is stored in
+   private Supabase Storage before the job is marked completed.
+
+The previous native-runtime `render-build.sh` workaround is removed because
+APT package installation is not supported in that build environment.
