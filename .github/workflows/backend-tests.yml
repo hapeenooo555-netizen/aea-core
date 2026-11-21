@@ -2,9 +2,9 @@ name: Backend tests
 
 on:
   pull_request:
-    branches: [main, "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue"]
+    branches: [main, "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue", "feat/marketplace-store-api-contracts"]
   push:
-    branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/country-intelligence-content-to-revenue", "feat/country-revenue-attribution", "feat/country-revenue-attribution-synced"]
+    branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/country-intelligence-content-to-revenue", "feat/country-revenue-attribution", "feat/country-revenue-attribution-synced", "feat/marketplace-store-api-contracts"]
   workflow_dispatch:
 
 permissions:
@@ -63,6 +63,9 @@ jobs:
           tests/test_p1_7b_employee_slice.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
+      - name: Run Creator Community API tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_community.py
+
       - name: Run AEA Content Studio tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_content_studio.py
       - name: Run AEA market research connector tests
@@ -86,3 +89,6 @@ jobs:
         run: >-
           PYTHONPATH=backend python -m pytest -q
           backend/tests/test_affiliate_pinterest_approval_linking.py
+
+      - name: Run AEA Creator Store and Marketplace API tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_store_marketplace.py
