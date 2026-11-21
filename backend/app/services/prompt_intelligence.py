@@ -18,8 +18,8 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
     "graphic_design": {
         "signals": ("graphic design", "poster", "flyer", "logo", "banner", "infographic", "brochure", "design", "mchoro", "tangazo"),
         "roles": ("creative_director", "graphic_designer", "art_director", "typographer", "brand_designer", "quality_controller"),
-        "deliverables": ("creative_concept", "layout", "visual_hierarchy", "copy", "color_palette", "typography", "imagery_direction", "export_specifications"),
-        "standards": ("readability", "contrast", "alignment", "brand_consistency", "platform_safe_areas", "factual_accuracy", "accessibility"),
+        "deliverables": ("final_visual_asset", "audience_facing_copy", "advertising_headline", "supporting_benefit", "call_to_action", "creative_concept", "layout", "visual_hierarchy", "color_palette", "typography", "imagery_direction", "export_specifications"),
+        "standards": ("deliverable_first", "audience_relevance", "persuasive_truthful_copy", "readability", "contrast", "alignment", "brand_consistency", "platform_safe_areas", "factual_accuracy", "accessibility"),
     },
     "marketing": {
         "signals": ("marketing", "campaign", "advert", "advertisement", "lead generation", "kampeni", "masoko"),
@@ -84,6 +84,11 @@ def build_intelligence_context(*, prompt: str, content_type: str, niche: str,
         "intent_preservation_policy": (
             "Preserve the customer's objective, facts, constraints, language, brand identity and requested outcome. "
             "Improve the execution method, not the customer's intent. Do not reject an informal or incomplete prompt "
-            "because it lacks professional terminology."
+            "because it lacks professional terminology. For graphic design requests, prioritize the requested finished "
+            "visual deliverable and audience-facing message. A poster or advertisement must communicate the product or "
+            "brand value with a clear headline, concise supporting benefit and relevant call to action. Never make a "
+            "design-guide label such as 'Poster Design Guide' or 'Mwongozo wa Ubunifu wa Poster' the poster headline "
+            "unless the user explicitly asks to advertise a design guide. Keep internal creative direction out of the "
+            "customer-facing artwork; show it only as optional production notes."
         ),
     }

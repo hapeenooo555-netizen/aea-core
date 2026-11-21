@@ -99,3 +99,23 @@ def test_prompt_version_integrity_rejects_modified_persisted_content():
     )
     version["system_prompt"] = "You are a different assistant."
     assert not _prompt_version_integrity_valid(version)
+
+
+def test_graphic_design_context_prioritizes_finished_advertising_asset_and_copy():
+    context = build_intelligence_context(
+        prompt="Nitengenezee poster inayoelezea AEA",
+        content_type="custom",
+        niche="AI business platform",
+        audience=None,
+        objective="reach",
+        language="Swahili",
+        tone="professional",
+        platforms=["facebook", "instagram"],
+    )
+    assert context["domain"] == "graphic_design"
+    assert "final_visual_asset" in context["expected_deliverables"]
+    assert "audience_facing_copy" in context["expected_deliverables"]
+    assert "call_to_action" in context["expected_deliverables"]
+    policy = context["intent_preservation_policy"]
+    assert "Never make a design-guide label" in policy
+    assert "customer-facing artwork" in policy
