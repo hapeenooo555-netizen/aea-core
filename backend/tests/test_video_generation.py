@@ -845,7 +845,7 @@ def test_scene_narration_rejects_client_voice_id_without_server_configuration(mo
     }]
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
-        json={"voice_id": "client-controlled-voice"},
+        json={"voice_id": "client-controlled-voice", "language_code": "en"},
     )
     assert response.status_code == 503
     assert "Voice ID is not configured" in response.json()["detail"]
