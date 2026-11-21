@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -43,6 +44,77 @@ def _db(client: Any) -> Any:
 def _rows(response: Any) -> list[dict[str, Any]]:
     data = getattr(response, "data", None)
     return data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+
+
+VIDEO_ASSET_BUCKET = "aea-video-assets"
+MAX_VIDEO_ASSET_BYTES = 480 * 1024 * 1024
+_ALLOWED_VIDEO_HOST_SUFFIXES = (".cloudfront.net", ".runwayml.com", ".amazonaws.com")
+
+
+def _video_object_path(owner_id: str, job_id: str, project_id: str | None = None, scene_id: str | None = None) -> str:
+    if project_id and scene_id:
+        return f"{owner_id}/{project_id}/scenes/{scene_id}.mp4"
+    return f"{owner_id}/jobs/{job_id}.mp4"
+
+
+def _validate_runway_asset_url(source_url: str) -> None:
+    parsed = urlsplit(source_url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not hostname or not any(
+        hostname.endswith(suffix) for suffix in _ALLOWED_VIDEO_HOST_SUFFIXES
+    ):
+        raise RuntimeError("Runway returned a video URL on an unsupported host.")
+    if parsed.username or parsed.password:
+        raise RuntimeError("Runway returned an invalid video URL.")
+
+
+async def _persist_runway_video(
+    client: Any,
+    owner_id: str,
+    job_id: str,
+    source_url: str,
+    project_id: str | None = None,
+    scene_id: str | None = None,
+) -> str:
+    """Copy a provider's temporary MP4 into the owner's private AEA Storage namespace."""
+    _validate_runway_asset_url(source_url)
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=20.0),
+            follow_redirects=False,
+        ) as http:
+            response = await http.get(source_url)
+    except httpx.HTTPError as exc:
+        raise RuntimeError("Could not download the completed video from Runway.") from exc
+    if response.status_code != 200:
+        raise RuntimeError(f"Runway video download failed (HTTP {response.status_code}).")
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in {"video/mp4", "application/octet-stream", "binary/octet-stream"}:
+        raise RuntimeError("Runway returned an unexpected video content type.")
+    video_bytes = response.content
+    if not video_bytes or len(video_bytes) > MAX_VIDEO_ASSET_BYTES:
+        raise RuntimeError("Runway video is empty or exceeds the AEA video storage limit.")
+    object_path = _video_object_path(owner_id, job_id, project_id, scene_id)
+    try:
+        client.storage.from_(VIDEO_ASSET_BUCKET).upload(
+            object_path,
+            video_bytes,
+            file_options={"content-type": "video/mp4", "upsert": "true"},
+        )
+    except Exception as exc:
+        raise RuntimeError("AEA could not persist the completed video in private storage.") from exc
+    return object_path
+
+
+def _create_video_signed_url(client: Any, object_path: str) -> str:
+    try:
+        signed = client.storage.from_(VIDEO_ASSET_BUCKET).create_signed_url(object_path, 900)
+        url = signed.get("signedURL") or signed.get("signedUrl")
+        if not url:
+            raise RuntimeError("Storage did not return a signed URL.")
+        return url
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not create a private video playback link.") from exc
 
 
 def _headers() -> dict[str, str]:
@@ -208,12 +280,24 @@ async def get_video_generation(
 ) -> dict[str, Any]:
     db = _db(client)
     found = db.table("video_generation_jobs").select(
-        "id,owner_id,provider_task_id,model,prompt,duration_seconds,aspect_ratio,status,video_url,error,created_at,updated_at"
+        "id,owner_id,provider_task_id,model,prompt,duration_seconds,aspect_ratio,status,video_url,video_storage_path,error,created_at,updated_at"
     ).eq("id", str(job_id)).eq("owner_id", owner_id).limit(1).execute()
     rows = _rows(found)
     if not rows:
         raise HTTPException(status_code=404, detail="Video generation job not found.")
     job = rows[0]
+    if job.get("video_storage_path"):
+        return {
+            "success": True,
+            "job": {
+                "id": str(job_id),
+                "status": job.get("status"),
+                "model": job["model"],
+                "video_url": _create_video_signed_url(client, job["video_storage_path"]),
+                "error": job.get("error"),
+            },
+            "published": False,
+        }
     headers = _headers()
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
@@ -251,20 +335,56 @@ async def get_video_generation(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AEA could not save the latest video task status.") from exc
     # Propagate each scene task's terminal/progress state into its owning project scene.
+    scene_rows: list[dict[str, Any]] = []
     try:
+        scene_rows = _rows(db.table("video_project_scenes").select(
+            "id,project_id"
+        ).eq("generation_job_id", str(job_id)).eq("owner_id", owner_id).limit(1).execute())
+        if normalized == "completed":
+            # Keep the provider URL only until the durable private copy is confirmed.
+            existing_url = video_url or job.get("video_url")
+            if not job.get("video_storage_path") and existing_url:
+                scene = scene_rows[0] if scene_rows else {}
+                object_path = await _persist_runway_video(
+                    client,
+                    owner_id,
+                    str(job_id),
+                    existing_url,
+                    str(scene["project_id"]) if scene.get("project_id") else None,
+                    str(scene["id"]) if scene.get("id") else None,
+                )
+                db.table("video_generation_jobs").update({
+                    "video_storage_path": object_path,
+                    "video_url": None,
+                }).eq("id", str(job_id)).eq("owner_id", owner_id).execute()
+                if scene:
+                    db.table("video_project_scenes").update({
+                        "video_storage_path": object_path,
+                        "video_url": None,
+                        "status": "completed",
+                    }).eq("id", str(scene["id"])).eq("project_id", str(scene["project_id"])).eq("owner_id", owner_id).execute()
+                job["video_storage_path"] = object_path
         db.table("video_project_scenes").update({
             "status": "completed" if normalized == "completed" else ("failed" if normalized in {"failed", "cancelled"} else "generating"),
-            **({"video_url": video_url} if video_url else {}),
+            **({"video_url": video_url} if video_url and not job.get("video_storage_path") else {}),
         }).eq("generation_job_id", str(job_id)).eq("owner_id", owner_id).execute()
     except Exception as exc:
+        # Keep the completed provider task recoverable; a later refresh retries storage.
+        if normalized == "completed":
+            raise HTTPException(status_code=502, detail="Runway completed the clip, but AEA could not save it to permanent private storage. Refresh to retry; no new generation is needed.") from exc
         raise HTTPException(status_code=502, detail="AEA could not synchronize the scene status.") from exc
+    playback_url = (
+        _create_video_signed_url(client, job["video_storage_path"])
+        if job.get("video_storage_path")
+        else (video_url or job.get("video_url"))
+    )
     return {
         "success": True,
         "job": {
             "id": str(job_id),
             "status": normalized,
             "model": job["model"],
-            "video_url": video_url or job.get("video_url"),
+            "video_url": playback_url,
             "error": str(error)[:1000] if error else job.get("error"),
         },
         "published": False,
@@ -401,9 +521,123 @@ async def get_video_project(
     if not projects:
         raise HTTPException(status_code=404, detail="Video project not found.")
     scenes_response = db.table("video_project_scenes").select(
-        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url,provider_error,http_status"
+        "id,scene_number,title,narration,visual_prompt,duration_seconds,status,generation_job_id,video_url,video_storage_path,provider_error,http_status"
     ).eq("project_id", str(project_id)).eq("owner_id", owner_id).order("scene_number").execute()
-    return {"success": True, "project": projects[0], "scenes": _rows(scenes_response)}
+    scenes = _rows(scenes_response)
+    for scene in scenes:
+        if scene.get("video_storage_path"):
+            scene["video_url"] = _create_video_signed_url(client, scene["video_storage_path"])
+    return {"success": True, "project": projects[0], "scenes": scenes}
+
+
+async def _recover_legacy_scene_asset(
+    db: Any,
+    client: Any,
+    owner_id: str,
+    project_id: UUID,
+    scene: dict[str, Any],
+) -> str:
+    """Recover an old completed Runway scene into private storage without new generation."""
+    scene_id = str(scene["id"])
+    job_id = str(scene.get("generation_job_id") or scene_id)
+    job_rows = []
+    if scene.get("generation_job_id"):
+        job_rows = _rows(db.table("video_generation_jobs").select(
+            "id,provider_task_id,status,video_url,video_storage_path,provider_response"
+        ).eq("id", str(scene["generation_job_id"])).eq("owner_id", owner_id).limit(1).execute())
+    job = job_rows[0] if job_rows else {}
+    existing_path = scene.get("video_storage_path") or job.get("video_storage_path")
+    if existing_path:
+        if not scene.get("video_storage_path"):
+            db.table("video_project_scenes").update({
+                "video_storage_path": existing_path,
+                "video_url": None,
+            }).eq("id", scene_id).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+        return str(existing_path)
+
+    source_url = scene.get("video_url") or job.get("video_url")
+    task: dict[str, Any] | None = None
+    if job.get("provider_task_id"):
+        headers = _headers()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                response = await http.get(
+                    f"{RUNWAY_BASE_URL}/tasks/{job['provider_task_id']}",
+                    headers=headers,
+                )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Could not recover the existing Runway video task.") from exc
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Runway recovery check failed (HTTP {response.status_code}).")
+        try:
+            task = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Runway returned an invalid recovery response.") from exc
+        if str(task.get("status", "")).upper() not in {"SUCCEEDED", "COMPLETED"}:
+            raise HTTPException(status_code=409, detail="This Runway task is not completed yet; refresh its generation status.")
+        output = task.get("output")
+        if isinstance(output, list) and output and isinstance(output[0], str):
+            source_url = output[0]
+
+    if not isinstance(source_url, str) or not source_url:
+        raise HTTPException(status_code=404, detail="No recoverable video source exists for this scene.")
+    try:
+        object_path = await _persist_runway_video(
+            client,
+            owner_id,
+            job_id,
+            source_url,
+            str(project_id),
+            scene_id,
+        )
+        if job:
+            db.table("video_generation_jobs").update({
+                "status": "completed",
+                "video_storage_path": object_path,
+                "video_url": None,
+                **({"provider_response": task} if task is not None else {}),
+            }).eq("id", str(job["id"])).eq("owner_id", owner_id).execute()
+        db.table("video_project_scenes").update({
+            "status": "completed",
+            "video_storage_path": object_path,
+            "video_url": None,
+        }).eq("id", scene_id).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+        return object_path
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail="AEA could not recover this existing clip into permanent storage. No new generation was started.",
+        ) from exc
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/video")
+async def get_video_project_scene_video_url(
+    project_id: UUID,
+    scene_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return a fresh signed URL, migrating recoverable legacy Runway clips on demand."""
+    db = _db(client)
+    rows = _rows(db.table("video_project_scenes").select(
+        "id,project_id,owner_id,status,generation_job_id,video_url,video_storage_path"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+        "owner_id", owner_id
+    ).limit(1).execute())
+    if not rows:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    scene = rows[0]
+    object_path = scene.get("video_storage_path")
+    if not object_path:
+        object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    return {
+        "success": True,
+        "video_url": _create_video_signed_url(client, str(object_path)),
+        "expires_in_seconds": 900,
+        "storage": "private",
+    }
 
 
 @router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=status.HTTP_202_ACCEPTED)
@@ -1077,9 +1311,9 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
             raise RuntimeError("Video project not found for the queued owner.")
         project = project_rows[0]
         scenes = _rows(db.table("video_project_scenes").select(
-            "id,scene_number,duration_seconds,status,video_url,narration_audio_path"
+            "id,scene_number,duration_seconds,status,video_url,video_storage_path,narration_audio_path"
         ).eq("project_id", project_id).eq("owner_id", owner_id).order("scene_number").execute())
-        if not scenes or any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
+        if not scenes or any(s.get("status") != "completed" or not (s.get("video_storage_path") or s.get("video_url")) for s in scenes):
             raise RuntimeError("Every scene must have a completed video before assembly.")
         temp_root = Path(tempfile.mkdtemp(prefix="aea-video-"))
         ffmpeg = __import__("imageio_ffmpeg").get_ffmpeg_exe()
@@ -1088,10 +1322,15 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
 
         with httpx.Client(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True) as http:
             for index, scene in enumerate(scenes, start=1):
-                video_response = http.get(scene["video_url"])
-                video_response.raise_for_status()
                 video_path = temp_root / f"scene-{index:04d}-source.mp4"
-                video_path.write_bytes(video_response.content)
+                if scene.get("video_storage_path"):
+                    video_bytes = client.storage.from_(VIDEO_ASSET_BUCKET).download(scene["video_storage_path"])
+                    video_path.write_bytes(video_bytes)
+                else:
+                    # Backward compatibility for legacy projects created before private asset persistence.
+                    video_response = http.get(scene["video_url"])
+                    video_response.raise_for_status()
+                    video_path.write_bytes(video_response.content)
                 segment_path = temp_root / f"scene-{index:04d}.mp4"
                 command = [ffmpeg, "-y", "-i", str(video_path)]
                 narration_path = None

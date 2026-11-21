@@ -829,3 +829,100 @@ def test_scene_narration_rejects_client_voice_id_without_server_configuration(mo
     )
     assert response.status_code == 503
     assert "Voice ID is not configured" in response.json()["detail"]
+
+
+def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch):
+    import asyncio
+
+    uploaded = {}
+
+    class StorageBucket:
+        def upload(self, path, content, file_options):
+            uploaded.update(path=path, content=content, options=file_options)
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "aea-video-assets"
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+    class DownloadResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+        content = b"fake-mp4-bytes"
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def get(self, url):
+            assert url == "https://asset.cloudfront.net/clip.mp4?token=temporary"
+            return DownloadResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    path = asyncio.run(video_generation._persist_runway_video(
+        Client(),
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "https://asset.cloudfront.net/clip.mp4?token=temporary",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444",
+    ))
+
+    assert path == "11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4"
+    assert uploaded["content"] == b"fake-mp4-bytes"
+    assert uploaded["options"] == {"content-type": "video/mp4", "upsert": "true"}
+
+
+def test_runway_video_persistence_rejects_untrusted_hosts():
+    import asyncio
+
+    class Client:
+        storage = None
+
+    try:
+        asyncio.run(video_generation._persist_runway_video(
+            Client(), "user-1", "job-1", "https://attacker.example/clip.mp4"
+        ))
+        assert False, "Untrusted video hosts must be rejected"
+    except RuntimeError as exc:
+        assert "unsupported host" in str(exc)
+
+
+def test_scene_video_endpoint_returns_fresh_private_signed_url():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+
+    class StorageBucket:
+        def create_signed_url(self, path, expires):
+            assert path == "user-1/project/scene.mp4"
+            assert expires == 900
+            return {"signedURL": "https://storage.example.test/signed?token=fresh"}
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "aea-video-assets"
+            return StorageBucket()
+
+    class StorageDB(DB):
+        storage = Storage()
+
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "status": "completed",
+        "generation_job_id": None,
+        "video_url": None,
+        "video_storage_path": "user-1/project/scene.mp4",
+    }]
+
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video"
+    )
+    assert response.status_code == 200
+    assert response.json()["video_url"] == "https://storage.example.test/signed?token=fresh"
+    assert response.json()["expires_in_seconds"] == 900
