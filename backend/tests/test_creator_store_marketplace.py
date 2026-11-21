@@ -13,7 +13,6 @@ USER = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
 PRODUCT = "33333333-3333-4333-8333-333333333333"
 LISTING = "44444444-4444-4444-8444-444444444444"
-REQUEST = "55555555-5555-4555-8555-555555555555"
 
 
 class Response:
@@ -63,7 +62,7 @@ class Query:
         rows = self.db.tables.setdefault(self.table, [])
         if self.operation == "insert":
             row = deepcopy(self.payload)
-            row.setdefault("id", f"generated-{len(rows) + 1}")
+            row.setdefault("id", "66666666-6666-4666-8666-666666666666")
             rows.append(row)
             return Response([deepcopy(row)])
 
