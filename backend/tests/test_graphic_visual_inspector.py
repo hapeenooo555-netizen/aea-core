@@ -51,7 +51,7 @@ def test_inspector_rejects_confident_readable_unwanted_text(monkeypatch):
     result = inspector.inspect_generated_background(_background_bytes())
     assert result.accepted is False
     assert result.reason == "unwanted_text_detected"
-    assert result.detected_text == ("SALE",)
+    assert result.detected_text == ("SALE", "2026")
 
 
 def test_inspector_ignores_low_confidence_ocr_noise(monkeypatch):
