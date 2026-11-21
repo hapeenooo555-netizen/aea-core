@@ -149,10 +149,14 @@ def set_community_visibility(
         profile = _one(db, "creator_profiles", "user_id,is_public", user_id=owner_id)
         if not profile or not profile.get("is_public"):
             raise HTTPException(status_code=409, detail="Make your creator profile public before publishing work to Community.")
+    # Keep the sensitivity flag and age gate aligned. This prevents a client from
+    # marking a sensitive/18+ item as general-audience through inconsistent fields.
+    is_sensitive = body.is_sensitive or body.age_rating == "18_plus"
+    age_rating = "18_plus" if is_sensitive else "general"
     rows = _rows(db.table("creator_products").update({
         "visibility": body.visibility,
-        "is_sensitive": body.is_sensitive,
-        "age_rating": body.age_rating,
+        "is_sensitive": is_sensitive,
+        "age_rating": age_rating,
     }).eq("id", str(product_id)).eq("owner_id", owner_id).select("*").execute())
     if not rows:
         raise HTTPException(status_code=404, detail="Creator product not found.")
