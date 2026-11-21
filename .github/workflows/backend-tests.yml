@@ -66,6 +66,9 @@ jobs:
       - name: Run Creator Community API tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_community.py
 
+      - name: Run AEA Creator Store and Marketplace API tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_store_marketplace.py
+
       - name: Run AEA Content Studio tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_content_studio.py
       - name: Run AEA market research connector tests
