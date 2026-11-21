@@ -1269,12 +1269,17 @@ def export_video_project_subtitles(
             start = cursor_ms
             end = cursor_ms + duration_ms
             cues.append(
-                f"{len(cues) + 1}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{narration}"
+                f"{len(cues) + 1}
+{_srt_timestamp(start)} --> {_srt_timestamp(end)}
+{narration}"
             )
         cursor_ms += duration_ms
     if not cues:
         raise HTTPException(status_code=409, detail="No scene narration is available to export as subtitles.")
-    content = "\n\n".join(cues) + "\n"
+    content = "
+
+".join(cues) + "
+"
     return Response(
         content=content,
         media_type="application/x-subrip; charset=utf-8",
@@ -1447,7 +1452,9 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
             "id,scene_number,duration_seconds,status,video_url,video_storage_path,narration_audio_path"
         ).eq("project_id", project_id).eq("owner_id", owner_id).order("scene_number").execute())
         if not scenes or any(s.get("status") != "completed" or not (s.get("video_storage_path") or s.get("video_url")) for s in scenes):
-            raise RuntimeError("Every scene must have a completed video before assembly.")\n        if any(not s.get("narration_audio_path") for s in scenes):\n            raise RuntimeError("Every scene must have an approved script and generated voice-over before final MP4 assembly.")
+            raise RuntimeError("Every scene must have a completed video before assembly.")
+        if any(not s.get("narration_audio_path") for s in scenes):
+            raise RuntimeError("Every scene must have an approved script and generated voice-over before final MP4 assembly.")
         temp_root = Path(tempfile.mkdtemp(prefix="aea-video-"))
         ffmpeg = __import__("imageio_ffmpeg").get_ffmpeg_exe()
         segment_paths: list[Path] = []
@@ -1460,7 +1467,10 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
             for index, scene in enumerate(scenes, start=1):
                 video_path = temp_root / f"scene-{index:04d}-source.mp4"
                 if scene.get("video_storage_path"):
-                    video_storage = database_module.get_supabase_video_storage_client()\n                    if video_storage is None:\n                        raise RuntimeError("Private video storage is not configured.")\n                    video_bytes = video_storage.storage.from_(VIDEO_ASSET_BUCKET).download(scene["video_storage_path"])
+                    video_storage = database_module.get_supabase_video_storage_client()
+                    if video_storage is None:
+                        raise RuntimeError("Private video storage is not configured.")
+                    video_bytes = video_storage.storage.from_(VIDEO_ASSET_BUCKET).download(scene["video_storage_path"])
                     video_path.write_bytes(video_bytes)
                 else:
                     # Backward compatibility for legacy projects created before private asset persistence.
@@ -1494,7 +1504,8 @@ def _assemble_project_video(project_id: str, owner_id: str, client: Any) -> bool
                 segment_paths.append(segment_path)
 
         concat_file = temp_root / "concat.txt"
-        concat_file.write_text("".join(f"file '{p.as_posix()}'\n" for p in segment_paths), encoding="utf-8")
+        concat_file.write_text("".join(f"file '{p.as_posix()}'
+" for p in segment_paths), encoding="utf-8")
         output_path = temp_root / "final.mp4"
         rendered = subprocess.run(
             [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
@@ -1555,7 +1566,10 @@ def assemble_video_project(
     if not scenes:
         raise HTTPException(status_code=409, detail="This project has no scenes.")
     if any(s.get("status") != "completed" or not s.get("video_url") for s in scenes):
-        raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")\n    narration_rows = _rows(db.table("video_project_scenes").select("id,narration,narration_audio_path").eq("project_id", str(project_id)).eq("owner_id", owner_id).execute())\n    if any(not str(s.get("narration") or "").strip() or not s.get("narration_audio_path") for s in narration_rows):\n        raise HTTPException(status_code=409, detail="Translate/review every scene script and generate its voice-over before final MP4 assembly.")
+        raise HTTPException(status_code=409, detail="All scenes must finish generating before final assembly.")
+    narration_rows = _rows(db.table("video_project_scenes").select("id,narration,narration_audio_path").eq("project_id", str(project_id)).eq("owner_id", owner_id).execute())
+    if any(not str(s.get("narration") or "").strip() or not s.get("narration_audio_path") for s in narration_rows):
+        raise HTTPException(status_code=409, detail="Translate/review every scene script and generate its voice-over before final MP4 assembly.")
     job_id = str(uuid4())
     try:
         queued = db.table("video_assembly_jobs").insert({
@@ -1607,7 +1621,10 @@ def get_video_project_final_url(
             "video_url": None,
         }
     try:
-        storage_client = database_module.get_supabase_video_storage_client()\n        if storage_client is None:\n            raise RuntimeError("Private video storage is not configured.")\n        signed = storage_client.storage.from_("aea-video-assets").create_signed_url(path, 900)
+        storage_client = database_module.get_supabase_video_storage_client()
+        if storage_client is None:
+            raise RuntimeError("Private video storage is not configured.")
+        signed = storage_client.storage.from_("aea-video-assets").create_signed_url(path, 900)
         url = signed.get("signedURL") or signed.get("signedUrl")
         if not url:
             raise RuntimeError("Storage did not return a signed URL.")
