@@ -141,3 +141,105 @@ def test_worker_runtime_execution_flow(monkeypatch) -> None:
     assert result["success"] is True
     assert result["mission_id"] == "mission-1"
     assert result["worker_id"] == "w-1"
+
+
+
+def test_groq_provider_fails_over_to_next_model_after_rate_limit(monkeypatch) -> None:
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.delenv("GROQ_FALLBACK_MODELS", raising=False)
+    attempted: list[str] = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class Completion:
+        def create(self, *, model, **_kwargs):
+            attempted.append(model)
+            if model == "openai/gpt-oss-120b":
+                raise RateLimitError("quota detail must not escape")
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"translations": []}')
+                )],
+                usage=None,
+            )
+
+    fake_groq = types.SimpleNamespace(
+        Groq=lambda **_kwargs: types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=Completion()
+            )
+        )
+    )
+    monkeypatch.setitem(sys.modules, "groq", fake_groq)
+
+    response = GroqLLMProvider().generate("translate scenes", "return JSON")
+
+    assert response["success"] is True
+    assert response["model"] == "openai/gpt-oss-20b"
+    assert response["provider"] == "groq"
+    assert attempted == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_groq_provider_returns_safe_error_when_all_models_are_rate_limited(monkeypatch) -> None:
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+    monkeypatch.setenv("GROQ_MODEL", "primary-model")
+    monkeypatch.setenv("GROQ_FALLBACK_MODELS", "fallback-a,fallback-b")
+    attempted: list[str] = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class Completion:
+        def create(self, *, model, **_kwargs):
+            attempted.append(model)
+            raise RateLimitError("private provider quota details")
+
+    fake_groq = types.SimpleNamespace(
+        Groq=lambda **_kwargs: types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=Completion())
+        )
+    )
+    monkeypatch.setitem(sys.modules, "groq", fake_groq)
+
+    response = GroqLLMProvider().generate("translate")
+
+    assert response["success"] is False
+    assert attempted == ["primary-model", "fallback-a", "fallback-b"]
+    assert "rate limit" in response["error"].lower()
+    assert "private provider quota details" not in response["error"]
+
+
+def test_groq_provider_does_not_fall_back_for_non_rate_limit_errors(monkeypatch) -> None:
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+    monkeypatch.setenv("GROQ_MODEL", "primary-model")
+    monkeypatch.setenv("GROQ_FALLBACK_MODELS", "fallback-model")
+    attempted: list[str] = []
+
+    class AuthenticationError(Exception):
+        status_code = 401
+
+    class Completion:
+        def create(self, *, model, **_kwargs):
+            attempted.append(model)
+            raise AuthenticationError("invalid credentials")
+
+    fake_groq = types.SimpleNamespace(
+        Groq=lambda **_kwargs: types.SimpleNamespace(
+            chat=types.SimpleNamespace(completions=Completion())
+        )
+    )
+    monkeypatch.setitem(sys.modules, "groq", fake_groq)
+
+    response = GroqLLMProvider().generate("translate")
+
+    assert response["success"] is False
+    assert attempted == ["primary-model"]
+    assert "invalid credentials" not in response["error"]
