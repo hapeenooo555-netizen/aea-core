@@ -877,15 +877,12 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
     assert uploaded["options"] == {"content-type": "video/mp4", "upsert": "true"}
 
 
-def test_runway_video_persistence_rejects_untrusted_hosts():
+def test_runway_video_persistence_rejects_untrusted_hosts(monkeypatch):
     import asyncio
 
     class Client:
         storage = None
 
-    import pytest
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: None)
     try:
         asyncio.run(video_generation._persist_runway_video(
             Client(), "user-1", "job-1", "https://attacker.example/clip.mp4"
@@ -913,7 +910,6 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypat
     class StorageDB(DB):
         storage = Storage()
 
-    monkeypatch = __import__("pytest").MonkeyPatch()
     monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
     db = StorageDB()
     db.tables["video_project_scenes"] = [{
