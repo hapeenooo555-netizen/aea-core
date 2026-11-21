@@ -1364,10 +1364,10 @@ async def generate_scene_narration_audio(
         raise HTTPException(status_code=409, detail="This scene has no narration text.")
     if len(narration) > 5000:
         raise HTTPException(status_code=422, detail="Eleven v3 supports up to 5,000 characters per request. Split this scene narration before generating audio.")
-    if not voice_id:
-        raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
     if body.language_code != str(scene.get("script_language") or "en"):
         raise HTTPException(status_code=409, detail="Voice-over language must match the saved scene script language. Translate or change the script first.")
+    if not voice_id:
+        raise HTTPException(status_code=503, detail="ElevenLabs Voice ID is not configured. Add ELEVENLABS_DEFAULT_VOICE_ID or ELEVENLABS_VOICE_ID to AEA Core.")
     delivery_style = {
         "natural": 0.25,
         "warm": 0.4,
