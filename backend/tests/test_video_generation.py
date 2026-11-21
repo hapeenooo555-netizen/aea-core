@@ -311,6 +311,25 @@ def test_scene_narration_rejects_empty_text(monkeypatch):
     assert response.status_code == 409
 
 
+
+def test_scene_narration_rejects_voice_language_mismatch_before_provider_call(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "narration": "Habari za Tanzania.", "script_language": "sw",
+    }]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
+        json={"voice_id": "voice-test", "language_code": "en"},
+    )
+    assert response.status_code == 409
+    assert "must match" in response.json()["detail"]
+
+
 def test_scene_narration_signed_url_is_owner_scoped():
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
