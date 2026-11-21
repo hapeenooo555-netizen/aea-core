@@ -184,7 +184,7 @@ async def generate_graphic_design_image(
                 ""
                 if attempt == 1
                 else (
-                    "\\n\\nCreate a fresh variation. BACKGROUND ART ONLY: absolutely no "
+                    "\n\nCreate a fresh variation. BACKGROUND ART ONLY: absolutely no "
                     "letters, words, numbers, typography, logos, watermarks, labels, "
                     "signage, signatures, or pseudo-text anywhere in the image. "
                     "Leave all copy areas as clean visual space."
