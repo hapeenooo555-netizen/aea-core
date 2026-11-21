@@ -891,6 +891,61 @@ def test_runway_video_persistence_rejects_untrusted_hosts():
         assert "unsupported host" in str(exc)
 
 
+
+def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+
+    class StorageBucket:
+        def download(self, path):
+            assert path == "user-1/project/scene.mp4"
+            return b"private-mp4-bytes"
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "aea-video-assets"
+            return StorageBucket()
+
+    class StorageDB(DB):
+        storage = Storage()
+
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "status": "completed",
+        "generation_job_id": None,
+        "video_url": None,
+        "video_storage_path": "user-1/project/scene.mp4",
+    }]
+
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video/stream"
+    )
+    assert response.status_code == 200
+    assert response.content == b"private-mp4-bytes"
+    assert response.headers["content-type"].startswith("video/mp4")
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_scene_video_stream_is_owner_scoped():
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "another-user",
+        "status": "completed",
+        "video_storage_path": "another-user/private.mp4",
+    }]
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video/stream"
+    )
+    assert response.status_code == 404
+
+
 def test_scene_video_endpoint_returns_fresh_private_signed_url():
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
