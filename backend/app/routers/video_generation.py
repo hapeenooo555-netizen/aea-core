@@ -6,6 +6,7 @@ then poll its status. Publishing is deliberately out of scope.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -21,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/video/generations", tags=["video-generation"])
 RUNWAY_BASE_URL = "https://api.dev.runwayml.com/v1"
@@ -437,16 +440,24 @@ def translate_video_project_scripts(
     language_names = {"sw": "Kiswahili sanifu cha mazungumzo kinachotumika Tanzania, chenye mtiririko wa asili", "en": "clear, natural spoken English"}
     source_rows = []
     context_rows = []
-    for scene in scenes:
+    selected_indexes = [index for index, scene in enumerate(scenes) if str(scene["id"]) in selected_ids]
+    context_indexes = {
+        neighbor
+        for index in selected_indexes
+        for neighbor in (index - 1, index, index + 1)
+        if 0 <= neighbor < len(scenes)
+    }
+    for index, scene in enumerate(scenes):
         source = scene.get("original_narration") or scene.get("narration") or ""
         if body.target_language == "en" and scene.get("script_language") == "sw" and scene.get("original_narration"):
             source = scene.get("original_narration") or source
-        context_rows.append({
-            "scene_number": scene["scene_number"],
-            "title": scene.get("title") or "",
-            "story_text": source,
-            "selected_for_rewrite": str(scene["id"]) in selected_ids,
-        })
+        if index in context_indexes:
+            context_rows.append({
+                "scene_number": scene["scene_number"],
+                "title": scene.get("title") or "",
+                "story_text": source,
+                "selected_for_rewrite": str(scene["id"]) in selected_ids,
+            })
         if str(scene["id"]) in selected_ids:
             source_rows.append({"id": str(scene["id"]), "scene_number": scene["scene_number"], "title": scene.get("title") or "", "text": source})
     provider = get_llm_provider()
@@ -471,7 +482,15 @@ def translate_video_project_scripts(
             }, ensure_ascii=False),
             system_prompt="You are AEA Core's senior audiovisual localization editor and professional voice-over scriptwriter. Work as a translator, cultural localizer and spoken-script editor. Produce publication-quality narration, not a literal translation. Return only valid JSON with a translations array. Preserve every selected scene ID exactly, return each selected scene once, and do not translate proper names.",
         )
-        raw = generated.get("content") if isinstance(generated, dict) else None
+        if not isinstance(generated, dict) or generated.get("success") is False:
+            provider_error = str(generated.get("error") or "Provider returned an unsuccessful response") if isinstance(generated, dict) else "Provider returned an invalid response"
+            logger.error(
+                "Scene localization provider failure project_id=%s target_language=%s selected_count=%s provider=%s error=%s",
+                project_id, body.target_language, len(selected_ids),
+                getattr(provider, "name", provider.__class__.__name__), provider_error[:500],
+            )
+            raise HTTPException(status_code=503, detail="AEA language engine is temporarily unavailable. Your saved scripts were not changed in this batch. Please retry.")
+        raw = generated.get("content")
         payload = json.loads(raw) if isinstance(raw, str) else None
         translations = payload.get("translations") if isinstance(payload, dict) else None
         if not isinstance(translations, list):
@@ -479,8 +498,14 @@ def translate_video_project_scripts(
         translated = {str(item["id"]): str(item["text"]).strip() for item in translations if isinstance(item, dict) and item.get("id") and isinstance(item.get("text"), str) and item["text"].strip()}
         if set(translated) != selected_ids:
             raise ValueError("Translation response did not include every selected scene")
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="AEA could not translate every selected scene. No script changes were saved.") from exc
+        logger.exception(
+            "Scene localization failed before persistence project_id=%s target_language=%s selected_count=%s",
+            project_id, body.target_language, len(selected_ids),
+        )
+        raise HTTPException(status_code=502, detail="AEA could not complete this translation batch. Previously saved scene scripts remain unchanged. Retry the remaining scenes.") from exc
     saved = []
     try:
         for scene in selected:
