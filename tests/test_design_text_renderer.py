@@ -38,3 +38,28 @@ def test_renderer_falls_back_when_cta_is_only_a_placeholder():
     )
 
     assert rendered.startswith(b"\x89PNG")
+
+
+def test_renderer_keeps_long_kiswahili_copy_inside_mobile_poster_canvas():
+    source = BytesIO()
+    Image.new("RGB", (1024, 1280), (15, 35, 90)).save(source, format="PNG")
+
+    rendered, width, height = render_design_copy(
+        source.getvalue(),
+        DesignCopy(
+            title="Mwongozo wa Ubunifu wa Poster ya AEA Affiliate Hub AI",
+            body=(
+                "Tengeneza maudhui bora kwa biashara yako. Panga kampeni zako, "
+                "fikia wateja unaowalenga na tumia zana za kidijitali kwa urahisi."
+            ),
+            cta="Tembelea link kwenye bio kujifunza zaidi",
+            brand="AEA Affiliate Hub AI",
+        ),
+    )
+
+    assert (width, height) == (1024, 1280)
+    with Image.open(BytesIO(rendered)) as result:
+        assert result.format == "PNG"
+        # The larger mobile-first copy panel is opaque and reaches into
+        # the lower half of the portrait poster.
+        assert result.convert("RGB").getpixel((12, 700)) == (5, 16, 34)
