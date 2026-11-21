@@ -97,9 +97,9 @@ def render_design_copy(image_bytes: bytes, copy: DesignCopy) -> tuple[bytes, int
     def clean_copy(value: str, limit: int) -> str:
         # Remove unresolved template tokens and pictographs unsupported by the
         # installed text fonts; preserve Kiswahili, punctuation and Latin text.
-        value = re.sub(r"\\[[A-Z0-9_ -]*PLACEHOLDER[A-Z0-9_ -]*\\]", "", value or "", flags=re.IGNORECASE)
+        value = re.sub(r"\[[A-Z0-9_ -]*PLACEHOLDER[A-Z0-9_ -]*\]", "", value or "", flags=re.IGNORECASE)
         value = "".join(ch for ch in value if unicodedata.category(ch) != "So")
-        value = re.sub(r"\\s+", " ", value).strip()
+        value = re.sub(r"\s+", " ", value).strip()
         return value[:limit]
 
     title = clean_copy(copy.title, 180)
