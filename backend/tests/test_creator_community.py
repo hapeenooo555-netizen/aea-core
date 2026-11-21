@@ -23,7 +23,9 @@ class Query:
         self.operation = "select"
 
     def select(self, *_args):
-        self.operation = "select"
+        # Supabase allows select() after insert/update/upsert to return rows.
+        if self.operation == "select":
+            self.operation = "select"
         return self
 
     def eq(self, key, value):
