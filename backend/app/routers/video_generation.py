@@ -530,6 +530,116 @@ async def get_video_project(
     return {"success": True, "project": projects[0], "scenes": scenes}
 
 
+async def _recover_legacy_scene_asset(
+    db: Any,
+    client: Any,
+    owner_id: str,
+    project_id: UUID,
+    scene: dict[str, Any],
+) -> str:
+    """Recover an old completed Runway scene into private storage without new generation."""
+    scene_id = str(scene["id"])
+    job_id = str(scene.get("generation_job_id") or scene_id)
+    job_rows = []
+    if scene.get("generation_job_id"):
+        job_rows = _rows(db.table("video_generation_jobs").select(
+            "id,provider_task_id,status,video_url,video_storage_path,provider_response"
+        ).eq("id", str(scene["generation_job_id"])).eq("owner_id", owner_id).limit(1).execute())
+    job = job_rows[0] if job_rows else {}
+    existing_path = scene.get("video_storage_path") or job.get("video_storage_path")
+    if existing_path:
+        if not scene.get("video_storage_path"):
+            db.table("video_project_scenes").update({
+                "video_storage_path": existing_path,
+                "video_url": None,
+            }).eq("id", scene_id).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+        return str(existing_path)
+
+    source_url = scene.get("video_url") or job.get("video_url")
+    task: dict[str, Any] | None = None
+    if job.get("provider_task_id"):
+        headers = _headers()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                response = await http.get(
+                    f"{RUNWAY_BASE_URL}/tasks/{job['provider_task_id']}",
+                    headers=headers,
+                )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Could not recover the existing Runway video task.") from exc
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Runway recovery check failed (HTTP {response.status_code}).")
+        try:
+            task = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Runway returned an invalid recovery response.") from exc
+        if str(task.get("status", "")).upper() not in {"SUCCEEDED", "COMPLETED"}:
+            raise HTTPException(status_code=409, detail="This Runway task is not completed yet; refresh its generation status.")
+        output = task.get("output")
+        if isinstance(output, list) and output and isinstance(output[0], str):
+            source_url = output[0]
+
+    if not isinstance(source_url, str) or not source_url:
+        raise HTTPException(status_code=404, detail="No recoverable video source exists for this scene.")
+    try:
+        object_path = await _persist_runway_video(
+            client,
+            owner_id,
+            job_id,
+            source_url,
+            str(project_id),
+            scene_id,
+        )
+        if job:
+            db.table("video_generation_jobs").update({
+                "status": "completed",
+                "video_storage_path": object_path,
+                "video_url": None,
+                **({"provider_response": task} if task is not None else {}),
+            }).eq("id", str(job["id"])).eq("owner_id", owner_id).execute()
+        db.table("video_project_scenes").update({
+            "status": "completed",
+            "video_storage_path": object_path,
+            "video_url": None,
+        }).eq("id", scene_id).eq("project_id", str(project_id)).eq("owner_id", owner_id).execute()
+        return object_path
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail="AEA could not recover this existing clip into permanent storage. No new generation was started.",
+        ) from exc
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/video")
+async def get_video_project_scene_video_url(
+    project_id: UUID,
+    scene_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return a fresh signed URL, migrating recoverable legacy Runway clips on demand."""
+    db = _db(client)
+    rows = _rows(db.table("video_project_scenes").select(
+        "id,project_id,owner_id,status,generation_job_id,video_url,video_storage_path"
+    ).eq("id", str(scene_id)).eq("project_id", str(project_id)).eq(
+        "owner_id", owner_id
+    ).limit(1).execute())
+    if not rows:
+        raise HTTPException(status_code=404, detail="Video scene not found.")
+    scene = rows[0]
+    object_path = scene.get("video_storage_path")
+    if not object_path:
+        object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    return {
+        "success": True,
+        "video_url": _create_video_signed_url(client, str(object_path)),
+        "expires_in_seconds": 900,
+        "storage": "private",
+    }
+
+
 @router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=status.HTTP_202_ACCEPTED)
 async def generate_video_project_scene(
     project_id: UUID,
