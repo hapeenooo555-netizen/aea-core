@@ -59,3 +59,10 @@ def test_visual_inspector_returns_quality_metrics(monkeypatch):
     assert "contrast_stddev" in result.quality_metrics
     assert "sharpness_score" in result.quality_metrics
     assert "bottom_saliency_ratio" in result.quality_metrics
+
+def test_readable_ocr_tokens_ignores_low_confidence_and_glyph_noise():
+    result = inspector._readable_ocr_tokens({
+        "text": ["A", "12", "??", "KARIOKOR", "maybe"],
+        "conf": ["99", "98", "99", "91", "42"],
+    })
+    assert result == ("KARIOKOR",)
