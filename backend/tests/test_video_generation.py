@@ -311,6 +311,25 @@ def test_scene_narration_rejects_empty_text(monkeypatch):
     assert response.status_code == 409
 
 
+
+def test_scene_narration_rejects_voice_language_mismatch_before_provider_call(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    db = DB()
+    db.tables["video_projects"] = [{"id": project_id, "owner_id": "user-1"}]
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "narration": "Habari za Tanzania.", "script_language": "sw",
+    }]
+    response = make_client(db).post(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
+        json={"voice_id": "voice-test", "language_code": "en"},
+    )
+    assert response.status_code == 409
+    assert "must match" in response.json()["detail"]
+
+
 def test_scene_narration_signed_url_is_owner_scoped():
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
@@ -826,7 +845,7 @@ def test_scene_narration_rejects_client_voice_id_without_server_configuration(mo
     }]
     response = make_client(db).post(
         f"/video/generations/projects/{project_id}/scenes/{scene_id}/narration",
-        json={"voice_id": "client-controlled-voice"},
+        json={"voice_id": "client-controlled-voice", "language_code": "en"},
     )
     assert response.status_code == 503
     assert "Voice ID is not configured" in response.json()["detail"]
@@ -993,8 +1012,12 @@ def test_scene_script_translation_preserves_original_and_clears_old_voice(monkey
         name = "groq"
         def generate(self, **kwargs):
             prompt = json.loads(kwargs["prompt"])
+            assert prompt["task"].startswith("Professionally localize")
+            assert prompt["story_context"][0]["title"] == "Dream of Entrepreneurship"
+            assert "not stiff textbook phrasing" in prompt["audience_and_dialect"]
+            assert any("spoken delivery" in item for item in prompt["editorial_requirements"])
             return {"success": True, "content": json.dumps({
-                "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["scenes"]]
+                "translations": [{"id": row["id"], "text": "Katika mitaa yenye shughuli nyingi ya Dar es Salaam, Juma anaota biashara."} for row in prompt["selected_scenes_to_return"]]
             })}
 
     monkeypatch.setattr(video_generation, "get_llm_provider", lambda: Provider())
