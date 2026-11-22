@@ -123,6 +123,7 @@ class FalImageGenerationProvider:
             "9:16": (1024, 1792),
             "16:9": (1792, 1024),
             "3:2": (1536, 1024),
+            "2:3": (1024, 1536),
         }
         if aspect_ratio not in dimensions:
             raise ValueError("Unsupported image aspect ratio")
