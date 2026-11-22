@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.creator_distribution_jobs (
     provider_url text,
     published_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 -- At most one active draft per product/platform/owner, even under concurrent requests.
