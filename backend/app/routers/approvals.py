@@ -245,6 +245,24 @@ async def approve_approval(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
 
     approval = result.get("request")
+
+    # A repeated approval click must not replay a connector side effect when
+    # the first approval already persisted its execution outcome. If the
+    # process crashed after the approval CAS but before recording execution,
+    # the missing outcome deliberately leaves the operation recoverable.
+    if result.get("idempotent") and isinstance(approval, dict):
+        metadata = approval.get("metadata") if isinstance(approval.get("metadata"), dict) else {}
+        prior_execution = metadata.get("execution")
+        if isinstance(prior_execution, dict) and prior_execution.get("status"):
+            return {
+                "success": prior_execution.get("status") not in {
+                    "resume_failed", "approval_not_found", "approval_unauthorized"
+                },
+                "approval": approval,
+                "resume": prior_execution,
+                "idempotent": True,
+            }
+
     resume_result = _resume_approval_for_owner(
         approval_id,
         approval,
