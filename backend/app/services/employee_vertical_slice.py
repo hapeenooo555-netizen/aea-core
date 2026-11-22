@@ -321,9 +321,15 @@ class EmployeeVerticalSlice:
             report.update({"final_status": "FAIL", "failures_retries": validation["errors"]})
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
 
+        # Execute only the normalized plan returned by the side-effect-free
+        # validator; never fall back to the untrusted/original plan.
+        validated_plan = validation.get("steps") or []
+        report["validated_plan"] = sanitize_payload(validated_plan)
+        report["selected_tools"] = [step.get("tool_name") for step in validated_plan]
+
         existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
-            return self._resume_execution(mission_id, existing_execution, report, plan)
+            return self._resume_execution(mission_id, existing_execution, report, validated_plan)
 
         execution_id = str(uuid4())
         claim = self._execution.claim_execution(
@@ -337,7 +343,7 @@ class EmployeeVerticalSlice:
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution start persistence failed"))
-        return self._execute_plan(mission_id, execution_id, plan, report, metadata)
+        return self._execute_plan(mission_id, execution_id, validated_plan, report, metadata)
 
     def _execute_plan(
         self,
