@@ -287,3 +287,15 @@ def test_repeated_distribution_draft_request_returns_existing_job():
     assert second.json()["duplicate"] is True
     assert second.json()["job"]["id"] == first.json()["job"]["id"]
     assert len(db.tables["creator_distribution_jobs"]) == 1
+
+def test_distribution_capabilities_are_truthful_and_pinterest_is_the_only_enabled_publisher():
+    response = client_for().get("/store/products/distribution/capabilities")
+    assert response.status_code == 200
+    capabilities = {item["destination"]: item for item in response.json()["capabilities"]}
+    assert set(capabilities) == {"pinterest", "facebook", "instagram", "tiktok", "youtube"}
+    assert capabilities["pinterest"]["publishing_supported"] is True
+    assert capabilities["pinterest"]["mode"] == "approval_gated"
+    for destination in ("facebook", "instagram", "tiktok", "youtube"):
+        assert capabilities[destination]["publishing_supported"] is False
+        assert capabilities[destination]["mode"] == "draft_only"
+        assert "draft" in capabilities[destination]["message"].lower()
