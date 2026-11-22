@@ -727,9 +727,12 @@ class EmployeeVerticalSlice:
                 execution_id,
                 self.owner_id,
                 claim["step"]["id"],
-                status="completed" if result.get("status") in {"completed", "resumed"} else "failed",
+                # An onboarding action that creates a human checkpoint has
+                # completed its connector step; the execution itself remains
+                # WAITING_INPUT until the user completes that checkpoint.
+                status="completed" if result.get("status") in {"completed", "resumed", "awaiting_human_intervention"} else "failed",
                 result=safe_result,
-                retry_category=None if result.get("status") in {"completed", "resumed"} else "EXECUTION",
+                retry_category=None if result.get("status") in {"completed", "resumed", "awaiting_human_intervention"} else "EXECUTION",
                 claim_token=self._claim_token,
             )
             if not step_result.get("success"):
