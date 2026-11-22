@@ -122,6 +122,28 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     assert employee._execution.get_execution(execution_id, owner_id="user-b") is None
 
 
+def test_resume_approval_rejects_request_owned_by_another_user():
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-owner-mismatch",
+        action_type="start_platform_onboarding",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": "execution-owned-by-user-b",
+        },
+        owner_id="user-b",
+    )
+    assert created["success"] is True
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "FAIL"
+    assert result["error"] == "Approval request not found"
+
+
 def test_onboarding_capability_is_discoverable_before_connection():
     employee = _slice("user-a")
     discovered = employee.discover_capabilities()
