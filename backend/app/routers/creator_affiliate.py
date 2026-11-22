@@ -12,7 +12,8 @@ from fastapi.responses import RedirectResponse
 from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
 
-router = APIRouter(prefix="/store/affiliate", tags=["aea-affiliate"])\nproducts_router = APIRouter(prefix="/store/products", tags=["public-marketplace"])
+router = APIRouter(prefix="/store/affiliate", tags=["aea-affiliate"])
+products_router = APIRouter(prefix="/store/products", tags=["public-marketplace"])
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
