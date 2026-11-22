@@ -251,7 +251,12 @@ async def approve_approval(
     # process crashed after the approval CAS but before recording execution,
     # the missing outcome deliberately leaves the operation recoverable.
     if result.get("idempotent") and isinstance(approval, dict):
-        metadata = approval.get("metadata") if isinstance(approval.get("metadata"), dict) else {}
+        metadata = approval.get("metadata")
+        if not isinstance(metadata, dict):
+            # ApprovalGateway normalizes the database JSONB metadata column
+            # into the public "payload" field.
+            metadata = approval.get("payload")
+        metadata = metadata if isinstance(metadata, dict) else {}
         prior_execution = metadata.get("execution")
         if isinstance(prior_execution, dict) and prior_execution.get("status"):
             return {
