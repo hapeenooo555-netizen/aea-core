@@ -122,6 +122,15 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     assert employee._execution.get_execution(execution_id, owner_id="user-b") is None
 
 
+def test_onboarding_capability_is_discoverable_before_connection():
+    employee = _slice("user-a")
+    discovered = employee.discover_capabilities()
+    names = {tool["tool_name"] for tool in discovered["tools"]}
+    assert "start_platform_onboarding" in names
+    assert "pinterest.get_account_status" in names
+    assert discovered["owner_id"] == "user-a"
+
+
 def test_capabilities_are_owner_scoped_and_connection_status_is_not_faked():
     employee = _slice("user-a")
     employee._connections.upsert("user-a", "pinterest", status="connected", scopes=[])
