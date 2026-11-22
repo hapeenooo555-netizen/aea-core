@@ -126,6 +126,9 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     execution_id = pending["report"]["resume_information"]["execution_id"]
     execution = employee._execution.get_execution(execution_id, owner_id="user-a")
     assert execution["status"] == "WAITING_INPUT"
+    resumed_steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    onboarding_step = next(step for step in resumed_steps if step["step_name"] == "start_onboarding")
+    assert onboarding_step["status"] == "completed"
     assert employee._execution.get_execution(execution_id, owner_id="user-b") is None
 
 
