@@ -40,6 +40,24 @@ class MockLLMProvider(BaseLLMProvider):
         }
 
 
+class UnavailableLLMProvider(BaseLLMProvider):
+    """Fail-closed provider used when configuration names an unknown backend."""
+
+    def __init__(self, configured_name: str) -> None:
+        self.configured_name = configured_name
+
+    def generate(self, prompt: str, system_prompt: str | None = None) -> dict[str, Any]:
+        logger.error("Unknown LLM provider configured (%s)", self.configured_name)
+        return {
+            "success": False,
+            "content": "",
+            "model": "unavailable",
+            "provider": "unavailable",
+            "usage": {},
+            "error": "Configured LLM provider is not registered. Configure a supported provider.",
+        }
+
+
 class GroqLLMProvider(BaseLLMProvider):
     """Groq-backed provider with rate-limit-aware model failover."""
 
@@ -204,13 +222,18 @@ def get_llm_provider(provider_name: str | None = None) -> BaseLLMProvider:
         or getattr(settings, "llm_provider", "")
         or "mock"
     )
-    provider_cls = PROVIDER_REGISTRY.get(configured_name.strip().lower())
-    return provider_cls() if provider_cls else MockLLMProvider()
+    normalized_name = configured_name.strip().lower()
+    provider_cls = PROVIDER_REGISTRY.get(normalized_name)
+    if provider_cls is None:
+        # Never disguise a typo or unsupported provider as a successful mock.
+        return UnavailableLLMProvider(normalized_name or "unset")
+    return provider_cls()
 
 
 __all__ = [
     "BaseLLMProvider",
     "MockLLMProvider",
     "GroqLLMProvider",
+    "UnavailableLLMProvider",
     "get_llm_provider",
 ]
