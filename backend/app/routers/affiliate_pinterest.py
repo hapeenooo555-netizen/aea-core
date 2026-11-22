@@ -346,17 +346,33 @@ def pinterest_draft_approval(
         # verify ownership and claim its external side-effect step after approval.
         execution_id = str(uuid4())
         execution_service = MissionExecutionService(client=client, durable_required=True)
-        execution_created = execution_service.create_execution(
+        execution_claim = execution_service.claim_execution(
             mission_id=mission_id,
             execution_id=execution_id,
             idempotency_key=f"pinterest-draft-approval:{fingerprint}:execution",
             owner_id=owner_id,
-            status="WAITING_APPROVAL",
         )
-        if not execution_created.get("success"):
+        if not execution_claim.get("success"):
             raise HTTPException(
                 status_code=503,
-                detail="Could not persist durable execution for Pinterest approval",
+                detail="Could not claim durable execution for Pinterest approval",
+            )
+        durable_execution = execution_claim.get("execution") or {}
+        execution_id = str(durable_execution.get("execution_id") or "")
+        if not execution_id:
+            raise HTTPException(
+                status_code=503,
+                detail="Durable Pinterest approval execution returned no execution ID",
+            )
+        execution_waiting = execution_service.update_execution_state(
+            execution_id,
+            owner_id,
+            status="WAITING_APPROVAL",
+        )
+        if not execution_waiting.get("success"):
+            raise HTTPException(
+                status_code=503,
+                detail="Could not persist Pinterest approval execution state",
             )
 
         try:
