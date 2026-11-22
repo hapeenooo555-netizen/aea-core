@@ -144,6 +144,80 @@ def test_resume_approval_rejects_request_owned_by_another_user():
     assert result["error"] == "Approval request not found"
 
 
+def test_resume_approval_rejects_unowned_execution_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-unowned-execution",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": "missing-or-other-owner-execution",
+            "content": {
+                "board_name": "B",
+                "pin_text": "Pin",
+                "link_url": "https://example.com",
+                "image_url": "https://example.com/pin.jpg",
+            },
+        },
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["error"] == "Execution not found"
+    assert called["resume"] is False
+
+
+def test_resume_approval_rejects_unsupported_action_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-unsupported-action",
+        action_type="delete_account",
+        risk_level="WRITE_EXTERNAL",
+        payload={"worker_id": "user-a"},
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["error"] == "Unsupported approval action"
+    assert called["resume"] is False
+
+
 def test_onboarding_capability_is_discoverable_before_connection():
     employee = _slice("user-a")
     discovered = employee.discover_capabilities()
