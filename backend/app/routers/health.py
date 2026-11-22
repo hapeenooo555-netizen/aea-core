@@ -42,7 +42,7 @@ def health_check() -> dict:
 
     # Mock is suitable for tests/local development only; it is not production
     # inference readiness. Keep API liveness separate from model readiness.
-    if is_mock or (provider_name == "groq" and not credential_present) or not connected:
+    if is_mock or provider_name != "groq" or not credential_present or not connected:
         payload["status"] = "degraded"
 
     return payload
