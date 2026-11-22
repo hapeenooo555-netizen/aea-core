@@ -700,6 +700,11 @@ class EmployeeVerticalSlice:
                     return {"success": True, "status": "completed", "result": stored_step.get("result", {})}
                 if stored_step.get("status") == "in_progress":
                     return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval resume is already in progress"}
+                return {
+                    "success": False,
+                    "status": "FAIL",
+                    "error": "Approval execution step is not claimable; manual reconciliation is required",
+                }
 
         resume_service = ApprovalResumeService(
             approval_gateway=self._approvals,
