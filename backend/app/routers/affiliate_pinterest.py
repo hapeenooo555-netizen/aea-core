@@ -425,6 +425,8 @@ def pinterest_draft_approval(
                         "link_url": destination_url,
                         "image_url": image_url or None,
                         "image_asset_id": image_asset_id,
+                        "image_asset_path": asset.get("asset_path") if asset else None,
+                        "image_asset_mime_type": asset.get("mime_type") if asset else None,
                         "board_id": selected["id"],
                         "board_name": selected["name"],
                     },
