@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from app.dependencies import get_current_user_id, get_user_scoped_client, verify_ownership
+from app import database as database_module
 from app.services.approval_gateway import ApprovalGateway
 from app.services.approval_resume_service import ApprovalResumeService
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
@@ -82,7 +83,10 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
                 durable_required=True,
             ),
             connection_store=PlatformConnectionStore(client=client),
-            pin_store=PinPublishStore(client=client, durable_required=True),
+            pin_store=PinPublishStore(
+                client=database_module.get_supabase_pin_publish_client(),
+                durable_required=True,
+            ),
         ),
     )
     return ApprovalResumeService(
