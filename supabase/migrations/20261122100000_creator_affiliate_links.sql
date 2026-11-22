@@ -73,3 +73,53 @@ end;
 $$;
 revoke all on function public.resolve_creator_affiliate_link(text) from public;
 grant execute on function public.resolve_creator_affiliate_link(text) to anon, authenticated;
+
+-- Authenticated promoter can mint only their own link for an approved request.
+create or replace function public.create_creator_affiliate_link(p_request_id uuid, p_code text)
+returns setof public.creator_affiliate_links
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+    v_request public.creator_promotion_requests%rowtype;
+    v_product public.creator_products%rowtype;
+    v_listing public.creator_marketplace_listings%rowtype;
+begin
+    if auth.uid() is null or p_code is null or length(p_code) < 20 or length(p_code) > 80
+       or p_code !~ '^[A-Za-z0-9_-]+$' then
+        raise exception 'Invalid affiliate link request' using errcode = '42501';
+    end if;
+    select * into v_request from public.creator_promotion_requests
+     where id = p_request_id and promoter_id = auth.uid() and status = 'approved';
+    if not found then
+        raise exception 'Approved promotion request not found' using errcode = '42501';
+    end if;
+    select * into v_product from public.creator_products
+     where id = v_request.product_id and owner_id = v_request.owner_id
+       and status = 'listed' and marketplace_enabled = true;
+    if not found then
+        raise exception 'Product is not available for promotion' using errcode = '23514';
+    end if;
+    select * into v_listing from public.creator_marketplace_listings
+     where id = v_request.listing_id and product_id = v_request.product_id
+       and owner_id = v_request.owner_id and status = 'approved';
+    if not found then
+        raise exception 'Marketplace listing is not approved' using errcode = '23514';
+    end if;
+    return query
+      insert into public.creator_affiliate_links
+        (product_id, listing_id, owner_id, promoter_id, promotion_request_id, referral_code)
+      values
+        (v_request.product_id, v_request.listing_id, v_request.owner_id, v_request.promoter_id, v_request.id, p_code)
+      on conflict (promotion_request_id) do update
+        set referral_code = case
+          when creator_affiliate_links.status = 'active' then creator_affiliate_links.referral_code
+          else excluded.referral_code
+        end,
+        status = 'active', revoked_at = null
+      returning *;
+end;
+$$;
+revoke all on function public.create_creator_affiliate_link(uuid, text) from public;
+grant execute on function public.create_creator_affiliate_link(uuid, text) to authenticated;
