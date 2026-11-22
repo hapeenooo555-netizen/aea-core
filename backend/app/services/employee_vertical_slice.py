@@ -408,6 +408,25 @@ class EmployeeVerticalSlice:
                 new_information=[str(result.get("status"))] if result.get("status") else [],
                 next_possible_actions=["COMPLETE", "FOLLOW_UP", "WAIT_FOR_APPROVAL", "WAIT_FOR_HUMAN_INPUT", "RETRY", "FAIL"],
             )
+            # Record sanitized evidence for each tool attempt. This is not
+            # a claim that an external side effect succeeded; verification is
+            # only asserted when the tool explicitly reports it.
+            evidence_entry = {
+                "mission_id": mission_id,
+                "execution_id": execution_id,
+                "step_name": step_name,
+                "attempt_index": attempt_index,
+                "tool_name": step.get("tool_name"),
+                "tool_version": step.get("tool_version", "1.0"),
+                "risk_level": step.get("risk_level", "READ_ONLY"),
+                "approval_class": step.get("approval_class", "READ_ONLY"),
+                "approval_reference": result.get("approval_request_id"),
+                "input": step.get("input", step.get("action_payload", {})),
+                "outcome_status": result.get("status"),
+                "success": bool(result.get("success")),
+                "verification": result.get("verification") or result.get("verification_status") or "NOT_REPORTED",
+            }
+            report.setdefault("execution_evidence", []).append(sanitize_payload(evidence_entry))
             report["executed_actions"].append(sanitize_payload(step))
             report["results"].append(sanitize_payload(result))
             report["approvals"] = self._approval_summary(result)
