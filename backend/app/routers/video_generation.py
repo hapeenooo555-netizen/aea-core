@@ -86,16 +86,30 @@ async def _persist_runway_video(
             timeout=httpx.Timeout(120.0, connect=20.0),
             follow_redirects=False,
         ) as http:
-            response = await http.get(source_url)
+            async with http.stream("GET", source_url) as response:
+                if response.status_code != 200:
+                    raise RuntimeError(f"Runway video download failed (HTTP {response.status_code}).")
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if content_type not in {"video/mp4", "application/octet-stream", "binary/octet-stream"}:
+                    raise RuntimeError("Runway returned an unexpected video content type.")
+                declared_length = response.headers.get("content-length")
+                if declared_length:
+                    try:
+                        if int(declared_length) > MAX_VIDEO_ASSET_BYTES:
+                            raise RuntimeError("Runway video exceeds the AEA video storage limit.")
+                    except ValueError as exc:
+                        raise RuntimeError("Runway returned an invalid video content length.") from exc
+                # Stream in bounded chunks. Never buffer an untrusted provider response
+                # before enforcing the configured maximum asset size.
+                video_buffer = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(video_buffer) + len(chunk) > MAX_VIDEO_ASSET_BYTES:
+                        raise RuntimeError("Runway video exceeds the AEA video storage limit.")
+                    video_buffer.extend(chunk)
+                video_bytes = bytes(video_buffer)
     except httpx.HTTPError as exc:
         raise RuntimeError("Could not download the completed video from Runway.") from exc
-    if response.status_code != 200:
-        raise RuntimeError(f"Runway video download failed (HTTP {response.status_code}).")
-    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if content_type not in {"video/mp4", "application/octet-stream", "binary/octet-stream"}:
-        raise RuntimeError("Runway returned an unexpected video content type.")
-    video_bytes = response.content
-    if not video_bytes or len(video_bytes) > MAX_VIDEO_ASSET_BYTES:
+    if not video_bytes:
         raise RuntimeError("Runway video is empty or exceeds the AEA video storage limit.")
     object_path = _video_object_path(owner_id, job_id, project_id, scene_id)
     storage_client = database_module.get_supabase_video_storage_client()
