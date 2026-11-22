@@ -12,6 +12,7 @@ from app.services.approval_gateway import ApprovalGateway
 from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.pinterest_live_verification import PinterestVerificationError, verify_account_and_boards
 from app.services.pinterest_token_vault import get_access_token
+from app.services.aea_marketplace_referral import validate_aea_marketplace_referral
 
 router = APIRouter(prefix="/affiliate/pinterest", tags=["affiliate-pinterest"])
 
@@ -24,6 +25,7 @@ class PinterestDraftPreviewRequest(BaseModel):
     destination_url: str = Field(min_length=8, max_length=2048)
     image_url: str = Field(min_length=8, max_length=2048)
     board_id: str = Field(min_length=1, max_length=128)
+    marketplace_product_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PinterestDraftApprovalRequest(PinterestDraftPreviewRequest):
@@ -127,6 +129,13 @@ def pinterest_draft_preview(
     """
     _validate_http_url(request.destination_url, "destination_url")
     _validate_http_url(request.image_url, "image_url")
+    if request.marketplace_product_id and not validate_aea_marketplace_referral(
+        client=__import__("app.database", fromlist=["supabase_client"]).supabase_client,
+        destination_url=request.destination_url,
+        product_id=request.marketplace_product_id,
+        promoter_id=owner_id,
+    ):
+        raise HTTPException(status_code=422, detail="This AEA Marketplace referral link is invalid, inactive, or does not belong to the selected product and promoter.")
     try:
         stored = get_access_token(owner_id=owner_id)
         if not stored:
@@ -178,6 +187,13 @@ def pinterest_draft_approval(
     """
     _validate_http_url(request.destination_url, "destination_url")
     _validate_http_url(request.image_url, "image_url")
+    if request.marketplace_product_id and not validate_aea_marketplace_referral(
+        client=client,
+        destination_url=request.destination_url,
+        product_id=request.marketplace_product_id,
+        promoter_id=owner_id,
+    ):
+        raise HTTPException(status_code=422, detail="This AEA Marketplace referral link is invalid, inactive, or does not belong to the selected product and promoter.")
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
     try:
@@ -356,7 +372,8 @@ def pinterest_draft_approval(
                     "board_id": selected["id"],
                     "board_name": selected["name"],
                 },
-                "source": "affiliate_pinterest_draft",
+                "source": "aea_marketplace_pinterest_promotion" if request.marketplace_product_id else "affiliate_pinterest_draft",
+                "marketplace_product_id": request.marketplace_product_id,
                 "source_worker_id": selected_worker_id,
                 "source_mission_id": selected_mission_id,
                 "preview": preview,
