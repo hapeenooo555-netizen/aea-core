@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from app.dependencies import get_current_user_id, get_user_scoped_client, verify_ownership
 from app.services.approval_gateway import ApprovalGateway
 from app.services.approval_resume_service import ApprovalResumeService
+from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.connectors.pinterest_connector import PinterestConnector
 from app.services.connectors.meta_marketing import MetaMarketingConnector
 from app.services.connectors.registry import ConnectorRegistry
@@ -89,6 +90,30 @@ def _get_resume_service(current_user_id: str, client: Any | None = None) -> Appr
         connector_registry=registry,
         human_intervention_manager=HumanInterventionManager(client=client),
         mission_client=client,
+    )
+
+
+def _resume_approval_for_owner(
+    approval_id: str,
+    approval: dict[str, Any],
+    owner_id: str,
+    client: Any | None,
+) -> dict[str, Any]:
+    """Resume P1-8 Pinterest approvals through the durable employee execution.
+
+    Legacy/non-Pinterest approvals retain the existing resume service. P1-8
+    Pinterest approvals must also complete or pause their MissionExecution
+    record and approval step, not only update the parent mission.
+    """
+    payload = approval.get("payload") if isinstance(approval.get("payload"), dict) else {}
+    if (
+        approval.get("action_type") in {"start_platform_onboarding", "publish_content"}
+        and str(payload.get("platform") or "").lower() == "pinterest"
+    ):
+        return EmployeeVerticalSlice(owner_id, client=client).resume_approval(approval_id)
+    return _get_resume_service(owner_id, client).resume(
+        approval_id,
+        current_user_id=owner_id,
     )
 
 
@@ -220,9 +245,11 @@ async def approve_approval(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
 
     approval = result.get("request")
-    resume_result = _get_resume_service(current_user_id, client).resume(
+    resume_result = _resume_approval_for_owner(
         approval_id,
-        current_user_id=current_user_id,
+        approval,
+        current_user_id,
+        client,
     )
     _update_p1_8_mission_state(approval, resume_result, current_user_id, client)
 
