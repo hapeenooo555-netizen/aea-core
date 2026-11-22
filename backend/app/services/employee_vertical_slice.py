@@ -527,7 +527,11 @@ class EmployeeVerticalSlice:
                 self.owner_id,
                 claimed_step["id"],
                 status=step_status,
-                result=sanitize_payload({"result": result, "observation": observation.to_dict()}),
+                result=sanitize_payload({
+                    "result": result,
+                    "observation": observation.to_dict(),
+                    "execution_evidence": evidence_entry,
+                }),
                 retry_category=retry_category,
                 claim_token=self._claim_token,
             )
@@ -543,6 +547,7 @@ class EmployeeVerticalSlice:
                     "next_step": next_step,
                     "step_name": step_name,
                     "attempt_index": attempt_index,
+                    "execution_evidence": evidence_entry,
                 }),
             )
             if not state_update.get("success"):
