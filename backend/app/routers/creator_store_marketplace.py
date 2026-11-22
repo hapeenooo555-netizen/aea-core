@@ -106,9 +106,37 @@ def list_my_distribution_jobs(
 ) -> dict[str, Any]:
     db = _db(client)
     jobs = _rows(db.table("creator_distribution_jobs").select(
-        "id,product_id,destination,status,error,created_at"
+        "id,product_id,destination,status,error,created_at,updated_at,"
+        "scheduled_at,approval_required,approved_at,approval_request_id,"
+        "provider_reference,provider_url,published_at,external_id,external_url"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(200).execute())
-    return {"success": True, "jobs": jobs}
+    # Provider metadata is only displayed when the durable publishing
+    # lifecycle has recorded it. A pending approval or a provider reference
+    # alone must never be represented as a successful publication.
+    for job in jobs:
+        if job.get("status") != "published":
+            job["published_at"] = None
+            job["provider_url"] = None
+            job["provider_reference"] = None
+    published_pins = _rows(db.table("published_pins").select(
+        "id,approval_request_id,board_name,pin_id,status,created_at,content"
+    ).eq("owner_id", owner_id).eq("platform", "pinterest").eq("status", "published")
+     .order("created_at", desc=True).limit(200).execute())
+    verified_pins = []
+    for pin in published_pins:
+        pin_id = str(pin.get("pin_id") or "").strip()
+        if not pin_id:
+            continue
+        verified_pins.append({
+            "id": pin.get("id"),
+            "approval_request_id": pin.get("approval_request_id"),
+            "board_name": pin.get("board_name"),
+            "pin_id": pin_id,
+            "pin_url": f"https://www.pinterest.com/pin/{pin_id}/",
+            "published_at": (pin.get("content") or {}).get("published_at") or pin.get("created_at"),
+            "status": "published",
+        })
+    return {"success": True, "jobs": jobs, "published_pins": verified_pins}
 
 
 @router.post("/{product_id}/distribution", status_code=201)

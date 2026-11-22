@@ -134,7 +134,45 @@ def test_marketplace_admin_queue_denies_non_admin():
 def test_distribution_job_list_endpoint_exists():
     response = client_for().get("/store/products/mine/distribution")
     assert response.status_code == 200
-    assert response.json() == {"success": True, "jobs": []}
+    assert response.json() == {"success": True, "jobs": [], "published_pins": []}
+
+
+def test_distribution_history_includes_only_owner_verified_pinterest_pins():
+    db = Database({
+        "creator_distribution_jobs": [{
+            "id": "job-1", "product_id": PRODUCT, "owner_id": USER,
+            "destination": "pinterest", "status": "draft", "approval_required": True,
+        }],
+        "published_pins": [
+            {
+                "id": "pin-row-1", "owner_id": USER, "platform": "pinterest",
+                "status": "published", "pin_id": "123456789",
+                "approval_request_id": "approval-1", "board_name": "Ideas",
+                "created_at": "2026-11-22T10:00:00Z",
+                "content": {"published_at": "2026-11-22T10:00:00Z"},
+            },
+            {
+                "id": "pin-row-2", "owner_id": OTHER, "platform": "pinterest",
+                "status": "published", "pin_id": "999999999",
+                "created_at": "2026-11-22T10:00:00Z", "content": {},
+            },
+            {
+                "id": "pin-row-3", "owner_id": USER, "platform": "pinterest",
+                "status": "publishing", "pin_id": None,
+                "created_at": "2026-11-22T10:00:00Z", "content": {},
+            },
+        ],
+    })
+    response = client_for(db).get("/store/products/mine/distribution")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["jobs"]) == 1
+    assert len(body["published_pins"]) == 1
+    pin = body["published_pins"][0]
+    assert pin["pin_id"] == "123456789"
+    assert pin["pin_url"] == "https://www.pinterest.com/pin/123456789/"
+    assert pin["approval_request_id"] == "approval-1"
+    assert pin["status"] == "published"
 
 
 def test_invalid_distribution_destination_is_rejected():
