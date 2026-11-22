@@ -245,11 +245,14 @@ def test_successful_publish_resume_marks_execution_succeeded(monkeypatch):
     assert created_approval["success"] is True
     employee._approvals.approve_request(created_approval["request"]["id"])
 
+    calls = {"count": 0}
+
     class SuccessfulResume:
         def __init__(self, **kwargs):
             pass
 
         def resume(self, *args, **kwargs):
+            calls["count"] += 1
             return {
                 "status": "resumed",
                 "pin_id": "provider-pin-123",
@@ -276,6 +279,14 @@ def test_successful_publish_resume_marks_execution_succeeded(monkeypatch):
     assert steps[0]["step_name"] == "publish_content"
     assert steps[0]["status"] == "completed"
     assert steps[0]["result"]["verification"]["reference"] == "provider-pin-123"
+
+    # A retry after completion must return the durable result without
+    # invoking the provider resume path a second time.
+    repeated = employee.resume_approval(created_approval["request"]["id"])
+    assert repeated["success"] is True
+    assert repeated["status"] == "completed"
+    assert repeated["result"]["verification"]["reference"] == "provider-pin-123"
+    assert calls["count"] == 1
 
 
 def test_onboarding_capability_is_discoverable_before_connection():
