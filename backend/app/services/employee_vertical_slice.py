@@ -660,12 +660,17 @@ class EmployeeVerticalSlice:
             return {"success": False, "status": "FAIL", "error": "Unsupported approval action"}
         payload = request.get("payload") or {}
         execution_id = payload.get("execution_id")
-        if execution_id:
-            owned_execution = self._execution.get_execution(
-                execution_id, owner_id=self.owner_id
-            )
-            if not owned_execution:
-                return {"success": False, "status": "FAIL", "error": "Execution not found"}
+        if not execution_id:
+            return {
+                "success": False,
+                "status": "FAIL",
+                "error": "Durable execution_id is required to resume an external action",
+            }
+        owned_execution = self._execution.get_execution(
+            execution_id, owner_id=self.owner_id
+        )
+        if not owned_execution:
+            return {"success": False, "status": "FAIL", "error": "Execution not found"}
         if execution_id and request.get("status") == "rejected":
             rejection = self._execution.mark_failed(
                 execution_id,
