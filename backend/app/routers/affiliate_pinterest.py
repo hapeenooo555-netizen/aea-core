@@ -122,6 +122,7 @@ def disconnect_pinterest(
 def pinterest_draft_preview(
     request: PinterestDraftPreviewRequest,
     owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Validate a Pin draft against this user's live Pinterest account and boards.
 
@@ -130,7 +131,7 @@ def pinterest_draft_preview(
     _validate_http_url(request.destination_url, "destination_url")
     _validate_http_url(request.image_url, "image_url")
     if request.marketplace_product_id and not validate_aea_marketplace_referral(
-        client=__import__("app.database", fromlist=["supabase_client"]).supabase_client,
+        client=client,
         destination_url=request.destination_url,
         product_id=request.marketplace_product_id,
         promoter_id=owner_id,
