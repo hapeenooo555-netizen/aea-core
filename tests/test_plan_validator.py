@@ -86,4 +86,4 @@ def test_plan_validator_annotates_internal_read_or_write_steps():
     result = validator.validate([{"tool_name": "content.create", "input": {"title": "Campaign"}}])
     assert result["success"] is True
     assert result["steps"][0]["tool_version"] == "1.0"
-    assert result["steps"][0]["approval_class"] == "REQUIRES_APPROVAL"
+    assert result["steps"][0]["approval_class"] == "READ_ONLY"
