@@ -218,6 +218,66 @@ def test_resume_approval_rejects_unsupported_action_before_connector_call(monkey
     assert called["resume"] is False
 
 
+def test_successful_publish_resume_marks_execution_succeeded(monkeypatch):
+    employee = _slice("user-a")
+    execution_id = "execution-publish-resume"
+    created_execution = employee._execution.create_execution(
+        mission_id="mission-publish-resume",
+        execution_id=execution_id,
+        idempotency_key="idem-publish-resume",
+        owner_id="user-a",
+        status="WAITING_APPROVAL",
+    )
+    assert created_execution["success"] is True
+    created_approval = employee._approvals.create_request(
+        mission_id="mission-publish-resume",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": execution_id,
+            "operation_key": "publish-operation",
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created_approval["success"] is True
+    employee._approvals.approve_request(created_approval["request"]["id"])
+
+    class SuccessfulResume:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            return {
+                "status": "resumed",
+                "pin_id": "provider-pin-123",
+                "verification": {
+                    "verified": True,
+                    "source": "pinterest_api",
+                    "reference": "provider-pin-123",
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        SuccessfulResume,
+    )
+
+    result = employee.resume_approval(created_approval["request"]["id"])
+
+    assert result["success"] is True
+    assert result["status"] == "resumed"
+    execution = employee._execution.get_execution(execution_id, owner_id="user-a")
+    assert execution["status"] == "SUCCEEDED"
+    steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    assert len(steps) == 1
+    assert steps[0]["step_name"] == "publish_content"
+    assert steps[0]["status"] == "completed"
+    assert steps[0]["result"]["verification"]["reference"] == "provider-pin-123"
+
+
 def test_onboarding_capability_is_discoverable_before_connection():
     employee = _slice("user-a")
     discovered = employee.discover_capabilities()
