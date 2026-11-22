@@ -78,6 +78,27 @@ class FakeGateway:
         return {"success": True, "request": {"id": "appr-1", "mission_id": kwargs["mission_id"], "status": "pending"}}
 
 
+class FakeExecutionService:
+    def __init__(self, **_kwargs):
+        pass
+
+    def claim_execution(self, **kwargs):
+        created["execution_claim"] = kwargs
+        return {
+            "success": True,
+            "execution": {"execution_id": "execution-1"},
+            "created": True,
+        }
+
+    def update_execution_state(self, execution_id, owner_id, **kwargs):
+        created["execution_state"] = {
+            "execution_id": execution_id,
+            "owner_id": owner_id,
+            **kwargs,
+        }
+        return {"success": True}
+
+
 DRAFT = {"title": "T", "description": "D", "destination_url": "https://shop.example/p", "image_url": "https://img.example/p.jpg", "board_id": "b1"}
 
 
@@ -86,6 +107,7 @@ def make_client(monkeypatch):
     monkeypatch.setattr(cp, "verify_account_and_boards", lambda _t: {"account": {"username": "u"}, "boards": [{"id": "b1", "name": "Ideas"}]})
     monkeypatch.setattr(cp, "MissionOrchestrationService", FakeOrchestration)
     monkeypatch.setattr(cp, "ApprovalGateway", FakeGateway)
+    monkeypatch.setattr(cp, "MissionExecutionService", FakeExecutionService)
     app = FastAPI()
     app.include_router(cp.router)
     app.dependency_overrides[get_current_user_id] = lambda: OWNER
@@ -103,6 +125,9 @@ def test_links_owned_worker_and_mission_and_returns_ids(monkeypatch):
     assert body["source_mission_id"] == "m1"
     assert body["published"] is False
     assert created["approval"]["payload"]["source_mission_id"] == "m1"
+    assert created["approval"]["payload"]["execution_id"] == "execution-1"
+    assert created["execution_claim"]["mission_id"] == "approval-mission-1"
+    assert created["execution_state"]["status"] == "WAITING_APPROVAL"
     assert created["mission"]["metadata"]["source_worker_id"] == "w1"
     assert next(row for row in ROWS["missions"] if row["id"] == "approval-mission-1")["assigned_worker"] == "w1"
 
