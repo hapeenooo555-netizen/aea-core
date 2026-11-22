@@ -125,9 +125,9 @@ def compose_graphic_design(prompt: str, aspect_ratio: str, brand_mode: str = "au
     if not isinstance(body, str) or len(body) > 500 or not isinstance(cta, str) or len(cta) > 80:
         raise RuntimeError("Graphic-design intelligence returned invalid supporting copy.")
     brand = "AEA Affiliate Hub" if is_brand else str(result.get("brand") or "")[:80]
-    accent = "#10B981" if is_brand else str(result.get("accent") or "#10B981")
+    accent = AEA_BRAND_FACTS["visual_identity"]["primary_accent"] if is_brand else str(result.get("accent") or "#10B981")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
-        accent = "#10B981"
+        accent = AEA_BRAND_FACTS["visual_identity"]["primary_accent"] if is_brand else "#10B981"
     # Always force a clean, text-free background; exact audience copy is rendered
     # deterministically by DesignTextRenderer rather than delegated to the image model.
     visual_prompt += (
