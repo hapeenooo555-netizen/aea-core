@@ -79,7 +79,7 @@ def _require_admin(db: Any, user_id: str) -> None:
 
 
 DISTRIBUTION_CAPABILITIES = {
-    "pinterest": {"publishing_supported": True, "approval_required": True, "connection_required": True, "mode": "approval_gated", "message": "Pinterest publishing is supported by the Core connector; connect the account and approve each publish request."},
+    "pinterest": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Pinterest connector exists, but end-to-end OAuth, approval, publish and provider verification are not yet confirmed. You can save a draft."},
     "facebook": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
     "instagram": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
     "tiktok": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
