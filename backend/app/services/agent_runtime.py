@@ -32,6 +32,7 @@ class AEAAgentRuntime:
 
         metadata = {
             "runtime_request_id": request.request_id,
+            "trace_id": request.request_id,
             "runtime_contract_version": "1.0",
             "locale": request.locale,
             "timezone": request.timezone,
@@ -84,6 +85,7 @@ class AEAAgentRuntime:
             ),
             evidence={
                 "runtime_contract_version": "1.0",
+                "trace_id": request.request_id,
                 "mission_status": mission.get("status"),
                 "idempotent": bool(created.get("idempotent", False)),
             },
