@@ -14,7 +14,28 @@ from app.services.llm_provider import get_llm_provider
 
 AEA_BRAND_FACTS = {
     "brand_name": "AEA Affiliate Hub",
-    "category": "AI-assisted digital business and affiliate content platform",
+    "category": "AI-assisted affiliate content planning and digital business workspace",
+    "positioning": (
+        "A thoughtful way to plan affiliate content. AI helps prepare; the user reviews, "
+        "decides and stays in control."
+    ),
+    "brand_promise": "A clearer path from idea to approved content.",
+    "primary_tagline": "AI-assisted. Human-approved.",
+    "supporting_tagline": "Your workflow. Your approval.",
+    "homepage_message": (
+        "A thoughtful way to plan affiliate content for Pinterest. "
+        "AI helps you prepare. You review, decide, and stay in control."
+    ),
+    "brand_philosophy": [
+        "AI assists with preparation; it does not replace the user's judgement.",
+        "The user reviews and explicitly approves consequential content or actions.",
+        "The user remains informed and in control of the workflow.",
+    ],
+    "audiences": [
+        "affiliate marketers",
+        "content creators",
+        "entrepreneurs and small-business owners",
+    ],
     "verified_capabilities": [
         "AEA Content Studio generates structured, editable content drafts.",
         "AEA Country Intelligence creates country-specific campaign hypotheses and conversion paths; these are not verified demand or revenue forecasts.",
@@ -26,13 +47,37 @@ AEA_BRAND_FACTS = {
         "unverified integrations, automatic publishing or autonomous business execution",
         "free trials, prices or guarantees",
     ],
-    "visual_direction": {
-        "primary": "deep navy / midnight blue",
-        "accent": "#10B981",
-        "supporting": "white, cool grey and restrained cyan highlights",
-        "mood": "confident, modern, premium, clear and technology-enabled",
+    "brand_voice": {
+        "traits": ["thoughtful", "confident", "clear", "professional", "empowering", "human-centred"],
+        "avoid": ["hype", "fear-based selling", "guaranteed outcomes", "unexplained technical jargon"],
+    },
+    "visual_identity": {
+        "logo_symbol": (
+            "A white upward arrow inside a connected hexagonal network; six turquoise nodes; "
+            "gold outer connections; fine blue radial connectors; deep navy square background."
+        ),
+        "logo_usage": (
+            "Use the supplied original logo asset unchanged. Never redraw, regenerate, distort, recolour, "
+            "crop tightly, or place text over it. Maintain clear space and aspect ratio. If the actual "
+            "asset is unavailable to the renderer, reserve a clean logo area; never invent a substitute."
+        ),
+        "palette": {
+            "deep_navy": "#0A1026",
+            "homepage_night": "#05121B",
+            "turquoise": "#2CC2B5",
+            "mint": "#75D7C6",
+            "gold": "#F5B83D",
+            "connector_blue": "#587DC4",
+            "white": "#FFFFFF",
+        },
+        "primary_background": "deep navy / midnight blue",
+        "accent": "#75D7C6",
+        "supporting": "white, cool grey, turquoise and restrained gold",
+        "mood": "confident, modern, premium, thoughtful and human-centred technology",
+        "composition": "strong typography, generous negative space, clear focal point and restrained network motifs",
     },
 }
+
 
 
 GRAPHIC_DESIGN_PLAYBOOK = """
