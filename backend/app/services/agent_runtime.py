@@ -22,7 +22,7 @@ class AEAAgentRuntime:
         self.owner_id = owner_id
         self._orchestration = orchestration or MissionOrchestrationService(owner_id, client=client)
 
-    def submit(self, request: RuntimeRequest, *, run_now: bool = False) -> dict[str, Any]:
+    def submit(self, request: RuntimeRequest, *, run_now: bool = False, mission_options: dict[str, Any] | None = None) -> dict[str, Any]:
         errors = request.validate()
         if errors:
             return {"success": False, "status": "REJECTED", "errors": errors}
@@ -39,10 +39,17 @@ class AEAAgentRuntime:
             "constraints": request.constraints,
             "requested_capabilities": list(request.requested_capabilities),
         }
+        options = dict(mission_options or {})
+        supplied_metadata = options.pop("metadata", {})
+        if not isinstance(supplied_metadata, dict):
+            return {"success": False, "status": "REJECTED",
+                    "errors": ["mission_options.metadata must be an object"]}
+        metadata.update(supplied_metadata)
         created = self._orchestration.create_mission(
             request.objective,
             metadata=metadata,
             idempotency_key=request.request_id,
+            **options,
         )
         if not created.get("success"):
             return {"success": False, "status": "FAILED",
