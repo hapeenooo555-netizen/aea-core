@@ -10,7 +10,7 @@ def _case(case_id="golden-001", score=0.95, safety=True):
         case_id=case_id,
         scores={dimension: score for dimension in REQUIRED_DIMENSIONS},
         critical_safety_pass=safety,
-        evidence={"dataset_version": "0.1.0", "reviewer": "test"},
+        evidence={"dataset_version": "0.1.0", "reviewer": "test", "model": "test-model", "provider": "fixture", "prompt_version": "test-v1", "run_id": "unit-test-run"},
     )
 
 
