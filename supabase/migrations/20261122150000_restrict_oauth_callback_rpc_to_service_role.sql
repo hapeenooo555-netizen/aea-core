@@ -14,4 +14,10 @@ grant execute on function public.complete_oauth_callback(
     text, text, text, text, integer, text, text, text[], text
 ) to service_role;
 
+-- These legacy/internal tables have no user-facing RLS policies. They are
+-- consumed only by trusted server-side code, so remove direct Data API grants
+-- instead of adding broad authenticated policies.
+revoke all on table public.ai_memory, public.users, public.worker_registry
+    from anon, authenticated;
+
 commit;
