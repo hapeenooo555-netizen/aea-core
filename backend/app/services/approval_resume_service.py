@@ -937,6 +937,12 @@ class ApprovalResumeService:
                         "worker_id": worker_id,
                         "pin_id": existing.get("pin_id"),
                         "operation_key": operation_key,
+                        "verification": {
+                            "verified": True,
+                            "source": "pinterest_api",
+                            "reference": existing.get("pin_id"),
+                            "verified_at": existing.get("published_at") or existing.get("created_at"),
+                        },
                         "note": "pin_already_published",
                         "result": existing,
                     }
