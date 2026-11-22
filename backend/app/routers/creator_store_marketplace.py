@@ -105,19 +105,13 @@ def list_my_distribution_jobs(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
+    # Keep this query compatible with the pre-existing Hub table schema.
+    # New lifecycle columns are added by a separate ordered DB migration;
+    # history must remain readable before that migration is applied.
     jobs = _rows(db.table("creator_distribution_jobs").select(
-        "id,product_id,destination,status,error,created_at,updated_at,"
-        "scheduled_at,approval_required,approved_at,approval_request_id,"
-        "provider_reference,provider_url,published_at,external_id,external_url"
+        "id,product_id,destination,status,error,created_at,scheduled_at,"
+        "approval_required,approved_at,external_id,external_url"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(200).execute())
-    # Provider metadata is only displayed when the durable publishing
-    # lifecycle has recorded it. A pending approval or a provider reference
-    # alone must never be represented as a successful publication.
-    for job in jobs:
-        if job.get("status") != "published":
-            job["published_at"] = None
-            job["provider_url"] = None
-            job["provider_reference"] = None
     published_pins = _rows(db.table("published_pins").select(
         "id,approval_request_id,board_name,pin_id,status,created_at,content"
     ).eq("owner_id", owner_id).eq("platform", "pinterest").eq("status", "published")
