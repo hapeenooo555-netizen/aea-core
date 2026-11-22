@@ -127,8 +127,15 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     execution = employee._execution.get_execution(execution_id, owner_id="user-a")
     assert execution["status"] == "WAITING_INPUT"
     resumed_steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
-    onboarding_step = next(step for step in resumed_steps if step["step_name"] == "start_onboarding")
-    assert onboarding_step["status"] == "completed"
+    onboarding_attempts = [
+        step for step in resumed_steps if step["step_name"] == "start_onboarding"
+    ]
+    assert onboarding_attempts
+    latest_onboarding_attempt = max(
+        onboarding_attempts,
+        key=lambda step: step.get("attempt_index", 0),
+    )
+    assert latest_onboarding_attempt["status"] == "completed"
     assert employee._execution.get_execution(execution_id, owner_id="user-b") is None
 
 
