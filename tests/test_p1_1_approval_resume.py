@@ -580,6 +580,12 @@ def test_publish_content_resume_success(resume_service, approval_gateway, monkey
     assert result["platform"] == "pinterest"
     assert result["worker_id"] == "pub-worker"
     assert result["pin_id"]
+    assert result["verification"] == {
+        "verified": True,
+        "source": "pinterest_api",
+        "reference": result["pin_id"],
+        "verified_at": result["verification"]["verified_at"],
+    }
     # Server-derived operation_key must be p1-11:{approval_request_id}.
     assert result["operation_key"] == f"p1-11:{publish_request_id}"
     inner = result["result"]
@@ -710,6 +716,9 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
     second = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert second["status"] == "completed"
     assert second.get("note") == "pin_already_published"
+    assert second["verification"]["verified"] is True
+    assert second["verification"]["source"] == "pinterest_api"
+    assert second["verification"]["reference"] == first["pin_id"]
 
 
 def test_publish_content_duplicate_after_restart(resume_service, approval_gateway, monkeypatch):
