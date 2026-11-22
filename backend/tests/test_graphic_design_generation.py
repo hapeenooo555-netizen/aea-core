@@ -77,7 +77,7 @@ def teardown_function():
 
 
 
-def _fake_creative(_prompt, _aspect_ratio, _brand_mode="auto"):
+def _fake_creative(prompt, aspect_ratio, brand_mode="auto"):
     return {
         "text_overlay": {
             "title": "Biashara yako inaweza zaidi",
