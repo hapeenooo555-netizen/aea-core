@@ -44,8 +44,15 @@ def get_connector_registry() -> ConnectorRegistry:
     global _connector_registry
     if _connector_registry is None:
         _connector_registry = ConnectorRegistry()
-        # Register Pinterest connector
-        pinterest_connector = PinterestConnector()
+        # Register Pinterest with a server-only durable publication ledger.
+        # WorkerRuntime is owner-scoped; its publish path must never fall back
+        # to client-writable or process-local publication evidence.
+        pinterest_connector = PinterestConnector(
+            pin_store=PinPublishStore(
+                client=database_module.get_supabase_pin_publish_client(),
+                durable_required=True,
+            ),
+        )
         _connector_registry.register(pinterest_connector)
         _connector_registry.register(MetaMarketingConnector())
     return _connector_registry
