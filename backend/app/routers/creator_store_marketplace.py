@@ -101,6 +101,25 @@ def create_distribution_job(
     product = _one(db, "creator_products", "id,owner_id,status", id=str(product_id), owner_id=owner_id)
     if not product:
         raise HTTPException(status_code=404, detail="Creator product not found.")
+    # Repeated taps/retries must not create duplicate draft requests for the
+    # same owner, product and destination. This is draft deduplication only;
+    # it does not claim that approval or external publishing has occurred.
+    existing_draft = _one(
+        db,
+        "creator_distribution_jobs",
+        "id,product_id,owner_id,destination,status,approval_required,created_at",
+        product_id=str(product_id),
+        owner_id=owner_id,
+        destination=body.destination,
+        status="draft",
+    )
+    if existing_draft:
+        return {
+            "success": True,
+            "job": existing_draft,
+            "published": False,
+            "duplicate": True,
+        }
     try:
         rows = _rows(db.table("creator_distribution_jobs").insert({
             "product_id": str(product_id),
