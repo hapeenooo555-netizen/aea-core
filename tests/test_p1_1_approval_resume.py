@@ -788,6 +788,9 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
     )
     assert second["status"] == "completed"
     assert second.get("note") == "pin_already_published"
+    assert second["verification"]["verified"] is True
+    assert second["verification"]["reference"] == first["pin_id"]
+    assert second["verification"]["verified_at"] == first["result"]["published_at"]
 
 
 def test_publish_content_resume_rejects_request_owner_fallback_when_user_identity_missing(
