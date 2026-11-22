@@ -186,6 +186,43 @@ def test_resume_approval_rejects_unowned_execution_before_connector_call(monkeyp
     assert called["resume"] is False
 
 
+def test_resume_approval_requires_durable_execution_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-no-execution",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "FAIL"
+    assert "execution_id is required" in result["error"]
+    assert called["resume"] is False
+
+
 def test_resume_approval_rejects_unsupported_action_before_connector_call(monkeypatch):
     employee = _slice("user-a")
     created = employee._approvals.create_request(
