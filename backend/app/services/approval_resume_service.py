@@ -682,11 +682,27 @@ class ApprovalResumeService:
                 provider_error=result.get("provider_error"),
             )
 
+        # Treat a Pin as verified only when the provider returned a non-empty
+        # Pin ID and an explicitly successful publish/duplicate status.
+        pin_id = result.get("pin_id")
+        publish_status = result.get("status")
+        provider_verification = None
+        if (
+            connector.platform == "pinterest"
+            and isinstance(pin_id, str)
+            and pin_id.strip()
+            and publish_status in {"published", "duplicate_record", "duplicate"}
+        ):
+            provider_verification = {
+                "verified": True,
+                "source": "pinterest_api",
+                "reference": pin_id.strip(),
+                "verified_at": result.get("published_at") or datetime.now(timezone.utc).isoformat(),
+            }
+
         # Approved Pinterest publishing happens after the original mission
         # has paused at WAIT_FOR_APPROVAL. Feed only provider-confirmed Pin IDs
         # into the same owner-scoped experience recorder used by normal runs.
-        pin_id = result.get("pin_id")
-        publish_status = result.get("status")
         if (
             connector.platform == "pinterest"
             and mission_id
@@ -699,12 +715,7 @@ class ApprovalResumeService:
                 from .mission_orchestration import MissionOrchestrationService
 
                 experience_result = dict(result)
-                experience_result["verification"] = {
-                    "verified": True,
-                    "source": "pinterest_api",
-                    "reference": pin_id.strip(),
-                    "verified_at": result.get("published_at") or datetime.now(timezone.utc).isoformat(),
-                }
+                experience_result["verification"] = provider_verification
                 orchestration = MissionOrchestrationService(current_user_id, client=self._mission_client)
                 orchestration.record_verified_experience(
                     mission_id,
@@ -767,6 +778,7 @@ class ApprovalResumeService:
                 "worker_id": worker_id,
                 "pin_id": result.get("pin_id"),
                 "operation_key": operation_key,
+                "verification": provider_verification,
                 "note": "pin_already_published",
                 "result": result,
             }
@@ -779,6 +791,7 @@ class ApprovalResumeService:
             "worker_id": worker_id,
             "pin_id": result.get("pin_id"),
             "operation_key": operation_key,
+            "verification": provider_verification,
             "result": result,
         }
 
