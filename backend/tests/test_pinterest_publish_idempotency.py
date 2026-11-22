@@ -7,6 +7,7 @@ which mirrors the database's UNIQUE(operation_key) + compare-and-set rules.
 
 from __future__ import annotations
 
+import base64
 import threading
 import time
 from uuid import uuid4
@@ -39,7 +40,7 @@ class _Resp:
 
 
 def _install(monkeypatch, behaviour, delay=0.0):
-    calls = {"post": 0}
+    calls = {"post": 0, "payloads": []}
     lock = threading.Lock()
 
     class FakeClient:
@@ -58,6 +59,7 @@ def _install(monkeypatch, behaviour, delay=0.0):
         def post(self, url, **k):
             with lock:
                 calls["post"] += 1
+                calls["payloads"].append(k.get("json"))
                 n = calls["post"]
             if delay:
                 time.sleep(delay)
@@ -236,3 +238,52 @@ def test_database_claim_is_unique_and_compare_and_set():
     done = store.transition(OWNER, "p1-11:a", from_statuses=("publishing",), updates={"status": "published", "pin_id": "p"})
     assert done["pin_id"] == "p"
     assert store.transition(OWNER, "p1-11:a", from_statuses=("publishing",), updates={"status": "failed"}) is None
+
+
+
+def test_private_owner_image_is_sent_to_pinterest_as_base64_after_approval(monkeypatch):
+    image_bytes = b"private-owner-image-bytes"
+
+    class Bucket:
+        def download(self, path):
+            assert path == f"{OWNER}/asset-1/original.png"
+            return image_bytes
+
+    class Storage:
+        def from_(self, bucket_name):
+            assert bucket_name == "aea-design-assets"
+            return Bucket()
+
+    class StorageClient:
+        storage = Storage()
+
+    monkeypatch.setattr("app.database.get_supabase_image_budget_client", lambda: StorageClient())
+    calls = _install(monkeypatch, lambda n: _Resp(201, {"id": "pin-private"}))
+    content = {key: value for key, value in CONTENT.items() if key != "image_url"}
+    content.update({
+        "image_asset_id": "asset-1",
+        "image_asset_path": f"{OWNER}/asset-1/original.png",
+        "image_asset_mime_type": "image/png",
+    })
+    result = _connector().publish_content(WORKER, content, idempotency_key=_key(), owner_id=OWNER)
+    assert result["status"] == "published"
+    media = calls["payloads"][0]["media_source"]
+    assert media == {
+        "source_type": "image_base64",
+        "content_type": "image/png",
+        "data": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
+def test_private_image_asset_path_must_match_authenticated_owner(monkeypatch):
+    calls = _install(monkeypatch, lambda n: _Resp(201, {"id": "should-not-publish"}))
+    content = {key: value for key, value in CONTENT.items() if key != "image_url"}
+    content.update({
+        "image_asset_id": "asset-foreign",
+        "image_asset_path": "another-owner/asset-foreign/original.png",
+        "image_asset_mime_type": "image/png",
+    })
+    result = _connector().publish_content(WORKER, content, idempotency_key=_key(), owner_id=OWNER)
+    assert result["success"] is False
+    assert "does not belong" in result["error"]
+    assert calls["post"] == 0
