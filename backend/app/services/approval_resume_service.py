@@ -144,10 +144,13 @@ class ApprovalResumeService:
 
         request_owner = request.get("owner_id")
         if current_user_id is not None:
-            if request_owner and request_owner != current_user_id:
+            # Fail closed when ownership is absent as well as when it belongs
+            # to another user. A caller-supplied identity is never enough to
+            # resume an ownerless legacy approval.
+            if request_owner != current_user_id:
                 return self._fail(
                     "approval_unauthorized",
-                    "Authenticated user is not authorized to resume this approval",
+                    "Authenticated user does not own this approval",
                     approval=approval_request_id,
                 )
         elif request_owner:
