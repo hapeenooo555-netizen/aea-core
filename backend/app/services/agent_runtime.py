@@ -12,6 +12,39 @@ from .agent_runtime_contract import RuntimeRequest, RuntimeResult, runtime_statu
 from .mission_orchestration import MissionOrchestrationService
 
 
+def _approval_context(mission: dict[str, Any]) -> tuple[tuple[str, ...], str | None]:
+    """Read approval/execution references from the durable P1-8 result envelope.
+
+    MissionOrchestrationService persists the EmployeeVerticalSlice response in
+    mission.result. Approval references therefore live in report.resume_information,
+    not in a top-level mission.pending_approvals column.
+    """
+    references: list[str] = []
+    direct = mission.get("pending_approvals")
+    if isinstance(direct, (list, tuple)):
+        references.extend(str(item) for item in direct if item)
+
+    result = mission.get("result")
+    result = result if isinstance(result, dict) else {}
+    report = result.get("report")
+    report = report if isinstance(report, dict) else {}
+    resume = report.get("resume_information")
+    resume = resume if isinstance(resume, dict) else {}
+
+    approval_id = resume.get("approval_request_id")
+    if approval_id:
+        references.append(str(approval_id))
+
+    # Older execution envelopes may place the reference directly in the
+    # result or in an execution-evidence entry. Keep extraction defensive.
+    for item in result.get("pending_approvals", []) if isinstance(result.get("pending_approvals"), (list, tuple)) else []:
+        if item:
+            references.append(str(item))
+    execution_id = resume.get("execution_id") or report.get("execution_id") or result.get("execution_id")
+    unique_references = tuple(dict.fromkeys(references))
+    return unique_references, str(execution_id) if execution_id else None
+
+
 class AEAAgentRuntime:
     """Canonical entry point for submitting and running an owner-scoped objective."""
 
@@ -71,15 +104,15 @@ class AEAAgentRuntime:
         except ValueError as exc:
             return {"success": False, "status": "FAILED", "mission_id": mission_id,
                     "errors": [str(exc)]}
+        pending_approvals, execution_id = _approval_context(mission)
         result = RuntimeResult(
             request_id=request.request_id,
             owner_id=self.owner_id,
             status=runtime_status,
             mission_id=mission_id,
+            execution_id=execution_id,
             output=mission.get("result") if isinstance(mission.get("result"), dict) else {},
-            pending_approvals=tuple(
-                str(item) for item in (mission.get("pending_approvals") or [])
-            ),
+            pending_approvals=pending_approvals,
             errors=tuple(
                 [str(mission["error"])] if mission.get("error") and runtime_status == "FAILED" else []
             ),
