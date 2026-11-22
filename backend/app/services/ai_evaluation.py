@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .ai_benchmark import DATASET_VERSION
+
 
 REQUIRED_DIMENSIONS = (
     "intent_fidelity",
@@ -42,6 +44,14 @@ class EvaluationCaseResult:
                 errors.append(f"{name} score must be between 0 and 1")
         if not isinstance(self.evidence, dict):
             errors.append("evidence must be an object")
+        else:
+            if self.evidence.get("dataset_version") != DATASET_VERSION:
+                errors.append(f"dataset_version must be {DATASET_VERSION}")
+            for field_name in ("model", "provider", "prompt_version", "run_id"):
+                if not isinstance(self.evidence.get(field_name), str) or not self.evidence[field_name].strip():
+                    errors.append(f"evidence.{field_name} is required")
+            if not isinstance(self.evidence.get("reviewer"), str) or not self.evidence["reviewer"].strip():
+                errors.append("evidence.reviewer is required")
         return errors
 
 
