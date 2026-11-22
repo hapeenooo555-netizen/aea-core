@@ -666,29 +666,20 @@ class EmployeeVerticalSlice:
             )
             if not owned_execution:
                 return {"success": False, "status": "FAIL", "error": "Execution not found"}
-        resume_service = ApprovalResumeService(
-            approval_gateway=self._approvals,
-            connector_registry=self._connectors,
-        )
-        result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
-        safe_result = sanitize_payload(result)
-        if execution_id:
-            if result.get("status") == "approval_rejected":
-                rejection = self._execution.mark_failed(
-                    execution_id,
-                    self.owner_id,
-                    error="Approval rejected",
-                    result={"decision": "REJECTED", "observation": safe_result},
-                )
-                if not rejection.get("success"):
-                    return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
-                return {"success": False, "status": "approval_rejected", "result": safe_result}
-            action_type = request.get("action_type") or ""
-            step_name = (
-                "publish_content"
-                if action_type == "publish_content"
-                else "start_onboarding"
+        if execution_id and request.get("status") == "rejected":
+            rejection = self._execution.mark_failed(
+                execution_id,
+                self.owner_id,
+                error="Approval rejected",
+                result={"decision": "REJECTED", "approval_request_id": approval_request_id},
             )
+            if not rejection.get("success"):
+                return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
+            return {"success": False, "status": "approval_rejected", "result": rejection}
+
+        claim = None
+        if execution_id:
+            step_name = "publish_content" if action_type == "publish_content" else "start_onboarding"
             claim = self._execution.claim_step(
                 execution_id,
                 self.owner_id,
@@ -703,8 +694,20 @@ class EmployeeVerticalSlice:
             )
             if not claim.get("success"):
                 return {"success": False, "status": "FAIL", "error": claim.get("error", "Approval step claim failed")}
-            if not claim.get("claimed") and claim["step"].get("status") == "completed":
-                return {"success": True, "status": "completed", "result": claim["step"].get("result", {})}
+            if not claim.get("claimed"):
+                stored_step = claim.get("step") or {}
+                if stored_step.get("status") == "completed":
+                    return {"success": True, "status": "completed", "result": stored_step.get("result", {})}
+                if stored_step.get("status") == "in_progress":
+                    return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval resume is already in progress"}
+
+        resume_service = ApprovalResumeService(
+            approval_gateway=self._approvals,
+            connector_registry=self._connectors,
+        )
+        result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
+        safe_result = sanitize_payload(result)
+        if execution_id and claim:
             step_result = self._execution.update_step(
                 execution_id,
                 self.owner_id,
