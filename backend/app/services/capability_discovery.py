@@ -55,7 +55,12 @@ class CapabilityDiscovery:
                 if not required_scopes.issubset(granted_scopes):
                     continue
                 connector_caps = connector.capabilities.to_dict()
-                if contract.capability and not connector_caps.get(contract.capability, False):
+                # Onboarding is the capability that establishes a
+                # connection; requiring that capability to already be enabled
+                # would make first-time onboarding undiscoverable. Keep it
+                # owner-scoped and require the connector to be registered.
+                is_onboarding = contract.operation in {"start_onboarding", "onboarding"}
+                if contract.capability and not connector_caps.get(contract.capability, False) and not is_onboarding:
                     continue
             available.append(contract.to_dict())
             if contract.capability:
