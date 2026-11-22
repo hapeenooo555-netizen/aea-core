@@ -683,6 +683,32 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway,
         assert "client_secret" not in content
 
 
+def test_publish_content_without_provider_pin_id_is_not_verified(resume_service):
+    class ConnectorWithoutPinId:
+        platform = "pinterest"
+
+        def publish_content(self, worker_id, content, *, idempotency_key, owner_id):
+            return {
+                "success": True,
+                "status": "published",
+                "pin_id": None,
+                "operation_key": idempotency_key,
+            }
+
+    result = resume_service._handle_publish_content(
+        approval_request_id="approval-without-pin-id",
+        mission_id="mission-no-pin-id",
+        worker_id="worker-no-pin-id",
+        payload={"content": {"board_name": "B", "pin_text": "T", "link_url": "https://example.com"}},
+        connector=ConnectorWithoutPinId(),
+        current_user_id="test-user-123",
+    )
+
+    assert result["status"] == "resumed"
+    assert result["pin_id"] is None
+    assert result["verification"] is None
+
+
 def test_publish_content_duplicate_is_completed(resume_service, approval_gateway, monkeypatch):
     _mock_pinterest_publish(monkeypatch)
     """A second resume of the same publish_content approval returns completed."""
