@@ -248,3 +248,65 @@ def test_failure_without_verification_evidence_does_not_create_lesson():
     mission = {"id": "mission-failed-unverified", "assigned_worker": "worker-1", "domain": "affiliate_jobs"}
     orchestration._record_verified_experience(mission, {"success": False, "error": "timeout"}, "FAIL")
     assert memory.writes == []
+
+
+def test_authenticated_employee_api_returns_canonical_runtime_envelope_and_preserves_options():
+    async def fake_user_id():
+        return "runtime-api-owner"
+
+    async def fake_client():
+        return None
+
+    app.dependency_overrides[get_current_user_id] = fake_user_id
+    app.dependency_overrides[get_user_scoped_client] = fake_client
+    try:
+        client = TestClient(app)
+        response = client.post("/employee/objective", json={
+            "objective": "Prepare a Swahili campaign draft",
+            "idempotency_key": "runtime-api-001",
+            "locale": "sw-TZ",
+            "timezone": "Africa/Dar_es_Salaam",
+            "success_criteria": ["draft saved"],
+            "constraints": {"market": "TZ"},
+            "requested_capabilities": ["content.generate"],
+            "priority": "high",
+            "business_importance": 4,
+            "metadata": {"source": "hub"},
+        })
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["mission"]["owner_id"] == "runtime-api-owner"
+        assert payload["mission"]["priority"] == "high"
+        assert payload["mission"]["business_importance"] == 4
+        assert payload["mission"]["metadata"]["locale"] == "sw-TZ"
+        assert payload["mission"]["metadata"]["timezone"] == "Africa/Dar_es_Salaam"
+        assert payload["mission"]["metadata"]["source"] == "hub"
+        assert payload["runtime"]["request_id"] == "runtime-api-001"
+        assert payload["runtime"]["status"] == "ACCEPTED"
+        assert payload["runtime"]["owner_id"] == "runtime-api-owner"
+    finally:
+        app.dependency_overrides.pop(get_current_user_id, None)
+        app.dependency_overrides.pop(get_user_scoped_client, None)
+
+
+def test_authenticated_employee_api_reuses_idempotent_runtime_request():
+    async def fake_user_id():
+        return "runtime-idempotent-owner"
+
+    async def fake_client():
+        return None
+
+    app.dependency_overrides[get_current_user_id] = fake_user_id
+    app.dependency_overrides[get_user_scoped_client] = fake_client
+    try:
+        client = TestClient(app)
+        payload = {"objective": "Create a Pinterest content plan", "idempotency_key": "runtime-idempotent-001"}
+        first = client.post("/employee/objective", json=payload)
+        second = client.post("/employee/objective", json=payload)
+        assert first.status_code == second.status_code == 201
+        assert first.json()["mission"]["id"] == second.json()["mission"]["id"]
+        assert second.json()["runtime"]["evidence"]["idempotent"] is True
+    finally:
+        app.dependency_overrides.pop(get_current_user_id, None)
+        app.dependency_overrides.pop(get_user_scoped_client, None)
