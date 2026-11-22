@@ -655,14 +655,23 @@ class EmployeeVerticalSlice:
             or request_payload.get("worker_id") != self.owner_id
         ):
             return {"success": False, "status": "FAIL", "error": "Approval request not found"}
+        action_type = request.get("action_type") or ""
+        if action_type not in {"start_platform_onboarding", "publish_content"}:
+            return {"success": False, "status": "FAIL", "error": "Unsupported approval action"}
+        payload = request.get("payload") or {}
+        execution_id = payload.get("execution_id")
+        if execution_id:
+            owned_execution = self._execution.get_execution(
+                execution_id, owner_id=self.owner_id
+            )
+            if not owned_execution:
+                return {"success": False, "status": "FAIL", "error": "Execution not found"}
         resume_service = ApprovalResumeService(
             approval_gateway=self._approvals,
             connector_registry=self._connectors,
         )
         result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
         safe_result = sanitize_payload(result)
-        payload = request.get("payload") or {}
-        execution_id = payload.get("execution_id")
         if execution_id:
             if result.get("status") == "approval_rejected":
                 rejection = self._execution.mark_failed(
