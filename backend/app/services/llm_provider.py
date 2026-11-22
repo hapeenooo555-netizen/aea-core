@@ -216,13 +216,30 @@ register_llm_provider("groq", GroqLLMProvider)
 
 def get_llm_provider(provider_name: str | None = None) -> BaseLLMProvider:
     """Return the configured LLM provider instance."""
+    runtime_environment = (
+        os.getenv("AEA_ENVIRONMENT")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENVIRONMENT")
+        or ("production" if os.getenv("RENDER") or os.getenv("RAILWAY_ENVIRONMENT") else "")
+    ).strip().lower()
+    is_production = runtime_environment in {"prod", "production"}
+
+    explicit_provider = provider_name or os.getenv("LLM_PROVIDER", "").strip()
+    if is_production and not explicit_provider:
+        # Production must opt into a real provider; Settings' local/test
+        # default of "mock" must never silently become live AI behavior.
+        return UnavailableLLMProvider("unset")
+
     configured_name = (
-        provider_name
-        or os.getenv("LLM_PROVIDER", "")
+        explicit_provider
         or getattr(settings, "llm_provider", "")
         or "mock"
     )
     normalized_name = configured_name.strip().lower()
+    if is_production and normalized_name == "mock":
+        # An explicit mock selection is still unsafe in production because
+        # callers could mistake deterministic fixture text for AI output.
+        return UnavailableLLMProvider("mock-disabled-in-production")
     provider_cls = PROVIDER_REGISTRY.get(normalized_name)
     if provider_cls is None:
         # Never disguise a typo or unsupported provider as a successful mock.
