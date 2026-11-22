@@ -46,6 +46,7 @@ from typing import Any
 from .approval_gateway import ApprovalGateway
 from .human_intervention import HumanInterventionManager
 from .p1_7_contracts import SENSITIVE_FIELDS
+from .aea_marketplace_referral import validate_aea_marketplace_referral
 
 logger = logging.getLogger(__name__)
 
@@ -640,6 +641,26 @@ class ApprovalResumeService:
             k: v for k, v in content.items()
             if isinstance(k, str) and k.lower() not in SENSITIVE_FIELDS
         }
+
+        # Marketplace Pins must pass a fresh, read-only referral check at
+        # the final server-side boundary immediately before Pinterest publish.
+        # Ordinary non-marketplace Pins retain their existing workflow.
+        if connector.platform == "pinterest" and payload.get("source") == "aea_marketplace_pinterest_promotion":
+            product_id = payload.get("marketplace_product_id")
+            link_url = sanitized_content.get("link_url")
+            if not product_id or not validate_aea_marketplace_referral(
+                client=self._mission_client,
+                destination_url=str(link_url or ""),
+                product_id=str(product_id),
+                promoter_id=current_user_id,
+            ):
+                return self._fail(
+                    "resume_failed",
+                    "AEA Marketplace referral is invalid, inactive, or no longer approved for this product and promoter. Nothing was published.",
+                    approval=approval_request_id,
+                    action_type="publish_content",
+                    platform=connector.platform,
+                )
 
         # Server-derived operation_key — the client's operation_key is
         # intentionally ignored to prevent idempotency bypass.
