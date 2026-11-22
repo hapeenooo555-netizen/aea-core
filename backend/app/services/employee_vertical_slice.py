@@ -658,6 +658,11 @@ class EmployeeVerticalSlice:
         action_type = request.get("action_type") or ""
         if action_type not in {"start_platform_onboarding", "publish_content"}:
             return {"success": False, "status": "FAIL", "error": "Unsupported approval action"}
+        approval_status = (request.get("status") or "").lower()
+        if approval_status == "pending":
+            return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval is still pending"}
+        if approval_status != "approved":
+            return {"success": False, "status": "FAIL", "error": "Approval is not in an executable state"}
         payload = request.get("payload") or {}
         execution_id = payload.get("execution_id")
         if not execution_id:
