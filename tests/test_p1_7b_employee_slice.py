@@ -459,6 +459,23 @@ def test_execution_evidence_records_tool_version_and_does_not_invent_verificatio
     assert entry["verification"] == "NOT_REPORTED"
 
 
+def test_execution_evidence_is_durable_in_step_result():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-durable-evidence",
+    )
+    assert result["success"] is True
+    execution_id = result["report"]["execution_id"]
+    steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    assert len(steps) == 1
+    evidence = steps[0]["result"]["execution_evidence"]
+    assert evidence["mission_id"] == "mission-durable-evidence"
+    assert evidence["execution_id"] == execution_id
+    assert evidence["tool_name"] == "prepare_affiliate_content"
+    assert evidence["verification"] == "NOT_REPORTED"
+
+
 def test_execution_evidence_is_sanitized_before_entering_report():
     employee = _slice()
     result = employee.run(
