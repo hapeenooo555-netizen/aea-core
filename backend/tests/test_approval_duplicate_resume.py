@@ -16,7 +16,7 @@ def test_repeated_approval_returns_persisted_execution_without_replaying_connect
         "id": approval_id,
         "owner_id": owner_id,
         "status": "approved",
-        "metadata": {
+        "payload": {
             "execution": {
                 "status": "completed",
                 "action_type": "publish_content",
