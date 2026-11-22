@@ -46,7 +46,8 @@ ALTER TABLE public.creator_distribution_jobs
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
+    IF to_regclass('public.approval_requests') IS NOT NULL
+       AND NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'creator_distribution_jobs_approval_request_id_fkey'
           AND conrelid = 'public.creator_distribution_jobs'::regclass
