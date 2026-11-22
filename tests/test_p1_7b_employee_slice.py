@@ -85,6 +85,26 @@ def _slice(owner: str = "user-a") -> EmployeeVerticalSlice:
     )
 
 
+def test_default_pinterest_connector_uses_server_only_durable_pin_store(monkeypatch):
+    server_client = object()
+    monkeypatch.setattr(
+        database_module,
+        "get_supabase_pin_publish_client",
+        lambda: server_client,
+        raising=False,
+    )
+    employee = EmployeeVerticalSlice(
+        "user-a",
+        client=None,
+        execution_service=MissionExecutionService(client=None),
+        approval_gateway=ApprovalGateway(client=None),
+    )
+    connector = employee._connectors.get("pinterest")
+    assert connector is not None
+    assert connector._pin_store._explicit_client is server_client
+    assert connector._pin_store._durable_required is True
+
+
 def test_pinterest_status_is_real_read_and_reports_not_connected():
     employee = _slice()
     result = employee.run("Check my Pinterest account status", mission_id="mission-status")

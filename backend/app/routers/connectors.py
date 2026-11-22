@@ -44,8 +44,15 @@ def get_connector_registry() -> ConnectorRegistry:
     global _connector_registry
     if _connector_registry is None:
         _connector_registry = ConnectorRegistry()
-        # Register Pinterest connector
-        pinterest_connector = PinterestConnector()
+        # Register Pinterest with a server-only durable publication ledger.
+        # WorkerRuntime is owner-scoped; its publish path must never fall back
+        # to client-writable or process-local publication evidence.
+        pinterest_connector = PinterestConnector(
+            pin_store=PinPublishStore(
+                client=database_module.get_supabase_pin_publish_client(),
+                durable_required=True,
+            ),
+        )
         _connector_registry.register(pinterest_connector)
         _connector_registry.register(MetaMarketingConnector())
     return _connector_registry
@@ -93,7 +100,12 @@ def _get_user_scoped_pinterest_connector(
     # Publishing must use the same user-scoped database client and fail closed
     # if durable idempotency persistence is unavailable. An in-memory fallback
     # is suitable for isolated tests only, never for a production publish path.
-    pin_store = PinPublishStore(client=client, durable_required=True)
+    # Pin ledger writes are server-only. Keep all other stores on the
+    # caller's JWT-scoped client so ordinary reads/writes remain RLS-bound.
+    pin_store = PinPublishStore(
+        client=database_module.get_supabase_pin_publish_client(),
+        durable_required=True,
+    )
     return PinterestConnector(
         workflow_store=workflow_store,
         connection_store=connection_store,

@@ -12,6 +12,7 @@ from typing import Any
 
 supabase_client: Any = None
 _supabase_health_client: Any = None
+_pin_publish_client: Any = None
 
 
 def _resolve_supabase_credential() -> tuple[str, str]:
@@ -242,4 +243,27 @@ def get_supabase_video_storage_client() -> Any:
         _video_storage_client = create_client(url, service_role_key)
         return _video_storage_client
     except Exception:  # pragma: no cover - deployment configuration failure
+        return None
+
+
+
+def get_supabase_pin_publish_client() -> Any:
+    """Return a server-only service-role client for verified Pinterest publish persistence.
+
+    Call only after the approval and canonical owner have been validated. The
+    client is never returned to browser-facing routes or used for ordinary
+    user-scoped reads. Missing credentials fail closed (no memory fallback).
+    """
+    global _pin_publish_client
+    if _pin_publish_client is not None:
+        return _pin_publish_client
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+        _pin_publish_client = create_client(url, service_role_key)
+        return _pin_publish_client
+    except Exception:  # pragma: no cover - defensive runtime handling
         return None
