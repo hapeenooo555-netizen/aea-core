@@ -269,3 +269,21 @@ def test_marketplace_browse_joins_approved_listing_product_and_public_vendor():
     assert len(items) == 1
     assert items[0]["product"]["title"] == "Test product"
     assert items[0]["vendor"]["display_name"] == "Vendor"
+
+
+def test_repeated_distribution_draft_request_returns_existing_job():
+    db = Database({"creator_products": [product_row()]})
+    first = client_for(db).post(
+        f"/store/products/{PRODUCT}/distribution",
+        json={"destination": "pinterest"},
+    )
+    second = client_for(db).post(
+        f"/store/products/{PRODUCT}/distribution",
+        json={"destination": "pinterest"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["duplicate"] is True
+    assert second.json()["job"]["id"] == first.json()["job"]["id"]
+    assert len(db.tables["creator_distribution_jobs"]) == 1
