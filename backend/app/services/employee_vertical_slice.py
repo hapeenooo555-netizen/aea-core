@@ -645,6 +645,42 @@ class EmployeeVerticalSlice:
             return self._failed_report(report, running.get("error", "Execution resume persistence failed"))
         return self._execute_plan(mission_id, execution_id, remaining, report, None)
 
+    def _approval_worker_is_owned(self, worker_id: Any) -> bool:
+        """Verify that an approval's worker belongs to this authenticated owner.
+
+        Older in-memory flows used the owner UUID as the worker identifier.
+        Production worker records have their own UUID, so accept those only
+        after a user-scoped ownership and active-status lookup.
+        """
+        normalized = str(worker_id or "").strip()
+        if not normalized:
+            return False
+        if normalized == self.owner_id:
+            return True
+        if self._client is None:
+            return False
+        try:
+            rows = (
+                self._client.table("workers")
+                .select("id,owner_id,status")
+                .eq("id", normalized)
+                .eq("owner_id", self.owner_id)
+                .eq("status", "active")
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            # Authorization must fail closed when the ownership lookup fails.
+            return False
+        return any(
+            str(row.get("id") or "") == normalized
+            and str(row.get("owner_id") or "") == self.owner_id
+            and str(row.get("status") or "").lower() == "active"
+            for row in rows
+        )
+
     def resume_approval(self, approval_request_id: str) -> dict[str, Any]:
         """Resume an approved onboarding action through ApprovalResumeService."""
         request = self._approvals.get_request(approval_request_id)
@@ -652,7 +688,7 @@ class EmployeeVerticalSlice:
         if (
             not request
             or request.get("owner_id") != self.owner_id
-            or request_payload.get("worker_id") != self.owner_id
+            or not self._approval_worker_is_owned(request_payload.get("worker_id"))
         ):
             return {"success": False, "status": "FAIL", "error": "Approval request not found"}
         action_type = request.get("action_type") or ""

@@ -824,3 +824,89 @@ def test_rejected_approval_is_persisted_as_failed_execution():
     execution = employee._execution.get_execution(execution_id, owner_id="user-a")
     assert execution["status"] == "FAILED"
     assert execution["result"]["decision"] == "REJECTED"
+
+
+def test_approval_resume_accepts_distinct_active_worker_owned_by_user():
+    employee = _slice("owner-1")
+
+    class Query:
+        def __init__(self):
+            self.filters = {}
+
+        def select(self, *_args):
+            return self
+
+        def eq(self, key, value):
+            self.filters[key] = value
+            return self
+
+        def limit(self, _count):
+            return self
+
+        def execute(self):
+            row = {
+                "id": "worker-1",
+                "owner_id": "owner-1",
+                "status": "active",
+            }
+            matches = all(row.get(key) == value for key, value in self.filters.items())
+            return type("Response", (), {"data": [row] if matches else []})()
+
+    class Client:
+        def table(self, name):
+            assert name == "workers"
+            return Query()
+
+    employee._client = Client()
+
+    assert employee._approval_worker_is_owned("worker-1") is True
+
+
+def test_approval_resume_rejects_worker_owned_by_another_user():
+    employee = _slice("owner-1")
+
+    class Query:
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def limit(self, _count):
+            return self
+
+        def execute(self):
+            return type("Response", (), {"data": []})()
+
+    class Client:
+        def table(self, _name):
+            return Query()
+
+    employee._client = Client()
+
+    assert employee._approval_worker_is_owned("worker-from-another-owner") is False
+
+
+def test_approval_resume_fails_closed_when_worker_lookup_errors():
+    employee = _slice("owner-1")
+
+    class Query:
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def limit(self, _count):
+            return self
+
+        def execute(self):
+            raise RuntimeError("database unavailable")
+
+    class Client:
+        def table(self, _name):
+            return Query()
+
+    employee._client = Client()
+
+    assert employee._approval_worker_is_owned("worker-1") is False
