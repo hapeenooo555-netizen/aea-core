@@ -170,6 +170,7 @@ def test_resume_approval_rejects_unowned_execution_before_connector_call(monkeyp
         owner_id="user-a",
     )
     assert created["success"] is True
+    employee._approvals.approve_request(created["request"]["id"], approved_by="user-a")
     called = {"resume": False}
 
     class ResumeMustNotRun:
