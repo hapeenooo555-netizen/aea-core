@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
 
-router = APIRouter(prefix="/store/affiliate", tags=["aea-affiliate"])
+router = APIRouter(prefix="/store/affiliate", tags=["aea-affiliate"])\nproducts_router = APIRouter(prefix="/store/products", tags=["public-marketplace"])
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
@@ -20,6 +20,24 @@ def _rows(response: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
     return [data] if isinstance(data, dict) else []
+
+
+@products_router.get("/public/{slug}")
+def get_public_marketplace_product(slug: str) -> dict[str, Any]:
+    """Return a deliberately minimal public payload for an approved AEA listing."""
+    if not slug or len(slug) > 180 or "/" in slug or ".." in slug:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    client = database_module.supabase_client
+    if client is None:
+        raise HTTPException(status_code=503, detail="Marketplace product service is unavailable.")
+    try:
+        result = client.rpc("get_public_creator_product_by_slug", {"p_slug": slug}).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Marketplace product service is unavailable.") from exc
+    rows = _rows(result)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Product not found or unavailable.")
+    return {"success": True, "product": rows[0]}
 
 
 @router.post("/requests/{request_id}/link", status_code=201)
