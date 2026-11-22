@@ -31,6 +31,8 @@ from .plan_validator import PlanValidator
 from .retry_classifier import classify_failure
 from .stores.platform_connection_store import PlatformConnectionStore
 from .stores.onboarding_workflow_store import OnboardingWorkflowStore
+from .stores.pin_publish_store import PinPublishStore
+from app import database as database_module
 from .tool_registry import ToolRegistry
 from .tool_safety import ToolSafetyError, ToolValidator
 from .action_engine import ActionEngine
@@ -58,12 +60,20 @@ class EmployeeVerticalSlice:
         self._client = client
         self._connectors = connector_registry or ConnectorRegistry()
         if not self._connectors.has_connector("pinterest"):
+            # Publish ledger writes must bypass client-controlled table DML.
+            # The service-role client stays server-side and is only used after
+            # this vertical slice has validated the authenticated owner and approval.
+            pin_store = PinPublishStore(
+                client=database_module.get_supabase_pin_publish_client(),
+                durable_required=True,
+            )
             self._connectors.register(PinterestConnector(
                 workflow_store=OnboardingWorkflowStore(
                     client=client,
                     durable_required=True,
                 ),
                 connection_store=PlatformConnectionStore(client=client),
+                pin_store=pin_store,
             ))
         self._connections = connection_store or PlatformConnectionStore(client=client)
         self._execution = execution_service or MissionExecutionService(client=client, durable_required=True)
