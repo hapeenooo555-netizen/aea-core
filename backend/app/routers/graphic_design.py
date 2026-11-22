@@ -32,7 +32,7 @@ class DesignTextOverlay(BaseModel):
 
 class ImageGenerateRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=12000)
-    aspect_ratio: Literal["1:1", "4:5", "9:16", "16:9", "3:2"] = "1:1"
+    aspect_ratio: Literal["1:1", "4:5", "9:16", "16:9", "3:2", "2:3"] = "1:1"
     model: Literal["z_image_turbo", "nano_banana_pro"] = "z_image_turbo"
     text_overlay: DesignTextOverlay | None = None
     brand_mode: Literal["auto", "aea", "none"] = "auto"

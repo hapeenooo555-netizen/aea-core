@@ -38,6 +38,7 @@ def test_fal_provider_requires_server_side_api_key():
 def test_dimensions_supports_aea_aspect_ratios():
     assert FalImageGenerationProvider._dimensions("1:1") == (1024, 1024)
     assert FalImageGenerationProvider._dimensions("9:16") == (1024, 1792)
+    assert FalImageGenerationProvider._dimensions("2:3") == (1024, 1536)
     with pytest.raises(ValueError):
         FalImageGenerationProvider._dimensions("7:5")
 
