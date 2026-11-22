@@ -126,10 +126,18 @@ async def _persist_runway_video(
     return object_path
 
 
-def _validate_owner_scene_asset_path(owner_id: str, project_id: str, scene_id: str, object_path: str) -> str:
-    """Reject database paths that escape the authenticated owner's exact scene namespace."""
-    expected = _video_object_path(owner_id, scene_id, project_id, scene_id)
-    if not isinstance(object_path, str) or object_path != expected:
+def _validate_owner_scene_asset_path(
+    owner_id: str,
+    project_id: str,
+    scene_id: str,
+    object_path: str,
+    generation_job_id: str | None = None,
+) -> str:
+    """Allow only this owner's exact scene object or its linked generation-job object."""
+    allowed = {_video_object_path(owner_id, scene_id, project_id, scene_id)}
+    if generation_job_id:
+        allowed.add(_video_object_path(owner_id, generation_job_id))
+    if not isinstance(object_path, str) or object_path not in allowed:
         raise HTTPException(status_code=409, detail="Video asset path does not match this owner's scene.")
     return object_path
 
@@ -675,7 +683,7 @@ async def get_video_project(
     scenes = _rows(scenes_response)
     for scene in scenes:
         if scene.get("video_storage_path"):
-            path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene["id"]), scene["video_storage_path"])
+            path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene["id"]), scene["video_storage_path"], str(scene.get("generation_job_id") or "") or None)
             scene["video_url"] = _create_video_signed_url(client, path)
     return {"success": True, "project": projects[0], "scenes": scenes}
 
@@ -698,7 +706,7 @@ async def _recover_legacy_scene_asset(
     job = job_rows[0] if job_rows else {}
     existing_path = scene.get("video_storage_path") or job.get("video_storage_path")
     if existing_path:
-        _validate_owner_scene_asset_path(owner_id, str(project_id), scene_id, str(existing_path))
+        _validate_owner_scene_asset_path(owner_id, str(project_id), scene_id, str(existing_path), str(scene.get("generation_job_id") or "") or None)
         if not scene.get("video_storage_path"):
             db.table("video_project_scenes").update({
                 "video_storage_path": existing_path,
@@ -783,7 +791,7 @@ async def get_video_project_scene_video_url(
     object_path = scene.get("video_storage_path")
     if not object_path:
         object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
-    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path))
+    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path), str(scene.get("generation_job_id") or "") or None)
     return {
         "success": True,
         "video_url": _create_video_signed_url(client, str(object_path)),
@@ -812,7 +820,7 @@ async def stream_video_project_scene(
     object_path = scene.get("video_storage_path")
     if not object_path:
         object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
-    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path))
+    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path), str(scene.get("generation_job_id") or "") or None)
     storage_client = database_module.get_supabase_video_storage_client()
     if storage_client is None:
         raise HTTPException(status_code=503, detail="Private video storage is not configured on AEA Core.")
