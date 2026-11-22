@@ -1040,6 +1040,40 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypat
 
 
 
+
+def test_scene_video_endpoint_accepts_only_its_linked_owner_job_asset(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    job_id = "55555555-5555-4555-8555-555555555555"
+
+    class StorageBucket:
+        def create_signed_url(self, path, expires):
+            assert path == f"user-1/jobs/{job_id}.mp4"
+            assert expires == 900
+            return {"signedURL": "https://storage.example.test/job-video"}
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "aea-video-assets"
+            return StorageBucket()
+
+    class StorageDB(DB):
+        storage = Storage()
+
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "generation_job_id": job_id, "status": "completed",
+        "video_storage_path": f"user-1/jobs/{job_id}.mp4",
+    }]
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video"
+    )
+    assert response.status_code == 200
+    assert response.json()["video_url"] == "https://storage.example.test/job-video"
+
+
 def test_scene_video_endpoint_rejects_storage_path_outside_owner_namespace(monkeypatch):
     project_id = "33333333-3333-4333-8333-333333333333"
     scene_id = "44444444-4444-4444-8444-444444444444"
