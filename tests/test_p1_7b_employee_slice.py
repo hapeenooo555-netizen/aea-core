@@ -774,3 +774,43 @@ def test_pinterest_pin_with_complete_inputs_still_requires_explicit_approval():
     approval = employee._approvals.get_request(approval_id)
     assert approval["action_type"] == "publish_content"
     assert approval["payload"]["content"]["image_url"] == "https://example.com/pin.jpg"
+
+
+def test_rejected_approval_is_persisted_as_failed_execution():
+    employee = _slice("user-a")
+    execution_id = "execution-rejected-approval"
+    created_execution = employee._execution.create_execution(
+        mission_id="mission-rejected-approval",
+        execution_id=execution_id,
+        idempotency_key="idem-rejected-approval",
+        owner_id="user-a",
+        status="WAITING_APPROVAL",
+    )
+    assert created_execution["success"] is True
+    created_approval = employee._approvals.create_request(
+        mission_id="mission-rejected-approval",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": execution_id,
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created_approval["success"] is True
+    rejected = employee._approvals.reject_request(
+        created_approval["request"]["id"],
+        reason="User declined",
+        rejected_by="user-a",
+    )
+    assert rejected["success"] is True
+
+    result = employee.resume_approval(created_approval["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "approval_rejected"
+    execution = employee._execution.get_execution(execution_id, owner_id="user-a")
+    assert execution["status"] == "FAILED"
+    assert execution["result"]["decision"] == "REJECTED"
