@@ -78,6 +78,27 @@ def _require_admin(db: Any, user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Marketplace Admin permission required.")
 
 
+DISTRIBUTION_CAPABILITIES = {
+    "pinterest": {"publishing_supported": True, "approval_required": True, "connection_required": True, "mode": "approval_gated", "message": "Pinterest publishing is supported by the Core connector; connect the account and approve each publish request."},
+    "facebook": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "instagram": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "tiktok": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "youtube": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+}
+
+@router.get("/distribution/capabilities")
+def get_distribution_capabilities(
+    _owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Expose truthful per-platform publishing support to My Store."""
+    return {
+        "success": True,
+        "capabilities": [
+            {"destination": destination, **details}
+            for destination, details in DISTRIBUTION_CAPABILITIES.items()
+        ],
+    }
+
 @router.get("/mine/distribution")
 def list_my_distribution_jobs(
     owner_id: str = Depends(get_current_user_id),
