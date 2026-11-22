@@ -19,6 +19,10 @@ ROWS = {
         {"id": "m-wrong-worker", "owner_id": OWNER, "assigned_worker": "w9"},
         {"id": "m-other", "owner_id": "owner-2", "worker_id": "w-other"},
     ],
+    "graphic_design_jobs": [
+        {"id": "img-1", "owner_id": OWNER, "status": "completed", "asset_path": f"{OWNER}/img-1/original.png", "mime_type": "image/png", "width": 1000, "height": 1500},
+        {"id": "img-other", "owner_id": "owner-2", "status": "completed", "asset_path": "owner-2/img-other/original.png", "mime_type": "image/png", "width": 1000, "height": 1500},
+    ],
 }
 
 
@@ -215,3 +219,40 @@ def test_publish_failure_preserves_safe_pinterest_rejection_details():
     assert outcome["status"] == "resume_failed"
     assert outcome["provider_status"] == 403
     assert outcome["provider_error"]["code"] == 2
+
+
+
+def test_private_image_asset_preview_requires_owner_scoped_completed_asset(monkeypatch):
+    client = make_client(monkeypatch)
+    response = client.post(
+        "/affiliate/pinterest/draft-preview",
+        json={**{k: v for k, v in DRAFT.items() if k != "image_url"}, "image_asset_id": "img-1"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preview"]["image_asset_id"] == "img-1"
+    assert payload["preview"]["image_asset"]["mime_type"] == "image/png"
+    assert payload["published"] is False
+
+
+def test_private_image_asset_preview_rejects_another_owners_asset(monkeypatch):
+    client = make_client(monkeypatch)
+    response = client.post(
+        "/affiliate/pinterest/draft-preview",
+        json={**{k: v for k, v in DRAFT.items() if k != "image_url"}, "image_asset_id": "img-other"},
+    )
+    assert response.status_code == 404
+
+
+def test_private_image_asset_approval_passes_only_validated_owner_path(monkeypatch):
+    created.clear()
+    response = make_client(monkeypatch).post(
+        "/affiliate/pinterest/draft-approval",
+        json={**{k: v for k, v in DRAFT.items() if k != "image_url"}, "image_asset_id": "img-1", "worker_id": "w1"},
+    )
+    assert response.status_code == 201
+    content = created["approval"]["payload"]["content"]
+    assert content["image_asset_id"] == "img-1"
+    assert content["image_asset_path"] == f"{OWNER}/img-1/original.png"
+    assert content["image_asset_mime_type"] == "image/png"
+    assert content["image_url"] is None
