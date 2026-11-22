@@ -76,7 +76,29 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
+
+def _fake_creative(prompt, aspect_ratio, brand_mode="auto"):
+    return {
+        "text_overlay": {
+            "title": "Biashara yako inaweza zaidi",
+            "body": "Tengeneza maudhui na boresha kazi zako za kidigitali.",
+            "cta": "Gundua AEA leo",
+            "brand": "AEA Affiliate Hub",
+            "accent": "#10B981",
+        },
+        "visual_prompt": "Premium navy and emerald business technology background. No text or logos.",
+        "design_rationale": "Clear benefit-led hierarchy.",
+        "audience": "Small business owners",
+        "objective": "Brand awareness",
+        "content_type": "advertisement",
+        "brand_applied": True,
+        "copy_provider": "groq",
+        "copy_model": "test-model",
+        "copy_usage": {"total_tokens": 100},
+    }
+
 def test_graphic_design_generate_creates_private_unpublished_asset(monkeypatch):
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
     monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))
@@ -230,6 +252,7 @@ def test_graphic_design_assets_rejects_invalid_limit():
 
 
 def test_graphic_design_generate_renders_exact_text_overlay(monkeypatch):
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
     monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
     monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
     monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))

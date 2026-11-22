@@ -16,6 +16,7 @@ from app.services.image_generation_provider import (
 )
 from app.services.design_text_renderer import DesignCopy, render_design_copy
 from app.services.graphic_visual_inspector import inspect_generated_background
+from app.services.graphic_design_intelligence import compose_graphic_design
 
 router = APIRouter(prefix="/graphic-design", tags=["graphic-design"])
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class ImageGenerateRequest(BaseModel):
     aspect_ratio: Literal["1:1", "4:5", "9:16", "16:9", "3:2"] = "1:1"
     model: Literal["z_image_turbo", "nano_banana_pro"] = "z_image_turbo"
     text_overlay: DesignTextOverlay | None = None
+    brand_mode: Literal["auto", "aea", "none"] = "auto"
     model_config = ConfigDict(extra="forbid")
 
 
@@ -144,6 +146,20 @@ async def generate_graphic_design_image(
         raise HTTPException(status_code=503, detail="User-scoped database access is unavailable")
 
     job_id = str(uuid4())
+    try:
+        creative = compose_graphic_design(
+            prompt=body.prompt,
+            aspect_ratio=body.aspect_ratio,
+            brand_mode=body.brand_mode,
+        )
+    except Exception as exc:
+        logger.error("Graphic design copy intelligence failed error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not prepare professional graphic-design content. Please retry.",
+        ) from exc
+    final_overlay = body.text_overlay or DesignTextOverlay(**creative["text_overlay"])
+    provider_prompt = creative["visual_prompt"]
     provider_name = "fal.ai"
     model_id = (
         "fal-ai/z-image/turbo"
@@ -191,7 +207,7 @@ async def generate_graphic_design_image(
                 )
             )
             generated = await provider.generate(
-                prompt=body.prompt + retry_instruction,
+                prompt=provider_prompt + retry_instruction,
                 aspect_ratio=body.aspect_ratio,
                 model=body.model,
             )
@@ -229,11 +245,11 @@ async def generate_graphic_design_image(
         final_mime_type = generated.mime_type
         final_width = generated.width
         final_height = generated.height
-        if body.text_overlay is not None:
+        if final_overlay is not None:
             stage = "text_overlay_render"
             final_content, final_width, final_height = render_design_copy(
                 generated.content,
-                DesignCopy(**body.text_overlay.model_dump()),
+                DesignCopy(**final_overlay.model_dump()),
             )
             final_mime_type = "image/png"
         extension = {
@@ -257,7 +273,7 @@ async def generate_graphic_design_image(
             "mime_type": final_mime_type,
             "width": final_width,
             "height": final_height,
-            "provider_metadata": {**generated.provider_metadata, "visual_inspection": {"accepted": True, "reason": inspection.reason, "quality_metrics": inspection.quality_metrics}},
+            "provider_metadata": {**generated.provider_metadata, "visual_inspection": {"accepted": True, "reason": inspection.reason, "quality_metrics": inspection.quality_metrics}, "creative_intelligence": {"brand_applied": creative["brand_applied"], "audience": creative["audience"], "objective": creative["objective"], "content_type": creative["content_type"], "copy_provider": creative["copy_provider"], "copy_model": creative["copy_model"], "copy_usage": creative["copy_usage"]}},
         }).eq("id", job_id).eq("owner_id", owner_id).execute()
         if not _row(updated):
             raise RuntimeError("Could not finalize image-generation job")
