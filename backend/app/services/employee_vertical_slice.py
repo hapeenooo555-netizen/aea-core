@@ -716,7 +716,7 @@ class EmployeeVerticalSlice:
             )
             if not step_result.get("success"):
                 return {"success": False, "status": "FAIL", "error": step_result.get("error", "Approval result persistence failed")}
-            if result.get("status") == "completed":
+            if result.get("status") in {"completed", "resumed"}:
                 completion = self._execution.mark_completed(execution_id, self.owner_id, {"approval_resume": safe_result})
                 if not completion.get("success"):
                     return {"success": False, "status": "FAIL", "error": completion.get("error", "Approval completion persistence failed")}
