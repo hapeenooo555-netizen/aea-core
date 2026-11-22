@@ -659,10 +659,6 @@ class EmployeeVerticalSlice:
         if action_type not in {"start_platform_onboarding", "publish_content"}:
             return {"success": False, "status": "FAIL", "error": "Unsupported approval action"}
         approval_status = (request.get("status") or "").lower()
-        if approval_status == "pending":
-            return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval is still pending"}
-        if approval_status != "approved":
-            return {"success": False, "status": "FAIL", "error": "Approval is not in an executable state"}
         payload = request.get("payload") or {}
         execution_id = payload.get("execution_id")
         if not execution_id:
@@ -676,7 +672,7 @@ class EmployeeVerticalSlice:
         )
         if not owned_execution:
             return {"success": False, "status": "FAIL", "error": "Execution not found"}
-        if execution_id and request.get("status") == "rejected":
+        if approval_status == "rejected":
             rejection = self._execution.mark_failed(
                 execution_id,
                 self.owner_id,
@@ -686,6 +682,10 @@ class EmployeeVerticalSlice:
             if not rejection.get("success"):
                 return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
             return {"success": False, "status": "approval_rejected", "result": rejection}
+        if approval_status == "pending":
+            return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval is still pending"}
+        if approval_status != "approved":
+            return {"success": False, "status": "FAIL", "error": "Approval is not in an executable state"}
 
         claim = None
         if execution_id:
