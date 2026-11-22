@@ -15,8 +15,6 @@ CREATE TABLE IF NOT EXISTS public.creator_distribution_jobs (
     published_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT creator_distribution_jobs_product_owner_destination_key
-        UNIQUE (product_id, owner_id, destination, id)
 );
 
 -- At most one active draft per product/platform/owner, even under concurrent requests.
