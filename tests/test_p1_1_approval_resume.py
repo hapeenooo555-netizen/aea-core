@@ -450,6 +450,7 @@ def test_connector_failure_returns_explicit_failure(resume_service, approval_gat
     # Use an unknown platform so the registry lookup fails.
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         payload={"platform": "no-such-platform", "worker_id": "worker-1"},
     )
     approval_gateway.approve_request(request_id)
@@ -868,7 +869,7 @@ def test_publish_content_unknown_platform_fails(resume_service, approval_gateway
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "no connector registered" in result["error"].lower()
 
