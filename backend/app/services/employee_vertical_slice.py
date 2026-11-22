@@ -747,6 +747,26 @@ class EmployeeVerticalSlice:
                 )
                 if not waiting.get("success"):
                     return {"success": False, "status": "FAIL", "error": waiting.get("error", "Approval wait persistence failed")}
+            elif result.get("status") in {"publish_uncertain", "publish_in_progress"}:
+                # A provider timeout or in-flight reservation is not proof of
+                # failure. Stop automatic retries and require reconciliation.
+                waiting = self._execution.update_execution_state(
+                    execution_id,
+                    self.owner_id,
+                    status="WAITING_INPUT",
+                    result=safe_result,
+                )
+                if not waiting.get("success"):
+                    return {"success": False, "status": "FAIL", "error": waiting.get("error", "Publish reconciliation state persistence failed")}
+            elif result.get("status") == "resume_failed":
+                failure = self._execution.mark_failed(
+                    execution_id,
+                    self.owner_id,
+                    error=result.get("error") or "Approved action failed",
+                    result={"approval_resume": safe_result, "approval_request_id": approval_request_id},
+                )
+                if not failure.get("success"):
+                    return {"success": False, "status": "FAIL", "error": failure.get("error", "Approval failure persistence failed")}
         return {"success": result.get("status") in {"completed", "resumed"}, "status": result.get("status"), "result": safe_result}
 
     def _resolve_mission(self, mission_id: str | None, goal: str) -> dict[str, Any]:
