@@ -24,7 +24,8 @@ class PinterestDraftPreviewRequest(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     description: str = Field(min_length=1, max_length=800)
     destination_url: str = Field(min_length=8, max_length=2048)
-    image_url: str = Field(min_length=8, max_length=2048)
+    image_url: str | None = Field(default=None, max_length=2048)
+    image_asset_id: str | None = Field(default=None, min_length=1, max_length=128)
     board_id: str = Field(min_length=1, max_length=128)
 
 
@@ -39,6 +40,33 @@ def _owned_row(client: Any, table: str, row_id: str, owner_id: str) -> dict[str,
     """Return the row only when it belongs to the authenticated owner."""
     rows = client.table(table).select("*").eq("id", row_id).eq("owner_id", owner_id).limit(1).execute().data or []
     return rows[0] if rows else None
+
+
+def _owned_graphic_asset(client: Any, asset_id: str, owner_id: str) -> dict[str, Any]:
+    """Resolve a completed private image only inside the authenticated owner folder."""
+    row = _owned_row(client, "graphic_design_jobs", asset_id, owner_id)
+    if not row or row.get("status") != "completed":
+        raise HTTPException(status_code=404, detail="Completed image asset was not found for this account")
+    path = row.get("asset_path")
+    mime = row.get("mime_type")
+    if not isinstance(path, str) or not path.startswith(f"{owner_id}/{asset_id}/"):
+        raise HTTPException(status_code=422, detail="Image asset storage ownership could not be verified")
+    if mime not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=422, detail="Image asset format is not supported for Pinterest")
+    return row
+
+
+def _validate_image_source(request: Any, client: Any, owner_id: str) -> dict[str, Any] | None:
+    asset_id = getattr(request, "image_asset_id", None)
+    image_url = getattr(request, "image_url", None)
+    if bool(asset_id) == bool(image_url):
+        raise HTTPException(status_code=422, detail="Provide exactly one image source: a private AEA image asset or a public image URL")
+    if asset_id:
+        if client is None:
+            raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
+        return _owned_graphic_asset(client, asset_id, owner_id)
+    _validate_http_url(image_url, "image_url")
+    return None
 
 
 def _validate_http_url(value: str, field_name: str) -> str:
@@ -122,13 +150,14 @@ def disconnect_pinterest(
 def pinterest_draft_preview(
     request: PinterestDraftPreviewRequest,
     owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Validate a Pin draft against this user's live Pinterest account and boards.
 
     This endpoint is intentionally read-only: it never calls a create-Pin API.
     """
     _validate_http_url(request.destination_url, "destination_url")
-    _validate_http_url(request.image_url, "image_url")
+    asset = _validate_image_source(request, client, owner_id)
     try:
         stored = get_access_token(owner_id=owner_id)
         if not stored:
@@ -149,6 +178,8 @@ def pinterest_draft_preview(
                 "description": request.description.strip(),
                 "destination_url": request.destination_url,
                 "image_url": request.image_url,
+                "image_asset_id": request.image_asset_id,
+                "image_asset": ({"id": asset.get("id"), "mime_type": asset.get("mime_type"), "width": asset.get("width"), "height": asset.get("height")} if asset else None),
                 "board": {"id": selected["id"], "name": selected["name"]},
                 "account": verified["account"],
             },
@@ -179,7 +210,7 @@ def pinterest_draft_approval(
     This endpoint deliberately stops at pending approval. It never publishes.
     """
     _validate_http_url(request.destination_url, "destination_url")
-    _validate_http_url(request.image_url, "image_url")
+    asset = _validate_image_source(request, client, owner_id)
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
     try:
@@ -266,12 +297,13 @@ def pinterest_draft_approval(
         title = request.title.strip()
         description = request.description.strip()
         destination_url = request.destination_url.strip()
-        image_url = request.image_url.strip()
+        image_url = request.image_url.strip() if request.image_url else ""
+        image_asset_id = request.image_asset_id
         # The idempotency key ties repeated submissions of the same draft to
         # one mission, preventing accidental duplicate approval requests.
         import hashlib
         fingerprint = hashlib.sha256(
-            "|".join([owner_id, title, description, destination_url, image_url, selected["id"]]).encode("utf-8")
+            "|".join([owner_id, title, description, destination_url, image_asset_id or image_url, selected["id"]]).encode("utf-8")
         ).hexdigest()[:32]
         orchestration = MissionOrchestrationService(owner_id, client=client)
         mission_result = orchestration.create_mission(
@@ -337,7 +369,8 @@ def pinterest_draft_approval(
             "title": title,
             "description": description,
             "destination_url": destination_url,
-            "image_url": image_url,
+            "image_url": image_url or None,
+            "image_asset_id": image_asset_id,
             "board": {"id": selected["id"], "name": selected["name"]},
             "account": verified["account"],
         }
@@ -390,7 +423,8 @@ def pinterest_draft_approval(
                         "title": title,
                         "pin_text": description,
                         "link_url": destination_url,
-                        "image_url": image_url,
+                        "image_url": image_url or None,
+                        "image_asset_id": image_asset_id,
                         "board_id": selected["id"],
                         "board_name": selected["name"],
                     },
