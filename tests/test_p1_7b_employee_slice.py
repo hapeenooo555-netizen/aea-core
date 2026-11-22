@@ -110,6 +110,12 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     assert approval_id
 
+    execution_id = pending["report"]["resume_information"]["execution_id"]
+    premature = employee.resume_approval(approval_id)
+    assert premature["success"] is False
+    assert premature["status"] == "WAITING_APPROVAL"
+    assert employee._execution.load_steps_for_execution(execution_id, "user-a") == []
+
     approved = employee._approvals.approve_request(approval_id, approved_by="user-a")
     assert approved["success"] is True
     resumed = employee.resume_approval(approval_id)
