@@ -896,3 +896,45 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
     result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "scheme" in result["error"].lower() or "http" in result["error"].lower()
+
+def test_authenticated_resume_rejects_approval_without_owner(supabase_disabled):
+    gateway = ApprovalGateway()
+    request_id = _make_approval_request(gateway)
+    gateway.approve_request(request_id)
+
+    registry = ConnectorRegistry()
+    registry.register(PinterestConnector())
+    service = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+        human_intervention_manager=HumanInterventionManager(),
+    )
+
+    result = service.resume(request_id, current_user_id="authenticated-owner")
+
+    assert result["status"] == "approval_unauthorized"
+
+
+def test_authenticated_resume_rejects_approval_owned_by_another_user(supabase_disabled):
+    gateway = ApprovalGateway()
+    result = gateway.create_request(
+        mission_id="mission-foreign",
+        action_type="start_platform_onboarding",
+        risk_level="sensitive",
+        payload={"platform": "pinterest", "worker_id": "worker-foreign"},
+        owner_id="owner-a",
+    )
+    request_id = result["request"]["id"]
+    gateway.approve_request(request_id)
+
+    registry = ConnectorRegistry()
+    registry.register(PinterestConnector())
+    service = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+        human_intervention_manager=HumanInterventionManager(),
+    )
+
+    outcome = service.resume(request_id, current_user_id="owner-b")
+
+    assert outcome["status"] == "approval_unauthorized"
