@@ -649,7 +649,11 @@ class EmployeeVerticalSlice:
         """Resume an approved onboarding action through ApprovalResumeService."""
         request = self._approvals.get_request(approval_request_id)
         request_payload = request.get("payload") or {} if request else {}
-        if not request or request_payload.get("worker_id") != self.owner_id:
+        if (
+            not request
+            or request.get("owner_id") != self.owner_id
+            or request_payload.get("worker_id") != self.owner_id
+        ):
             return {"success": False, "status": "FAIL", "error": "Approval request not found"}
         resume_service = ApprovalResumeService(
             approval_gateway=self._approvals,
@@ -670,15 +674,21 @@ class EmployeeVerticalSlice:
                 if not rejection.get("success"):
                     return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
                 return {"success": False, "status": "approval_rejected", "result": safe_result}
+            action_type = request.get("action_type") or ""
+            step_name = (
+                "publish_content"
+                if action_type == "publish_content"
+                else "start_onboarding"
+            )
             claim = self._execution.claim_step(
                 execution_id,
                 self.owner_id,
                 step_id=str(uuid4()),
                 attempt_index=0,
-                idempotency_key=f"p1-7b:{execution_id}:start_onboarding:approval",
-                step_name="start_onboarding",
+                idempotency_key=f"p1-7b:{execution_id}:{step_name}:approval",
+                step_name=step_name,
                 operation_key=payload.get("operation_key") or self._operation_key(
-                    payload.get("mission_id") or "", execution_id, "start_onboarding"
+                    request.get("mission_id") or "", execution_id, step_name
                 ),
                 claim_token=self._claim_token,
             )
