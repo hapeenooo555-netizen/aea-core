@@ -438,6 +438,39 @@ def test_affiliate_content_prompt_generates_real_draft_without_pinterest_gate():
     assert draft["requires_human_approval_before_publishing"] is True
 
 
+def test_execution_evidence_records_tool_version_and_does_not_invent_verification():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-execution-evidence",
+    )
+
+    assert result["success"] is True
+    evidence = result["report"]["execution_evidence"]
+    assert len(evidence) == 1
+    entry = evidence[0]
+    assert entry["mission_id"] == "mission-execution-evidence"
+    assert entry["execution_id"] == result["report"]["execution_id"]
+    assert entry["tool_name"] == "prepare_affiliate_content"
+    assert entry["tool_version"]
+    assert entry["risk_level"] == "READ_ONLY"
+    assert entry["approval_class"] == "READ_ONLY"
+    assert entry["success"] is True
+    assert entry["verification"] == "NOT_REPORTED"
+
+
+def test_execution_evidence_is_sanitized_before_entering_report():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-evidence-secret",
+        metadata={"content_inputs": {"api_key": "do-not-leak-this-secret"}},
+    )
+
+    assert result["success"] is True
+    assert "do-not-leak-this-secret" not in str(result["report"].get("execution_evidence", []))
+
+
 def test_approval_gated_pinterest_pin_request_is_not_misclassified_as_draft_only():
     employee = _slice()
     goal = (
