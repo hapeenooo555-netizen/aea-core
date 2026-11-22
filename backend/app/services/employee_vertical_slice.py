@@ -690,12 +690,16 @@ class EmployeeVerticalSlice:
         claim = None
         if execution_id:
             step_name = "publish_content" if action_type == "publish_content" else "start_onboarding"
+            # Approval resume is a new durable attempt for the same logical
+            # operation. Keep attempt_index monotonic so the original
+            # pre-approval failure cannot be mistaken for the latest attempt.
+            attempt_index = self._next_attempt_index(execution_id, step_name)
             claim = self._execution.claim_step(
                 execution_id,
                 self.owner_id,
                 step_id=str(uuid4()),
-                attempt_index=0,
-                idempotency_key=f"p1-7b:{execution_id}:{step_name}:approval",
+                attempt_index=attempt_index,
+                idempotency_key=f"p1-7b:{execution_id}:{step_name}:approval:{attempt_index}",
                 step_name=step_name,
                 operation_key=payload.get("operation_key") or self._operation_key(
                     request.get("mission_id") or "", execution_id, step_name
