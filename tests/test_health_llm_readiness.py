@@ -62,3 +62,17 @@ def test_health_reports_groq_unconfigured_when_key_missing(monkeypatch):
     assert result["llm"]["credential_present"] is False
     assert result["llm"]["ready"] is False
     assert result["status"] == "degraded"
+
+
+def test_health_marks_unknown_provider_as_degraded(monkeypatch):
+    class UnknownProvider:
+        model = "unavailable"
+
+    _stub_dependencies(monkeypatch, UnknownProvider())
+
+    result = health.health_check()
+
+    assert result["llm"]["provider"] == "unavailable"
+    assert result["llm"]["configured"] is False
+    assert result["llm"]["ready"] is False
+    assert result["status"] == "degraded"

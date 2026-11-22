@@ -112,6 +112,7 @@ def _make_approval_request(
     action_type: str = "start_platform_onboarding",
     payload: dict | None = None,
     ttl_hours: int = 24,
+    owner_id: str | None = None,
 ) -> str:
     """Create an approval request and return its id."""
     payload = payload or {"platform": "pinterest", "worker_id": "worker-1"}
@@ -121,6 +122,7 @@ def _make_approval_request(
         risk_level="sensitive",
         payload=payload,
         ttl_hours=ttl_hours,
+        owner_id=owner_id,
     )
     assert result.get("success"), result
     return result["request"]["id"]
@@ -448,11 +450,12 @@ def test_connector_failure_returns_explicit_failure(resume_service, approval_gat
     # Use an unknown platform so the registry lookup fails.
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         payload={"platform": "no-such-platform", "worker_id": "worker-1"},
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "no connector registered" in result["error"].lower()
 
@@ -527,6 +530,7 @@ def test_publish_content_requires_platform_connection(resume_service, approval_g
     """publish_content resume fails when the platform is not connected."""
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -559,6 +563,7 @@ def test_publish_content_resume_success(resume_service, approval_gateway, monkey
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -580,6 +585,12 @@ def test_publish_content_resume_success(resume_service, approval_gateway, monkey
     assert result["platform"] == "pinterest"
     assert result["worker_id"] == "pub-worker"
     assert result["pin_id"]
+    assert result["verification"] == {
+        "verified": True,
+        "source": "pinterest_api",
+        "reference": result["pin_id"],
+        "verified_at": result["verification"]["verified_at"],
+    }
     # Server-derived operation_key must be p1-11:{approval_request_id}.
     assert result["operation_key"] == f"p1-11:{publish_request_id}"
     inner = result["result"]
@@ -607,6 +618,7 @@ def test_publish_content_server_ignores_client_operation_key(
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -645,6 +657,7 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway,
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -677,6 +690,32 @@ def test_publish_content_strips_sensitive_keys(resume_service, approval_gateway,
         assert "client_secret" not in content
 
 
+def test_publish_content_without_provider_pin_id_is_not_verified(resume_service):
+    class ConnectorWithoutPinId:
+        platform = "pinterest"
+
+        def publish_content(self, worker_id, content, *, idempotency_key, owner_id):
+            return {
+                "success": True,
+                "status": "published",
+                "pin_id": None,
+                "operation_key": idempotency_key,
+            }
+
+    result = resume_service._handle_publish_content(
+        approval_request_id="approval-without-pin-id",
+        mission_id="mission-no-pin-id",
+        worker_id="worker-no-pin-id",
+        payload={"content": {"board_name": "B", "pin_text": "T", "link_url": "https://example.com"}},
+        connector=ConnectorWithoutPinId(),
+        current_user_id="test-user-123",
+    )
+
+    assert result["status"] == "resumed"
+    assert result["pin_id"] is None
+    assert result["verification"] is None
+
+
 def test_publish_content_duplicate_is_completed(resume_service, approval_gateway, monkeypatch):
     _mock_pinterest_publish(monkeypatch)
     """A second resume of the same publish_content approval returns completed."""
@@ -694,6 +733,7 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -710,6 +750,9 @@ def test_publish_content_duplicate_is_completed(resume_service, approval_gateway
     second = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert second["status"] == "completed"
     assert second.get("note") == "pin_already_published"
+    assert second["verification"]["verified"] is True
+    assert second["verification"]["source"] == "pinterest_api"
+    assert second["verification"]["reference"] == first["pin_id"]
 
 
 def test_publish_content_duplicate_after_restart(resume_service, approval_gateway, monkeypatch):
@@ -729,6 +772,7 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -753,6 +797,9 @@ def test_publish_content_duplicate_after_restart(resume_service, approval_gatewa
     )
     assert second["status"] == "completed"
     assert second.get("note") == "pin_already_published"
+    assert second["verification"]["verified"] is True
+    assert second["verification"]["reference"] == first["pin_id"]
+    assert second["verification"]["verified_at"] == first["result"]["published_at"]
 
 
 def test_publish_content_resume_rejects_request_owner_fallback_when_user_identity_missing(
@@ -797,6 +844,7 @@ def test_publish_content_missing_worker_id_fails(resume_service, approval_gatewa
     """publish_content without worker_id returns resume_failed."""
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -815,12 +863,13 @@ def test_publish_content_unknown_platform_fails(resume_service, approval_gateway
     """publish_content with an unknown platform fails gracefully."""
     request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={"platform": "unknown-platform", "worker_id": "w"},
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "no connector registered" in result["error"].lower()
 
@@ -841,6 +890,7 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
 
     publish_request_id = _make_approval_request(
         approval_gateway,
+        owner_id="test-user-123",
         action_type="publish_content",
         payload={
             "platform": "pinterest",
@@ -858,3 +908,45 @@ def test_publish_content_invalid_url_scheme(resume_service, approval_gateway):
     result = resume_service.resume(publish_request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "scheme" in result["error"].lower() or "http" in result["error"].lower()
+
+def test_authenticated_resume_rejects_approval_without_owner(supabase_disabled):
+    gateway = ApprovalGateway()
+    request_id = _make_approval_request(gateway)
+    gateway.approve_request(request_id)
+
+    registry = ConnectorRegistry()
+    registry.register(PinterestConnector())
+    service = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+        human_intervention_manager=HumanInterventionManager(),
+    )
+
+    result = service.resume(request_id, current_user_id="authenticated-owner")
+
+    assert result["status"] == "approval_unauthorized"
+
+
+def test_authenticated_resume_rejects_approval_owned_by_another_user(supabase_disabled):
+    gateway = ApprovalGateway()
+    result = gateway.create_request(
+        mission_id="mission-foreign",
+        action_type="start_platform_onboarding",
+        risk_level="sensitive",
+        payload={"platform": "pinterest", "worker_id": "worker-foreign"},
+        owner_id="owner-a",
+    )
+    request_id = result["request"]["id"]
+    gateway.approve_request(request_id)
+
+    registry = ConnectorRegistry()
+    registry.register(PinterestConnector())
+    service = ApprovalResumeService(
+        approval_gateway=gateway,
+        connector_registry=registry,
+        human_intervention_manager=HumanInterventionManager(),
+    )
+
+    outcome = service.resume(request_id, current_user_id="owner-b")
+
+    assert outcome["status"] == "approval_unauthorized"

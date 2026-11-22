@@ -110,6 +110,13 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     approval_id = pending["report"]["resume_information"]["approval_request_id"]
     assert approval_id
 
+    execution_id = pending["report"]["resume_information"]["execution_id"]
+    steps_before_resume = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    premature = employee.resume_approval(approval_id)
+    assert premature["success"] is False
+    assert premature["status"] == "WAITING_APPROVAL"
+    assert employee._execution.load_steps_for_execution(execution_id, "user-a") == steps_before_resume
+
     approved = employee._approvals.approve_request(approval_id, approved_by="user-a")
     assert approved["success"] is True
     resumed = employee.resume_approval(approval_id)
@@ -119,7 +126,232 @@ def test_onboarding_creates_durable_approval_and_resumes_to_human_checkpoint():
     execution_id = pending["report"]["resume_information"]["execution_id"]
     execution = employee._execution.get_execution(execution_id, owner_id="user-a")
     assert execution["status"] == "WAITING_INPUT"
+    resumed_steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    onboarding_attempts = [
+        step for step in resumed_steps if step["step_name"] == "start_onboarding"
+    ]
+    assert onboarding_attempts
+    latest_onboarding_attempt = max(
+        onboarding_attempts,
+        key=lambda step: step.get("attempt_index", 0),
+    )
+    assert latest_onboarding_attempt["status"] == "completed"
     assert employee._execution.get_execution(execution_id, owner_id="user-b") is None
+
+
+def test_resume_approval_rejects_request_owned_by_another_user():
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-owner-mismatch",
+        action_type="start_platform_onboarding",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": "execution-owned-by-user-b",
+        },
+        owner_id="user-b",
+    )
+    assert created["success"] is True
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "FAIL"
+    assert result["error"] == "Approval request not found"
+
+
+def test_resume_approval_rejects_unowned_execution_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-unowned-execution",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": "missing-or-other-owner-execution",
+            "content": {
+                "board_name": "B",
+                "pin_text": "Pin",
+                "link_url": "https://example.com",
+                "image_url": "https://example.com/pin.jpg",
+            },
+        },
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    employee._approvals.approve_request(created["request"]["id"], approved_by="user-a")
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["error"] == "Execution not found"
+    assert called["resume"] is False
+
+
+def test_resume_approval_requires_durable_execution_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-no-execution",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    employee._approvals.approve_request(created["request"]["id"], approved_by="user-a")
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "FAIL"
+    assert "execution_id is required" in result["error"]
+    assert called["resume"] is False
+
+
+def test_resume_approval_rejects_unsupported_action_before_connector_call(monkeypatch):
+    employee = _slice("user-a")
+    created = employee._approvals.create_request(
+        mission_id="mission-unsupported-action",
+        action_type="delete_account",
+        risk_level="WRITE_EXTERNAL",
+        payload={"worker_id": "user-a"},
+        owner_id="user-a",
+    )
+    assert created["success"] is True
+    called = {"resume": False}
+
+    class ResumeMustNotRun:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            called["resume"] = True
+            return {"status": "resumed"}
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        ResumeMustNotRun,
+    )
+
+    result = employee.resume_approval(created["request"]["id"])
+
+    assert result["success"] is False
+    assert result["error"] == "Unsupported approval action"
+    assert called["resume"] is False
+
+
+def test_successful_publish_resume_marks_execution_succeeded(monkeypatch):
+    employee = _slice("user-a")
+    execution_id = "execution-publish-resume"
+    created_execution = employee._execution.create_execution(
+        mission_id="mission-publish-resume",
+        execution_id=execution_id,
+        idempotency_key="idem-publish-resume",
+        owner_id="user-a",
+        status="WAITING_APPROVAL",
+    )
+    assert created_execution["success"] is True
+    created_approval = employee._approvals.create_request(
+        mission_id="mission-publish-resume",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": execution_id,
+            "operation_key": "publish-operation",
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created_approval["success"] is True
+    employee._approvals.approve_request(created_approval["request"]["id"])
+
+    calls = {"count": 0}
+
+    class SuccessfulResume:
+        def __init__(self, **kwargs):
+            pass
+
+        def resume(self, *args, **kwargs):
+            calls["count"] += 1
+            return {
+                "status": "resumed",
+                "pin_id": "provider-pin-123",
+                "verification": {
+                    "verified": True,
+                    "source": "pinterest_api",
+                    "reference": "provider-pin-123",
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.services.employee_vertical_slice.ApprovalResumeService",
+        SuccessfulResume,
+    )
+
+    result = employee.resume_approval(created_approval["request"]["id"])
+
+    assert result["success"] is True
+    assert result["status"] == "resumed"
+    execution = employee._execution.get_execution(execution_id, owner_id="user-a")
+    assert execution["status"] == "SUCCEEDED"
+    steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    assert len(steps) == 1
+    assert steps[0]["step_name"] == "publish_content"
+    assert steps[0]["status"] == "completed"
+    assert steps[0]["result"]["verification"]["reference"] == "provider-pin-123"
+
+    # A retry after completion must return the durable result without
+    # invoking the provider resume path a second time.
+    repeated = employee.resume_approval(created_approval["request"]["id"])
+    assert repeated["success"] is True
+    assert repeated["status"] == "completed"
+    assert repeated["result"]["verification"]["reference"] == "provider-pin-123"
+    assert calls["count"] == 1
+
+
+def test_onboarding_capability_is_discoverable_before_connection():
+    employee = _slice("user-a")
+    discovered = employee.discover_capabilities()
+    names = {tool["tool_name"] for tool in discovered["tools"]}
+    assert "start_platform_onboarding" in names
+    assert "pinterest.get_account_status" in names
+    assert discovered["owner_id"] == "user-a"
 
 
 def test_capabilities_are_owner_scoped_and_connection_status_is_not_faked():
@@ -429,6 +661,56 @@ def test_affiliate_content_prompt_generates_real_draft_without_pinterest_gate():
     assert draft["requires_human_approval_before_publishing"] is True
 
 
+def test_execution_evidence_records_tool_version_and_does_not_invent_verification():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-execution-evidence",
+    )
+
+    assert result["success"] is True
+    evidence = result["report"]["execution_evidence"]
+    assert len(evidence) == 1
+    entry = evidence[0]
+    assert entry["mission_id"] == "mission-execution-evidence"
+    assert entry["execution_id"] == result["report"]["execution_id"]
+    assert entry["tool_name"] == "prepare_affiliate_content"
+    assert entry["tool_version"]
+    assert entry["risk_level"] == "READ_ONLY"
+    assert entry["approval_class"] == "READ_ONLY"
+    assert entry["success"] is True
+    assert entry["verification"] == "NOT_REPORTED"
+
+
+def test_execution_evidence_is_durable_in_step_result():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-durable-evidence",
+    )
+    assert result["success"] is True
+    execution_id = result["report"]["execution_id"]
+    steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    assert len(steps) == 1
+    evidence = steps[0]["result"]["execution_evidence"]
+    assert evidence["mission_id"] == "mission-durable-evidence"
+    assert evidence["execution_id"] == execution_id
+    assert evidence["tool_name"] == "prepare_affiliate_content"
+    assert evidence["verification"] == "NOT_REPORTED"
+
+
+def test_execution_evidence_is_sanitized_before_entering_report():
+    employee = _slice()
+    result = employee.run(
+        "Prepare five affiliate content ideas for AI tools",
+        mission_id="mission-evidence-secret",
+        metadata={"content_inputs": {"api_key": "do-not-leak-this-secret"}},
+    )
+
+    assert result["success"] is True
+    assert "do-not-leak-this-secret" not in str(result["report"].get("execution_evidence", []))
+
+
 def test_approval_gated_pinterest_pin_request_is_not_misclassified_as_draft_only():
     employee = _slice()
     goal = (
@@ -502,3 +784,43 @@ def test_pinterest_pin_with_complete_inputs_still_requires_explicit_approval():
     approval = employee._approvals.get_request(approval_id)
     assert approval["action_type"] == "publish_content"
     assert approval["payload"]["content"]["image_url"] == "https://example.com/pin.jpg"
+
+
+def test_rejected_approval_is_persisted_as_failed_execution():
+    employee = _slice("user-a")
+    execution_id = "execution-rejected-approval"
+    created_execution = employee._execution.create_execution(
+        mission_id="mission-rejected-approval",
+        execution_id=execution_id,
+        idempotency_key="idem-rejected-approval",
+        owner_id="user-a",
+        status="WAITING_APPROVAL",
+    )
+    assert created_execution["success"] is True
+    created_approval = employee._approvals.create_request(
+        mission_id="mission-rejected-approval",
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        payload={
+            "platform": "pinterest",
+            "worker_id": "user-a",
+            "execution_id": execution_id,
+            "content": {"board_name": "B"},
+        },
+        owner_id="user-a",
+    )
+    assert created_approval["success"] is True
+    rejected = employee._approvals.reject_request(
+        created_approval["request"]["id"],
+        reason="User declined",
+        rejected_by="user-a",
+    )
+    assert rejected["success"] is True
+
+    result = employee.resume_approval(created_approval["request"]["id"])
+
+    assert result["success"] is False
+    assert result["status"] == "approval_rejected"
+    execution = employee._execution.get_execution(execution_id, owner_id="user-a")
+    assert execution["status"] == "FAILED"
+    assert execution["result"]["decision"] == "REJECTED"

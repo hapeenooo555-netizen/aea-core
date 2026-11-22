@@ -78,6 +78,27 @@ def _require_admin(db: Any, user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Marketplace Admin permission required.")
 
 
+DISTRIBUTION_CAPABILITIES = {
+    "pinterest": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Pinterest connector exists, but end-to-end OAuth, approval, publish and provider verification are not yet confirmed. You can save a draft."},
+    "facebook": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "instagram": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "tiktok": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+    "youtube": {"publishing_supported": False, "approval_required": True, "connection_required": True, "mode": "draft_only", "message": "Publishing connector is not yet enabled. You can save a distribution draft."},
+}
+
+@router.get("/distribution/capabilities")
+def get_distribution_capabilities(
+    _owner_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Expose truthful per-platform publishing support to My Store."""
+    return {
+        "success": True,
+        "capabilities": [
+            {"destination": destination, **details}
+            for destination, details in DISTRIBUTION_CAPABILITIES.items()
+        ],
+    }
+
 @router.get("/mine/distribution")
 def list_my_distribution_jobs(
     owner_id: str = Depends(get_current_user_id),
@@ -101,6 +122,25 @@ def create_distribution_job(
     product = _one(db, "creator_products", "id,owner_id,status", id=str(product_id), owner_id=owner_id)
     if not product:
         raise HTTPException(status_code=404, detail="Creator product not found.")
+    # Repeated taps/retries must not create duplicate draft requests for the
+    # same owner, product and destination. This is draft deduplication only;
+    # it does not claim that approval or external publishing has occurred.
+    existing_draft = _one(
+        db,
+        "creator_distribution_jobs",
+        "id,product_id,owner_id,destination,status,approval_required,created_at",
+        product_id=str(product_id),
+        owner_id=owner_id,
+        destination=body.destination,
+        status="draft",
+    )
+    if existing_draft:
+        return {
+            "success": True,
+            "job": existing_draft,
+            "published": False,
+            "duplicate": True,
+        }
     try:
         rows = _rows(db.table("creator_distribution_jobs").insert({
             "product_id": str(product_id),
@@ -110,6 +150,25 @@ def create_distribution_job(
             "approval_required": True,
         }).select("*").execute())
     except Exception as exc:
+        # A concurrent request may have won the partial unique-index race.
+        # Re-read the durable draft and return it rather than creating a
+        # second logical request or surfacing a misleading server error.
+        concurrent_draft = _one(
+            db,
+            "creator_distribution_jobs",
+            "id,product_id,owner_id,destination,status,approval_required,created_at",
+            product_id=str(product_id),
+            owner_id=owner_id,
+            destination=body.destination,
+            status="draft",
+        )
+        if concurrent_draft:
+            return {
+                "success": True,
+                "job": concurrent_draft,
+                "published": False,
+                "duplicate": True,
+            }
         raise HTTPException(status_code=409, detail="Distribution request could not be saved.") from exc
     if not rows:
         raise HTTPException(status_code=502, detail="Database did not confirm distribution request.")

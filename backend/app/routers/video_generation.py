@@ -86,16 +86,30 @@ async def _persist_runway_video(
             timeout=httpx.Timeout(120.0, connect=20.0),
             follow_redirects=False,
         ) as http:
-            response = await http.get(source_url)
+            async with http.stream("GET", source_url) as response:
+                if response.status_code != 200:
+                    raise RuntimeError(f"Runway video download failed (HTTP {response.status_code}).")
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if content_type not in {"video/mp4", "application/octet-stream", "binary/octet-stream"}:
+                    raise RuntimeError("Runway returned an unexpected video content type.")
+                declared_length = response.headers.get("content-length")
+                if declared_length:
+                    try:
+                        if int(declared_length) > MAX_VIDEO_ASSET_BYTES:
+                            raise RuntimeError("Runway video exceeds the AEA video storage limit.")
+                    except ValueError as exc:
+                        raise RuntimeError("Runway returned an invalid video content length.") from exc
+                # Stream in bounded chunks. Never buffer an untrusted provider response
+                # before enforcing the configured maximum asset size.
+                video_buffer = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(video_buffer) + len(chunk) > MAX_VIDEO_ASSET_BYTES:
+                        raise RuntimeError("Runway video exceeds the AEA video storage limit.")
+                    video_buffer.extend(chunk)
+                video_bytes = bytes(video_buffer)
     except httpx.HTTPError as exc:
         raise RuntimeError("Could not download the completed video from Runway.") from exc
-    if response.status_code != 200:
-        raise RuntimeError(f"Runway video download failed (HTTP {response.status_code}).")
-    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if content_type not in {"video/mp4", "application/octet-stream", "binary/octet-stream"}:
-        raise RuntimeError("Runway returned an unexpected video content type.")
-    video_bytes = response.content
-    if not video_bytes or len(video_bytes) > MAX_VIDEO_ASSET_BYTES:
+    if not video_bytes:
         raise RuntimeError("Runway video is empty or exceeds the AEA video storage limit.")
     object_path = _video_object_path(owner_id, job_id, project_id, scene_id)
     storage_client = database_module.get_supabase_video_storage_client()
@@ -109,6 +123,22 @@ async def _persist_runway_video(
         )
     except Exception as exc:
         raise RuntimeError("AEA could not persist the completed video in private storage.") from exc
+    return object_path
+
+
+def _validate_owner_scene_asset_path(
+    owner_id: str,
+    project_id: str,
+    scene_id: str,
+    object_path: str,
+    generation_job_id: str | None = None,
+) -> str:
+    """Allow only this owner's exact scene object or its linked generation-job object."""
+    allowed = {_video_object_path(owner_id, scene_id, project_id, scene_id)}
+    if generation_job_id:
+        allowed.add(_video_object_path(owner_id, generation_job_id))
+    if not isinstance(object_path, str) or object_path not in allowed:
+        raise HTTPException(status_code=409, detail="Video asset path does not match this owner's scene.")
     return object_path
 
 
@@ -653,7 +683,8 @@ async def get_video_project(
     scenes = _rows(scenes_response)
     for scene in scenes:
         if scene.get("video_storage_path"):
-            scene["video_url"] = _create_video_signed_url(client, scene["video_storage_path"])
+            path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene["id"]), scene["video_storage_path"], str(scene.get("generation_job_id") or "") or None)
+            scene["video_url"] = _create_video_signed_url(client, path)
     return {"success": True, "project": projects[0], "scenes": scenes}
 
 
@@ -675,6 +706,7 @@ async def _recover_legacy_scene_asset(
     job = job_rows[0] if job_rows else {}
     existing_path = scene.get("video_storage_path") or job.get("video_storage_path")
     if existing_path:
+        _validate_owner_scene_asset_path(owner_id, str(project_id), scene_id, str(existing_path), str(scene.get("generation_job_id") or "") or None)
         if not scene.get("video_storage_path"):
             db.table("video_project_scenes").update({
                 "video_storage_path": existing_path,
@@ -759,6 +791,7 @@ async def get_video_project_scene_video_url(
     object_path = scene.get("video_storage_path")
     if not object_path:
         object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path), str(scene.get("generation_job_id") or "") or None)
     return {
         "success": True,
         "video_url": _create_video_signed_url(client, str(object_path)),
@@ -787,6 +820,7 @@ async def stream_video_project_scene(
     object_path = scene.get("video_storage_path")
     if not object_path:
         object_path = await _recover_legacy_scene_asset(db, client, owner_id, project_id, scene)
+    object_path = _validate_owner_scene_asset_path(owner_id, str(project_id), str(scene_id), str(object_path), str(scene.get("generation_job_id") or "") or None)
     storage_client = database_module.get_supabase_video_storage_client()
     if storage_client is None:
         raise HTTPException(status_code=503, detail="Private video storage is not configured on AEA Core.")

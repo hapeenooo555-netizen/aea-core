@@ -321,9 +321,15 @@ class EmployeeVerticalSlice:
             report.update({"final_status": "FAIL", "failures_retries": validation["errors"]})
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
 
+        # Execute only the normalized plan returned by the side-effect-free
+        # validator; never fall back to the untrusted/original plan.
+        validated_plan = validation.get("steps") or []
+        report["validated_plan"] = sanitize_payload(validated_plan)
+        report["selected_tools"] = [step.get("tool_name") for step in validated_plan]
+
         existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
-            return self._resume_execution(mission_id, existing_execution, report, plan)
+            return self._resume_execution(mission_id, existing_execution, report, validated_plan)
 
         execution_id = str(uuid4())
         claim = self._execution.claim_execution(
@@ -337,7 +343,7 @@ class EmployeeVerticalSlice:
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution start persistence failed"))
-        return self._execute_plan(mission_id, execution_id, plan, report, metadata)
+        return self._execute_plan(mission_id, execution_id, validated_plan, report, metadata)
 
     def _execute_plan(
         self,
@@ -408,6 +414,25 @@ class EmployeeVerticalSlice:
                 new_information=[str(result.get("status"))] if result.get("status") else [],
                 next_possible_actions=["COMPLETE", "FOLLOW_UP", "WAIT_FOR_APPROVAL", "WAIT_FOR_HUMAN_INPUT", "RETRY", "FAIL"],
             )
+            # Record sanitized evidence for each tool attempt. This is not
+            # a claim that an external side effect succeeded; verification is
+            # only asserted when the tool explicitly reports it.
+            evidence_entry = {
+                "mission_id": mission_id,
+                "execution_id": execution_id,
+                "step_name": step_name,
+                "attempt_index": attempt_index,
+                "tool_name": step.get("tool_name"),
+                "tool_version": step.get("tool_version", "1.0"),
+                "risk_level": step.get("risk_level", "READ_ONLY"),
+                "approval_class": step.get("approval_class", "READ_ONLY"),
+                "approval_reference": result.get("approval_request_id"),
+                "input": step.get("input", step.get("action_payload", {})),
+                "outcome_status": result.get("status"),
+                "success": bool(result.get("success")),
+                "verification": result.get("verification") or result.get("verification_status") or "NOT_REPORTED",
+            }
+            report.setdefault("execution_evidence", []).append(sanitize_payload(evidence_entry))
             report["executed_actions"].append(sanitize_payload(step))
             report["results"].append(sanitize_payload(result))
             report["approvals"] = self._approval_summary(result)
@@ -424,7 +449,22 @@ class EmployeeVerticalSlice:
                 and "start_onboarding" not in completed_steps
                 and not any(s.get("step_name") == "start_onboarding" for s in plan)
             ):
-                plan.append(self._build_dynamic_onboarding_step(step, metadata))
+                dynamic_step = self._build_dynamic_onboarding_step(step, metadata)
+                dynamic_validation = self._validator.validate(
+                    [dynamic_step],
+                    owner_id=self.owner_id,
+                    discovered=self.discover_capabilities(),
+                )
+                if not dynamic_validation.get("success"):
+                    return self._failed_report(
+                        report,
+                        "Dynamic onboarding step failed validation: "
+                        + "; ".join(dynamic_validation.get("errors", [])),
+                    )
+                validated_dynamic_step = dynamic_validation["steps"][0]
+                plan.append(validated_dynamic_step)
+                report.setdefault("plan", []).append(sanitize_payload(validated_dynamic_step))
+                report.setdefault("validated_plan", []).append(sanitize_payload(validated_dynamic_step))
 
             decision = self._next_decision(
                 result,
@@ -487,7 +527,11 @@ class EmployeeVerticalSlice:
                 self.owner_id,
                 claimed_step["id"],
                 status=step_status,
-                result=sanitize_payload({"result": result, "observation": observation.to_dict()}),
+                result=sanitize_payload({
+                    "result": result,
+                    "observation": observation.to_dict(),
+                    "execution_evidence": evidence_entry,
+                }),
                 retry_category=retry_category,
                 claim_token=self._claim_token,
             )
@@ -503,6 +547,7 @@ class EmployeeVerticalSlice:
                     "next_step": next_step,
                     "step_name": step_name,
                     "attempt_index": attempt_index,
+                    "execution_evidence": evidence_entry,
                 }),
             )
             if not state_update.get("success"):
@@ -604,55 +649,99 @@ class EmployeeVerticalSlice:
         """Resume an approved onboarding action through ApprovalResumeService."""
         request = self._approvals.get_request(approval_request_id)
         request_payload = request.get("payload") or {} if request else {}
-        if not request or request_payload.get("worker_id") != self.owner_id:
+        if (
+            not request
+            or request.get("owner_id") != self.owner_id
+            or request_payload.get("worker_id") != self.owner_id
+        ):
             return {"success": False, "status": "FAIL", "error": "Approval request not found"}
+        action_type = request.get("action_type") or ""
+        if action_type not in {"start_platform_onboarding", "publish_content"}:
+            return {"success": False, "status": "FAIL", "error": "Unsupported approval action"}
+        approval_status = (request.get("status") or "").lower()
+        payload = request.get("payload") or {}
+        execution_id = payload.get("execution_id")
+        if not execution_id:
+            return {
+                "success": False,
+                "status": "FAIL",
+                "error": "Durable execution_id is required to resume an external action",
+            }
+        owned_execution = self._execution.get_execution(
+            execution_id, owner_id=self.owner_id
+        )
+        if not owned_execution:
+            return {"success": False, "status": "FAIL", "error": "Execution not found"}
+        if approval_status == "rejected":
+            rejection = self._execution.mark_failed(
+                execution_id,
+                self.owner_id,
+                error="Approval rejected",
+                result={"decision": "REJECTED", "approval_request_id": approval_request_id},
+            )
+            if not rejection.get("success"):
+                return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
+            return {"success": False, "status": "approval_rejected", "result": rejection}
+        if approval_status == "pending":
+            return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval is still pending"}
+        if approval_status != "approved":
+            return {"success": False, "status": "FAIL", "error": "Approval is not in an executable state"}
+
+        claim = None
+        if execution_id:
+            step_name = "publish_content" if action_type == "publish_content" else "start_onboarding"
+            # Approval resume is a new durable attempt for the same logical
+            # operation. Keep attempt_index monotonic so the original
+            # pre-approval failure cannot be mistaken for the latest attempt.
+            attempt_index = self._next_attempt_index(execution_id, step_name)
+            claim = self._execution.claim_step(
+                execution_id,
+                self.owner_id,
+                step_id=str(uuid4()),
+                attempt_index=attempt_index,
+                idempotency_key=f"p1-7b:{execution_id}:{step_name}:approval:{attempt_index}",
+                step_name=step_name,
+                operation_key=payload.get("operation_key") or self._operation_key(
+                    request.get("mission_id") or "", execution_id, step_name
+                ),
+                claim_token=self._claim_token,
+            )
+            if not claim.get("success"):
+                return {"success": False, "status": "FAIL", "error": claim.get("error", "Approval step claim failed")}
+            if not claim.get("claimed"):
+                stored_step = claim.get("step") or {}
+                if stored_step.get("status") == "completed":
+                    return {"success": True, "status": "completed", "result": stored_step.get("result", {})}
+                if stored_step.get("status") == "in_progress":
+                    return {"success": False, "status": "WAITING_APPROVAL", "error": "Approval resume is already in progress"}
+                return {
+                    "success": False,
+                    "status": "FAIL",
+                    "error": "Approval execution step is not claimable; manual reconciliation is required",
+                }
+
         resume_service = ApprovalResumeService(
             approval_gateway=self._approvals,
             connector_registry=self._connectors,
         )
         result = resume_service.resume(approval_request_id, current_user_id=self.owner_id)
         safe_result = sanitize_payload(result)
-        payload = request.get("payload") or {}
-        execution_id = payload.get("execution_id")
-        if execution_id:
-            if result.get("status") == "approval_rejected":
-                rejection = self._execution.mark_failed(
-                    execution_id,
-                    self.owner_id,
-                    error="Approval rejected",
-                    result={"decision": "REJECTED", "observation": safe_result},
-                )
-                if not rejection.get("success"):
-                    return {"success": False, "status": "FAIL", "error": rejection.get("error", "Approval rejection persistence failed")}
-                return {"success": False, "status": "approval_rejected", "result": safe_result}
-            claim = self._execution.claim_step(
-                execution_id,
-                self.owner_id,
-                step_id=str(uuid4()),
-                attempt_index=0,
-                idempotency_key=f"p1-7b:{execution_id}:start_onboarding:approval",
-                step_name="start_onboarding",
-                operation_key=payload.get("operation_key") or self._operation_key(
-                    payload.get("mission_id") or "", execution_id, "start_onboarding"
-                ),
-                claim_token=self._claim_token,
-            )
-            if not claim.get("success"):
-                return {"success": False, "status": "FAIL", "error": claim.get("error", "Approval step claim failed")}
-            if not claim.get("claimed") and claim["step"].get("status") == "completed":
-                return {"success": True, "status": "completed", "result": claim["step"].get("result", {})}
+        if execution_id and claim:
             step_result = self._execution.update_step(
                 execution_id,
                 self.owner_id,
                 claim["step"]["id"],
-                status="completed" if result.get("status") in {"completed", "resumed"} else "failed",
+                # An onboarding action that creates a human checkpoint has
+                # completed its connector step; the execution itself remains
+                # WAITING_INPUT until the user completes that checkpoint.
+                status="completed" if result.get("status") in {"completed", "resumed", "awaiting_human_intervention"} else "failed",
                 result=safe_result,
-                retry_category=None if result.get("status") in {"completed", "resumed"} else "EXECUTION",
+                retry_category=None if result.get("status") in {"completed", "resumed", "awaiting_human_intervention"} else "EXECUTION",
                 claim_token=self._claim_token,
             )
             if not step_result.get("success"):
                 return {"success": False, "status": "FAIL", "error": step_result.get("error", "Approval result persistence failed")}
-            if result.get("status") == "completed":
+            if result.get("status") in {"completed", "resumed"}:
                 completion = self._execution.mark_completed(execution_id, self.owner_id, {"approval_resume": safe_result})
                 if not completion.get("success"):
                     return {"success": False, "status": "FAIL", "error": completion.get("error", "Approval completion persistence failed")}
@@ -665,6 +754,26 @@ class EmployeeVerticalSlice:
                 )
                 if not waiting.get("success"):
                     return {"success": False, "status": "FAIL", "error": waiting.get("error", "Approval wait persistence failed")}
+            elif result.get("status") in {"publish_uncertain", "publish_in_progress"}:
+                # A provider timeout or in-flight reservation is not proof of
+                # failure. Stop automatic retries and require reconciliation.
+                waiting = self._execution.update_execution_state(
+                    execution_id,
+                    self.owner_id,
+                    status="WAITING_INPUT",
+                    result=safe_result,
+                )
+                if not waiting.get("success"):
+                    return {"success": False, "status": "FAIL", "error": waiting.get("error", "Publish reconciliation state persistence failed")}
+            elif result.get("status") == "resume_failed":
+                failure = self._execution.mark_failed(
+                    execution_id,
+                    self.owner_id,
+                    error=result.get("error") or "Approved action failed",
+                    result={"approval_resume": safe_result, "approval_request_id": approval_request_id},
+                )
+                if not failure.get("success"):
+                    return {"success": False, "status": "FAIL", "error": failure.get("error", "Approval failure persistence failed")}
         return {"success": result.get("status") in {"completed", "resumed"}, "status": result.get("status"), "result": safe_result}
 
     def _resolve_mission(self, mission_id: str | None, goal: str) -> dict[str, Any]:

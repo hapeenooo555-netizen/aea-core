@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.services.agent_runtime import AEAAgentRuntime
+from app.services.agent_runtime_contract import RuntimeRequest
 from app.services.mission_orchestration import MissionOrchestrationService
 
 router = APIRouter(prefix="/employee", tags=["employee"])
@@ -26,6 +29,11 @@ class ObjectiveRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str | None = None
     run_now: bool = False
+    locale: str = "en"
+    timezone: str = "UTC"
+    success_criteria: list[str] = Field(default_factory=list)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    requested_capabilities: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -56,23 +64,41 @@ async def create_objective(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Turn an authenticated objective into a durable affiliate-capable mission."""
-    service = _service(owner_id, client)
-    result = service.create_mission(
-        body.objective,
-        title=body.title,
-        priority=body.priority,
-        urgency=body.urgency,
-        business_importance=body.business_importance,
-        scheduled_at=body.scheduled_at.isoformat() if body.scheduled_at else None,
-        recurrence=body.recurrence,
-        dependencies=body.dependencies,
-        metadata=body.metadata,
-        idempotency_key=body.idempotency_key,
+    request = RuntimeRequest(
+        owner_id=owner_id,
+        objective=body.objective,
+        request_id=body.idempotency_key or str(uuid4()),
+        locale=body.locale,
+        timezone=body.timezone,
+        success_criteria=tuple(body.success_criteria),
+        constraints=body.constraints,
+        requested_capabilities=tuple(body.requested_capabilities),
     )
-    _raise(result)
-    if body.run_now:
-        return service.run_mission(result["mission"]["id"])
-    return result
+    runtime = AEAAgentRuntime(owner_id, client=client)
+    result = runtime.submit(
+        request,
+        run_now=body.run_now,
+        mission_options={
+            "title": body.title,
+            "priority": body.priority,
+            "urgency": body.urgency,
+            "business_importance": body.business_importance,
+            "scheduled_at": body.scheduled_at.isoformat() if body.scheduled_at else None,
+            "recurrence": body.recurrence,
+            "dependencies": body.dependencies,
+            "metadata": body.metadata,
+        },
+    )
+    if not result.get("success"):
+        errors = result.get("errors") or [result.get("error") or "Employee operation failed"]
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=errors)
+    mission_id = result.get("mission_id")
+    mission = _service(owner_id, client).get_mission(mission_id) if mission_id else None
+    if mission is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Runtime accepted the request but mission could not be read back")
+    # Preserve the legacy response shape while exposing the canonical runtime envelope.
+    return {"success": True, "mission": mission, "runtime": result}
 
 
 @router.get("/missions")

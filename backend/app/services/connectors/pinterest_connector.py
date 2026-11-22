@@ -1105,7 +1105,12 @@ class PinterestConnector(BaseConnector):
         # Settle the reserved record with Pinterest's confirmed Pin ID. If
         # this write fails the record stays "publishing", which blocks any
         # further publish attempt for this approval.
-        settled = _settle(STATUS_PUBLISHED, pin_id=pin_id, link_url=final_url)
+        settled = _settle(
+            STATUS_PUBLISHED,
+            pin_id=pin_id,
+            link_url=final_url,
+            content={**sanitized_content, "published_at": result["published_at"]},
+        )
         if settled is None:
             return {
                 "success": False,
@@ -1149,6 +1154,7 @@ class PinterestConnector(BaseConnector):
                 "approval_request_id": existing_pin.get("approval_request_id") or approval_request_id,
                 "platform": "pinterest",
                 "board_name": existing_pin.get("board_name") or board_name,
+                "published_at": (existing_pin.get("content") or {}).get("published_at"),
                 "message": "This approved operation was already published; no duplicate Pin was created.",
                 "operation_key": operation_key,
             }

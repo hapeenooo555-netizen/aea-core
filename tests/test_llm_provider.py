@@ -243,3 +243,54 @@ def test_groq_provider_does_not_fall_back_for_non_rate_limit_errors(monkeypatch)
     assert response["success"] is False
     assert attempted == ["primary-model"]
     assert "invalid credentials" not in response["error"]
+
+
+
+def test_production_requires_explicit_real_provider(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setattr(app_settings, "llm_provider", "mock")
+
+    response = get_llm_provider().generate("must not fabricate AI output")
+
+    assert response["success"] is False
+    assert response["provider"] == "unavailable"
+    assert response["content"] == ""
+
+
+def test_production_rejects_explicit_mock_provider(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+
+    response = get_llm_provider().generate("must not fabricate AI output")
+
+    assert response["success"] is False
+    assert response["provider"] == "unavailable"
+    assert response["content"] == ""
+    assert "not registered" in response["error"].lower()
+
+
+def test_development_can_still_use_default_mock(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setattr(app_settings, "llm_provider", "mock")
+
+    assert isinstance(get_llm_provider(), MockLLMProvider)
+
+
+def test_unknown_provider_fails_closed_instead_of_returning_mock(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "typo-provider")
+
+    provider = get_llm_provider()
+    response = provider.generate("must not be presented as AI output")
+
+    assert response["success"] is False
+    assert response["provider"] == "unavailable"
+    assert response["content"] == ""
+    assert "not registered" in response["error"].lower()
+
+
+def test_unknown_explicit_provider_fails_closed() -> None:
+    provider = get_llm_provider("unsupported-provider")
+
+    assert provider.generate("hello")["success"] is False

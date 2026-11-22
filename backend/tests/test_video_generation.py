@@ -870,14 +870,19 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
 
     class DownloadResponse:
         status_code = 200
-        headers = {"content-type": "video/mp4"}
-        content = b"fake-mp4-bytes"
+        headers = {"content-type": "video/mp4", "content-length": "14"}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            yield b"fake-mp4-"
+            yield b"bytes"
 
     class AsyncClient:
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
-        async def get(self, url):
+        def stream(self, method, url):
+            assert method == "GET"
             assert url == "https://asset.cloudfront.net/clip.mp4?token=temporary"
             return DownloadResponse()
 
@@ -895,6 +900,89 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
     assert path == "11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4"
     assert uploaded["content"] == b"fake-mp4-bytes"
     assert uploaded["options"] == {"content-type": "video/mp4", "upsert": "true"}
+
+
+
+def test_runway_video_persistence_rejects_oversized_content_length_before_read(monkeypatch):
+    import asyncio
+
+    uploaded = {"called": False}
+
+    class StorageBucket:
+        def upload(self, *_args, **_kwargs):
+            uploaded["called"] = True
+
+    class Storage:
+        def from_(self, _bucket):
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+    class DownloadResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4", "content-length": str(video_generation.MAX_VIDEO_ASSET_BYTES + 1)}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            raise AssertionError("Oversized declared response must be rejected before reading")
+            yield b""
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        def stream(self, *_args, **_kwargs): return DownloadResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: Client())
+    try:
+        asyncio.run(video_generation._persist_runway_video(Client(), "user-1", "job-1", "https://asset.cloudfront.net/clip.mp4"))
+        assert False, "Oversized content length must be rejected"
+    except RuntimeError as exc:
+        assert "exceeds" in str(exc)
+    assert uploaded["called"] is False
+
+
+def test_runway_video_persistence_enforces_limit_for_chunked_download(monkeypatch):
+    import asyncio
+
+    uploaded = {"called": False}
+
+    class StorageBucket:
+        def upload(self, *_args, **_kwargs):
+            uploaded["called"] = True
+
+    class Storage:
+        def from_(self, _bucket):
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+    class DownloadResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            yield b"x" * video_generation.MAX_VIDEO_ASSET_BYTES
+            yield b"y"
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        def stream(self, *_args, **_kwargs): return DownloadResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: Client())
+    try:
+        asyncio.run(video_generation._persist_runway_video(Client(), "user-1", "job-1", "https://asset.cloudfront.net/clip.mp4"))
+        assert False, "Chunked response exceeding the limit must be rejected"
+    except RuntimeError as exc:
+        assert "exceeds" in str(exc)
+    assert uploaded["called"] is False
 
 
 def test_runway_video_persistence_rejects_untrusted_hosts(monkeypatch):
@@ -919,7 +1007,7 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypat
 
     class StorageBucket:
         def download(self, path):
-            assert path == "user-1/project/scene.mp4"
+            assert path == "user-1/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4"
             return b"private-mp4-bytes"
 
     class Storage:
@@ -939,7 +1027,7 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypat
         "status": "completed",
         "generation_job_id": None,
         "video_url": None,
-        "video_storage_path": "user-1/project/scene.mp4",
+        "video_storage_path": "user-1/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4",
     }]
 
     response = make_client(db).get(
@@ -949,6 +1037,100 @@ def test_scene_video_stream_returns_private_mp4_without_signed_cdn_url(monkeypat
     assert response.content == b"private-mp4-bytes"
     assert response.headers["content-type"].startswith("video/mp4")
     assert response.headers["cache-control"] == "private, no-store"
+
+
+
+
+def test_scene_video_endpoint_accepts_only_its_linked_owner_job_asset(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+    job_id = "55555555-5555-4555-8555-555555555555"
+
+    class StorageBucket:
+        def create_signed_url(self, path, expires):
+            assert path == f"user-1/jobs/{job_id}.mp4"
+            assert expires == 900
+            return {"signedURL": "https://storage.example.test/job-video"}
+
+    class Storage:
+        def from_(self, bucket):
+            assert bucket == "aea-video-assets"
+            return StorageBucket()
+
+    class StorageDB(DB):
+        storage = Storage()
+
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id, "project_id": project_id, "owner_id": "user-1",
+        "generation_job_id": job_id, "status": "completed",
+        "video_storage_path": f"user-1/jobs/{job_id}.mp4",
+    }]
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video"
+    )
+    assert response.status_code == 200
+    assert response.json()["video_url"] == "https://storage.example.test/job-video"
+
+
+def test_scene_video_endpoint_rejects_storage_path_outside_owner_namespace(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+
+    class StorageBucket:
+        def create_signed_url(self, *_args):
+            raise AssertionError("Foreign object paths must never reach Storage signing")
+
+    class Storage:
+        def from_(self, _bucket):
+            return StorageBucket()
+
+    class StorageDB(DB):
+        storage = Storage()
+
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "status": "completed",
+        "generation_job_id": None,
+        "video_url": None,
+        "video_storage_path": "another-user/private.mp4",
+    }]
+
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video"
+    )
+    assert response.status_code == 409
+    assert "does not match" in response.json()["detail"]
+
+
+def test_scene_video_stream_rejects_path_from_another_scene(monkeypatch):
+    project_id = "33333333-3333-4333-8333-333333333333"
+    scene_id = "44444444-4444-4444-8444-444444444444"
+
+    class StorageDB(DB):
+        storage = object()
+
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: StorageDB())
+    db = StorageDB()
+    db.tables["video_project_scenes"] = [{
+        "id": scene_id,
+        "project_id": project_id,
+        "owner_id": "user-1",
+        "status": "completed",
+        "generation_job_id": None,
+        "video_url": None,
+        "video_storage_path": "user-1/33333333-3333-4333-8333-333333333333/scenes/99999999-9999-4999-8999-999999999999.mp4",
+    }]
+
+    response = make_client(db).get(
+        f"/video/generations/projects/{project_id}/scenes/{scene_id}/video/stream"
+    )
+    assert response.status_code == 409
 
 
 def test_scene_video_stream_is_owner_scoped():
@@ -974,7 +1156,7 @@ def test_scene_video_endpoint_returns_fresh_private_signed_url(monkeypatch):
 
     class StorageBucket:
         def create_signed_url(self, path, expires):
-            assert path == "user-1/project/scene.mp4"
+            assert path == "user-1/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4"
             assert expires == 900
             return {"signedURL": "https://storage.example.test/signed?token=fresh"}
 
@@ -995,7 +1177,7 @@ def test_scene_video_endpoint_returns_fresh_private_signed_url(monkeypatch):
         "status": "completed",
         "generation_job_id": None,
         "video_url": None,
-        "video_storage_path": "user-1/project/scene.mp4",
+        "video_storage_path": "user-1/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4",
     }]
 
     response = make_client(db).get(
