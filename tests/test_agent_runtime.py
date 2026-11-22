@@ -45,14 +45,38 @@ def test_runtime_adapter_rejects_cross_owner_request():
     assert result["status"] == "REJECTED"
 
 
-def test_runtime_adapter_maps_waiting_approval_state():
-    mission = {"id": "mission-2", "status": "waiting_approval", "result": {},
-               "pending_approvals": ["approval-1"]}
+def test_runtime_adapter_maps_waiting_approval_state_from_employee_report():
+    mission = {
+        "id": "mission-2",
+        "status": "waiting_approval",
+        "result": {
+            "success": False,
+            "status": "WAIT_FOR_APPROVAL",
+            "report": {
+                "execution_id": "execution-2",
+                "resume_information": {"approval_request_id": "approval-1", "execution_id": "execution-2"},
+            },
+        },
+    }
     runtime = AEAAgentRuntime("owner-1", orchestration=FakeOrchestration(mission=mission))
     result = runtime.submit(RuntimeRequest(owner_id="owner-1", objective="Publish externally"))
     assert result["success"] is True
     assert result["status"] == "WAITING_APPROVAL"
     assert result["pending_approvals"] == ("approval-1",)
+    assert result["execution_id"] == "execution-2"
+
+
+def test_runtime_adapter_preserves_explicit_pending_approval_references():
+    mission = {
+        "id": "mission-3",
+        "status": "waiting_approval",
+        "result": {},
+        "pending_approvals": ["approval-1", "approval-2"],
+    }
+    runtime = AEAAgentRuntime("owner-1", orchestration=FakeOrchestration(mission=mission))
+    result = runtime.submit(RuntimeRequest(owner_id="owner-1", objective="Publish externally"))
+    assert result["success"] is True
+    assert result["pending_approvals"] == ("approval-1", "approval-2")
 
 
 def test_runtime_adapter_rejects_mission_without_id():
