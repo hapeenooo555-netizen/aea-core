@@ -111,38 +111,26 @@ def test_studio_generate_returns_structured_unpublished_draft(monkeypatch):
     assert payload["published"] is False
     assert payload["draft"]["title"] == "AI for Small Business"
     assert len(payload["draft"]["hooks"]) == 3
-    assert any(emoji in payload["draft"]["caption"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
-    assert any(emoji in payload["draft"]["cta"] for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨"))
-    assert all(any(emoji in hook for emoji in ("🤖", "⚡", "💡", "📚", "😊", "✨")) for hook in payload["draft"]["hooks"])
+    assert payload["draft"]["caption"] == "Learn practical AI workflows."
+    assert payload["draft"]["cta"] == "Get the guide"
 
-
-def test_emoji_enrichment_matches_customer_sales_context():
+def test_emoji_enrichment_does_not_force_repeated_emojis():
     draft = {
         "caption": "Ongea nasi leo",
         "cta": "Tuma ujumbe sasa",
         "hooks": ["Unahitaji huduma nzuri?"],
-        "platform_variants": {
-            "facebook": {"caption": "Huduma bora kwa biashara yako", "cta": "Wasiliana nasi"}
-        },
+        "platform_variants": {"facebook": {"caption": "Huduma bora kwa biashara yako"}},
     }
-    enriched = content_studio._enrich_draft_emojis(
-        draft,
-        {"prompt": "Jibu wateja kupitia WhatsApp na ongeza mauzo", "niche": "Huduma kwa wateja", "tone": "friendly"},
-    )
-    assert "💬" in enriched["caption"] or "🤝" in enriched["caption"]
-    assert "💬" in enriched["hooks"][0] or "🤝" in enriched["hooks"][0]
-    assert "💬" in enriched["platform_variants"]["facebook"]["caption"] or "🤝" in enriched["platform_variants"]["facebook"]["caption"]
+    enriched = content_studio._enrich_draft_emojis(draft, {"prompt": "AI biashara", "tone": "friendly"})
+    assert enriched == draft
 
-
-def test_emoji_enrichment_respects_existing_emojis_and_professional_tone():
+def test_emoji_enrichment_preserves_model_selected_emojis_and_plain_text():
     draft = {"caption": "Karibu dukani 🛍️", "cta": "Wasiliana nasi"}
     enriched = content_studio._enrich_draft_emojis(
-        draft,
-        {"prompt": "Ofa ya punguzo kwa wateja", "niche": "Retail", "tone": "professional"},
+        draft, {"prompt": "Ofa ya punguzo kwa wateja", "tone": "professional"}
     )
     assert enriched["caption"] == "Karibu dukani 🛍️"
-    assert enriched["cta"].endswith("🎁")
-
+    assert enriched["cta"] == "Wasiliana nasi"
 
 def test_studio_generate_rejects_mock_provider(monkeypatch):
     from app.services.llm_provider import MockLLMProvider
@@ -175,23 +163,14 @@ def test_studio_generate_requires_authentication():
     assert response.status_code == 401
 
 
-def test_emoji_enrichment_adds_ai_emojis_to_platform_cta():
+def test_emoji_enrichment_keeps_platform_variants_unchanged():
     draft = {
         "caption": "Rahisisha kazi zako",
         "cta": "Anza kutumia AEA",
         "hooks": ["Unatumia muda mwingi kwenye kazi za kawaida?"],
-        "platform_variants": {
-            "instagram": {"caption": "Fanya kazi kwa haraka", "cta": "Jaribu sasa"}
-        },
+        "platform_variants": {"instagram": {"caption": "Fanya kazi kwa haraka", "cta": "Jaribu sasa"}},
     }
-    enriched = content_studio._enrich_draft_emojis(
-        draft,
-        {"prompt": "AI automation kwa biashara ndogo", "niche": "Teknolojia", "tone": "exciting"},
-    )
-    assert "🤖" in enriched["caption"] or "⚡" in enriched["caption"]
-    assert "🤖" in enriched["cta"] or "⚡" in enriched["cta"]
-    assert "🤖" in enriched["platform_variants"]["instagram"]["cta"] or "⚡" in enriched["platform_variants"]["instagram"]["cta"]
-
+    assert content_studio._enrich_draft_emojis(draft, {"prompt": "AI automation", "tone": "exciting"}) == draft
 
 def test_create_asset_persists_owner_scoped_version_one():
     db = FakeDatabase()

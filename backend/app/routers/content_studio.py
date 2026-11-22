@@ -154,11 +154,10 @@ def _system_prompt() -> str:
         "For video, include script, scene_plan, voiceover and subtitle_text inside core_content. "
         "For ebooks/courses, include a table_of_contents and chapter_or_module_outline in core_content. "
         "For Pinterest, include pin_title, pin_description, image_concept and destination_placeholder. "
-        "Write emotionally relevant social copy: select emojis from the message intent, audience, niche and tone, "
-        "not randomly. Use 1-2 well-matched emojis in captions, hooks and CTAs; use at most one for a formal/professional tone. "
-        "Examples: offers use 🎁🔥; sales/growth use 🛍️📈; customer conversations use 💬🤝; trust uses ✅💚; "
-        "AI/technology uses 🤖⚡; education uses 💡📚. Match the actual brief and never force an unrelated category. "
-        "Use emojis sparingly, keep the copy readable, and adapt emoji placement to each platform. "
+        "EMOJI POLICY: Emojis are optional, not a requirement. Use zero or one emoji in a text block only when it improves meaning. "
+        "Choose from the actual sentence and platform context; do not reuse the same emoji pattern across hooks, caption and CTA. "
+        "Vary choices naturally across separate assets, and omit emojis for formal, sensitive, technical or professional copy. "
+        "Never append emojis mechanically or use decorative emoji pairs as a signature. Plain text is fully acceptable. "
         "This is a draft for human review; do not publish. "
         "For Swahili video scripts, make the spoken voiceover sound like a real Tanzanian presenter addressing the selected audience, "
         "not like a translated brochure. Keep on-screen text concise and consistent with the spoken script. "
@@ -199,40 +198,8 @@ def _relevant_emojis(context: str, tone: str) -> tuple[str, ...]:
     return selected[:2]
 
 
-def _add_relevant_emojis(value: Any, emojis: tuple[str, ...]) -> Any:
-    """Add relevant emojis only to plain text that does not already contain one."""
-    if not isinstance(value, str) or not value.strip():
-        return value
-    if any(emoji in value for emoji in _KNOWN_EMOJIS):
-        return value
-    return f"{value.rstrip()} {' '.join(emojis)}"
-
-
 def _enrich_draft_emojis(draft: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
-    """Ensure social captions, hooks and CTAs receive topic-aware emoji treatment."""
-    context = " ".join(
-        str(brief.get(key) or "")
-        for key in ("prompt", "niche", "objective", "tone", "language")
-    )
-    context += " " + str(draft.get("title") or "") + " " + str(draft.get("caption") or "")
-    emojis = _relevant_emojis(context, str(brief.get("tone") or ""))
-
-    for key in ("caption", "cta"):
-        if key in draft:
-            draft[key] = _add_relevant_emojis(draft[key], emojis)
-
-    hooks = draft.get("hooks")
-    if isinstance(hooks, list):
-        draft["hooks"] = [_add_relevant_emojis(hook, emojis) for hook in hooks]
-
-    variants = draft.get("platform_variants")
-    if isinstance(variants, dict):
-        for variant in variants.values():
-            if not isinstance(variant, dict):
-                continue
-            for key in ("caption", "cta"):
-                if key in variant:
-                    variant[key] = _add_relevant_emojis(variant[key], emojis)
+    """Preserve model-authored emoji choices; never append a repeated template mechanically."""
     return draft
 
 
