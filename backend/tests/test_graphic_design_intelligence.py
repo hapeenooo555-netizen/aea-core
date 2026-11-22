@@ -57,7 +57,7 @@ def test_aea_brand_request_uses_verified_brand_identity_and_brand_palette(monkey
     assert "verified_capabilities" in brief["brand_facts"]
     assert result["brand_applied"] is True
     assert result["text_overlay"]["brand"] == "AEA Affiliate Hub"
-    assert result["text_overlay"]["accent"] == "#10B981"
+    assert result["text_overlay"]["accent"] == "#75D7C6"
     assert "BACKGROUND ART ONLY" in result["visual_prompt"]
     assert "no text" in result["visual_prompt"].lower()
 
