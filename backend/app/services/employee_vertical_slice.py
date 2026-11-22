@@ -449,7 +449,22 @@ class EmployeeVerticalSlice:
                 and "start_onboarding" not in completed_steps
                 and not any(s.get("step_name") == "start_onboarding" for s in plan)
             ):
-                plan.append(self._build_dynamic_onboarding_step(step, metadata))
+                dynamic_step = self._build_dynamic_onboarding_step(step, metadata)
+                dynamic_validation = self._validator.validate(
+                    [dynamic_step],
+                    owner_id=self.owner_id,
+                    discovered=self.discover_capabilities(),
+                )
+                if not dynamic_validation.get("success"):
+                    return self._failed_report(
+                        report,
+                        "Dynamic onboarding step failed validation: "
+                        + "; ".join(dynamic_validation.get("errors", [])),
+                    )
+                validated_dynamic_step = dynamic_validation["steps"][0]
+                plan.append(validated_dynamic_step)
+                report.setdefault("plan", []).append(sanitize_payload(validated_dynamic_step))
+                report.setdefault("validated_plan", []).append(sanitize_payload(validated_dynamic_step))
 
             decision = self._next_decision(
                 result,
