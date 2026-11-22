@@ -870,14 +870,19 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
 
     class DownloadResponse:
         status_code = 200
-        headers = {"content-type": "video/mp4"}
-        content = b"fake-mp4-bytes"
+        headers = {"content-type": "video/mp4", "content-length": "14"}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            yield b"fake-mp4-"
+            yield b"bytes"
 
     class AsyncClient:
         def __init__(self, **_kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *_args): return False
-        async def get(self, url):
+        def stream(self, method, url):
+            assert method == "GET"
             assert url == "https://asset.cloudfront.net/clip.mp4?token=temporary"
             return DownloadResponse()
 
@@ -895,6 +900,89 @@ def test_runway_video_persistence_copies_asset_to_private_owner_path(monkeypatch
     assert path == "11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/scenes/44444444-4444-4444-8444-444444444444.mp4"
     assert uploaded["content"] == b"fake-mp4-bytes"
     assert uploaded["options"] == {"content-type": "video/mp4", "upsert": "true"}
+
+
+
+def test_runway_video_persistence_rejects_oversized_content_length_before_read(monkeypatch):
+    import asyncio
+
+    uploaded = {"called": False}
+
+    class StorageBucket:
+        def upload(self, *_args, **_kwargs):
+            uploaded["called"] = True
+
+    class Storage:
+        def from_(self, _bucket):
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+    class DownloadResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4", "content-length": str(video_generation.MAX_VIDEO_ASSET_BYTES + 1)}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            raise AssertionError("Oversized declared response must be rejected before reading")
+            yield b""
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        def stream(self, *_args, **_kwargs): return DownloadResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: Client())
+    try:
+        asyncio.run(video_generation._persist_runway_video(Client(), "user-1", "job-1", "https://asset.cloudfront.net/clip.mp4"))
+        assert False, "Oversized content length must be rejected"
+    except RuntimeError as exc:
+        assert "exceeds" in str(exc)
+    assert uploaded["called"] is False
+
+
+def test_runway_video_persistence_enforces_limit_for_chunked_download(monkeypatch):
+    import asyncio
+
+    uploaded = {"called": False}
+
+    class StorageBucket:
+        def upload(self, *_args, **_kwargs):
+            uploaded["called"] = True
+
+    class Storage:
+        def from_(self, _bucket):
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+    class DownloadResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        async def aiter_bytes(self):
+            yield b"x" * video_generation.MAX_VIDEO_ASSET_BYTES
+            yield b"y"
+
+    class AsyncClient:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+        def stream(self, *_args, **_kwargs): return DownloadResponse()
+
+    monkeypatch.setattr(video_generation.httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(video_generation.database_module, "get_supabase_video_storage_client", lambda: Client())
+    try:
+        asyncio.run(video_generation._persist_runway_video(Client(), "user-1", "job-1", "https://asset.cloudfront.net/clip.mp4"))
+        assert False, "Chunked response exceeding the limit must be rejected"
+    except RuntimeError as exc:
+        assert "exceeds" in str(exc)
+    assert uploaded["called"] is False
 
 
 def test_runway_video_persistence_rejects_untrusted_hosts(monkeypatch):
