@@ -129,6 +129,25 @@ def create_distribution_job(
             "approval_required": True,
         }).select("*").execute())
     except Exception as exc:
+        # A concurrent request may have won the partial unique-index race.
+        # Re-read the durable draft and return it rather than creating a
+        # second logical request or surfacing a misleading server error.
+        concurrent_draft = _one(
+            db,
+            "creator_distribution_jobs",
+            "id,product_id,owner_id,destination,status,approval_required,created_at",
+            product_id=str(product_id),
+            owner_id=owner_id,
+            destination=body.destination,
+            status="draft",
+        )
+        if concurrent_draft:
+            return {
+                "success": True,
+                "job": concurrent_draft,
+                "published": False,
+                "duplicate": True,
+            }
         raise HTTPException(status_code=409, detail="Distribution request could not be saved.") from exc
     if not rows:
         raise HTTPException(status_code=502, detail="Database did not confirm distribution request.")
