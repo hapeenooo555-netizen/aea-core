@@ -14,6 +14,7 @@ the required step.
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 from typing import Any
 
@@ -875,7 +876,10 @@ class PinterestConnector(BaseConnector):
         url_valid, url_error = self._validate_url(link_url)
         if not url_valid:
             return {"success": False, "error": url_error}
-        sanitized_content = self._sanitize_content(content)
+        sanitized_content = self._sanitize_content({
+            key: value for key, value in content.items()
+            if key not in {"image_asset_path", "image_asset_mime_type"}
+        })
         approval_request_id = None
         if idempotency_key and str(idempotency_key).startswith("p1-11:"):
             approval_request_id = str(idempotency_key).removeprefix("p1-11:")
@@ -888,12 +892,23 @@ class PinterestConnector(BaseConnector):
         # A real Pinterest publish requires an image URL and a valid encrypted
         # token. Do not report success until Pinterest confirms the pin creation.
         image_url = content.get("image_url")
+        image_asset_path = content.get("image_asset_path")
+        image_asset_mime_type = content.get("image_asset_mime_type")
+        image_asset_id = content.get("image_asset_id")
         title = content.get("title")
-        if not image_url or not isinstance(image_url, str):
-            return {"success": False, "error": "content missing required field 'image_url'"}
-        image_valid, image_error = self._validate_url(image_url)
-        if not image_valid:
-            return {"success": False, "error": f"Invalid image_url: {image_error}"}
+        if image_asset_path:
+            if not owner_id or not image_asset_id or not isinstance(image_asset_path, str):
+                return {"success": False, "error": "Private image asset reference is incomplete"}
+            if not image_asset_path.startswith(f"{owner_id}/{image_asset_id}/"):
+                return {"success": False, "error": "Private image asset does not belong to the authenticated owner"}
+            if image_asset_mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+                return {"success": False, "error": "Private image asset format is not supported"}
+        else:
+            if not image_url or not isinstance(image_url, str):
+                return {"success": False, "error": "content requires a private image asset or public image_url"}
+            image_valid, image_error = self._validate_url(image_url)
+            if not image_valid:
+                return {"success": False, "error": f"Invalid image_url: {image_error}"}
 
         if not owner_id:
             return {"success": False, "error": "Authenticated owner_id is required to publish"}
@@ -985,9 +1000,35 @@ class PinterestConnector(BaseConnector):
                     _settle(STATUS_FAILED)
                     return {"success": False, "error": "Pinterest board ID is missing"}
 
+                if image_asset_path:
+                    # Pinterest supports image_base64. Read the private owner asset
+                    # server-side only after explicit approval; never expose a public
+                    # signed storage URL or change the bucket visibility.
+                    from app.database import get_supabase_image_budget_client
+
+                    storage_client = get_supabase_image_budget_client()
+                    if storage_client is None:
+                        _settle(STATUS_FAILED)
+                        return {"success": False, "error": "Private image storage is unavailable"}
+                    try:
+                        downloaded = storage_client.storage.from_("aea-design-assets").download(image_asset_path)
+                        image_bytes = downloaded if isinstance(downloaded, bytes) else getattr(downloaded, "data", None)
+                        if not isinstance(image_bytes, bytes) or not image_bytes or len(image_bytes) > 20 * 1024 * 1024:
+                            raise ValueError("Invalid private image payload")
+                    except Exception:
+                        _settle(STATUS_FAILED)
+                        return {"success": False, "error": "Could not securely load the approved private image asset"}
+                    media_source = {
+                        "source_type": "image_base64",
+                        "content_type": image_asset_mime_type,
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                    }
+                else:
+                    media_source = {"source_type": "image_url", "url": image_url}
+
                 pin_payload: dict[str, Any] = {
                     "board_id": str(board_id),
-                    "media_source": {"source_type": "image_url", "url": image_url},
+                    "media_source": media_source,
                     "description": str(pin_text)[:800],
                     "link": final_url if 'final_url' in locals() else link_url,
                 }
