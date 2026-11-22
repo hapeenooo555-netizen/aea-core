@@ -454,7 +454,7 @@ def test_connector_failure_returns_explicit_failure(resume_service, approval_gat
     )
     approval_gateway.approve_request(request_id)
 
-    result = resume_service.resume(request_id)
+    result = resume_service.resume(request_id, current_user_id="test-user-123")
     assert result["status"] == "resume_failed"
     assert "no connector registered" in result["error"].lower()
 
