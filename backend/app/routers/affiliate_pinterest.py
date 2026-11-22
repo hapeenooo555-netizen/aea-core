@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.approval_gateway import ApprovalGateway
 from app.services.mission_orchestration import MissionOrchestrationService
+from app.services.mission_execution_service import MissionExecutionService
 from app.services.pinterest_live_verification import PinterestVerificationError, verify_account_and_boards
 from app.services.pinterest_token_vault import get_access_token
 
@@ -339,30 +341,58 @@ def pinterest_draft_approval(
             "board": {"id": selected["id"], "name": selected["name"]},
             "account": verified["account"],
         }
-        result = gateway.create_request(
+        # Approval resume is guarded by a durable, owner-scoped execution.
+        # Persist it before exposing an approval request so the resume path can
+        # verify ownership and claim its external side-effect step after approval.
+        execution_id = str(uuid4())
+        execution_service = MissionExecutionService(client=client, durable_required=True)
+        execution_created = execution_service.create_execution(
             mission_id=mission_id,
-            action_type="publish_content",
-            risk_level="WRITE_EXTERNAL",
+            execution_id=execution_id,
+            idempotency_key=f"pinterest-draft-approval:{fingerprint}:execution",
             owner_id=owner_id,
-            client=client,
-            payload={
-                "platform": "pinterest",
-                "worker_id": selected_worker_id,
-                "content": {
-                    "title": title,
-                    "pin_text": description,
-                    "link_url": destination_url,
-                    "image_url": image_url,
-                    "board_id": selected["id"],
-                    "board_name": selected["name"],
-                },
-                "source": "affiliate_pinterest_draft",
-                "source_worker_id": selected_worker_id,
-                "source_mission_id": selected_mission_id,
-                "preview": preview,
-            },
+            status="WAITING_APPROVAL",
         )
+        if not execution_created.get("success"):
+            raise HTTPException(
+                status_code=503,
+                detail="Could not persist durable execution for Pinterest approval",
+            )
+
+        try:
+            result = gateway.create_request(
+                mission_id=mission_id,
+                action_type="publish_content",
+                risk_level="WRITE_EXTERNAL",
+                owner_id=owner_id,
+                client=client,
+                payload={
+                    "platform": "pinterest",
+                    "worker_id": selected_worker_id,
+                    "execution_id": execution_id,
+                    "content": {
+                        "title": title,
+                        "pin_text": description,
+                        "link_url": destination_url,
+                        "image_url": image_url,
+                        "board_id": selected["id"],
+                        "board_name": selected["name"],
+                    },
+                    "source": "affiliate_pinterest_draft",
+                    "source_worker_id": selected_worker_id,
+                    "source_mission_id": selected_mission_id,
+                    "preview": preview,
+                },
+            )
+        except Exception:
+            execution_service.mark_failed(
+                execution_id, owner_id, error="Pinterest approval request persistence failed"
+            )
+            raise
         if not result.get("success") or not result.get("request"):
+            execution_service.mark_failed(
+                execution_id, owner_id, error="Pinterest approval request persistence failed"
+            )
             raise HTTPException(status_code=503, detail="Could not persist the Pinterest approval request")
         return {
             "success": True,
