@@ -35,6 +35,7 @@ class PlanValidator:
         discovered: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         errors: list[str] = []
+        discovery_errors: list[str] = []
         if not isinstance(steps, list) or not steps:
             return {"success": False, "errors": ["Plan must contain at least one step"], "steps": []}
         if len(steps) > 50:
@@ -43,13 +44,13 @@ class PlanValidator:
         allowed = available_tools
         if self._capabilities is not None:
             if not owner_id:
-                errors.append("Authenticated owner is required for capability discovery")
+                discovery_errors.append("Authenticated owner is required for capability discovery")
             if discovered is None:
-                errors.append("User-scoped capability discovery must be performed before validating this plan")
+                discovery_errors.append("User-scoped capability discovery must be performed before validating this plan")
             elif discovered.get("success") is not True:
-                errors.append("Capability discovery failed; plan validation is fail-closed")
+                discovery_errors.append("Capability discovery failed; plan validation is fail-closed")
             elif discovered.get("owner_id") != owner_id:
-                errors.append("Capability discovery owner does not match authenticated owner")
+                discovery_errors.append("Capability discovery owner does not match authenticated owner")
             else:
                 allowed = {
                     tool.get("tool_name", tool.get("name"))
@@ -105,6 +106,8 @@ class PlanValidator:
             normalized["tool_version"] = tool.get("version", "1.0")
             validated_steps.append(normalized)
 
+        # Report concrete plan defects before discovery prerequisites.
+        errors.extend(discovery_errors)
         return {
             "success": not errors,
             "errors": errors,
