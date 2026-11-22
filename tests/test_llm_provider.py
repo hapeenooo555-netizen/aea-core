@@ -243,3 +243,21 @@ def test_groq_provider_does_not_fall_back_for_non_rate_limit_errors(monkeypatch)
     assert response["success"] is False
     assert attempted == ["primary-model"]
     assert "invalid credentials" not in response["error"]
+
+
+def test_unknown_provider_fails_closed_instead_of_returning_mock(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "typo-provider")
+
+    provider = get_llm_provider()
+    response = provider.generate("must not be presented as AI output")
+
+    assert response["success"] is False
+    assert response["provider"] == "unavailable"
+    assert response["content"] == ""
+    assert "not registered" in response["error"].lower()
+
+
+def test_unknown_explicit_provider_fails_closed() -> None:
+    provider = get_llm_provider("unsupported-provider")
+
+    assert provider.generate("hello")["success"] is False
