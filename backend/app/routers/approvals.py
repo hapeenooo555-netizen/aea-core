@@ -267,6 +267,19 @@ async def approve_approval(
                 "resume": prior_execution,
                 "idempotent": True,
             }
+        # The approval CAS has already been won by another request, but its
+        # execution outcome is not persisted yet. Do not start a second
+        # connector call in this race window. A recovery worker/operator can
+        # reconcile an approved request with no execution record.
+        return {
+            "success": True,
+            "approval": approval,
+            "resume": {
+                "status": "awaiting_resume",
+                "message": "Approval is already recorded; execution outcome is not yet available.",
+            },
+            "idempotent": True,
+        }
 
     resume_result = _resume_approval_for_owner(
         approval_id,
