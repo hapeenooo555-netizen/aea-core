@@ -109,28 +109,34 @@ begin
   end if;
   select * into v_order from public.creator_orders where id = p_order_id for update;
   if not found then raise exception 'order not found' using errcode = 'P0002'; end if;
+  if p_provider is null or char_length(p_provider) not between 2 and 40
+    or p_provider_event_id is null or char_length(p_provider_event_id) not between 1 and 200
+    or p_provider_reference is null or btrim(p_provider_reference) = ''
+    or p_event_type <> 'payment.succeeded' then
+    raise exception 'invalid successful payment event' using errcode = '22023';
+  end if;
   if p_amount <> v_order.total_amount or p_currency <> v_order.currency then
     raise exception 'payment amount or currency mismatch' using errcode = '22023';
   end if;
-  if v_order.status = 'paid' then
-    return jsonb_build_object('success', true, 'duplicate', true, 'order_id', v_order.id);
-  end if;
-  if v_order.status <> 'pending' then
-    raise exception 'order is not payable' using errcode = '22023';
-  end if;
-  insert into public.creator_payment_events(order_id, provider, provider_event_id, provider_reference, event_type, amount, currency)
-  values (p_order_id, p_provider, p_provider_event_id, p_provider_reference, p_event_type, p_amount, p_currency)
-  on conflict (provider, provider_event_id) do nothing
-  returning id into v_event_id;
-  if v_event_id is null then
-    select * into v_existing from public.creator_payment_events
-      where provider = p_provider and provider_event_id = p_provider_event_id;
-    if not found or v_existing.order_id <> p_order_id
+  -- Check exact event replay before checking order state. A different event ID
+  -- for an already-paid order is a second charge, not an idempotent retry.
+  select * into v_existing from public.creator_payment_events
+    where provider = p_provider and provider_event_id = p_provider_event_id;
+  if found then
+    if v_existing.order_id <> p_order_id
+      or v_existing.provider_reference is distinct from p_provider_reference
+      or v_existing.event_type <> p_event_type
       or v_existing.amount <> p_amount or v_existing.currency <> p_currency then
       raise exception 'provider event replay does not match this order' using errcode = '22023';
     end if;
     return jsonb_build_object('success', true, 'duplicate', true, 'order_id', v_order.id);
   end if;
+  if v_order.status <> 'pending' then
+    raise exception 'order is not payable or was already settled by another event' using errcode = '22023';
+  end if;
+  insert into public.creator_payment_events(order_id, provider, provider_event_id, provider_reference, event_type, amount, currency)
+  values (p_order_id, p_provider, p_provider_event_id, p_provider_reference, p_event_type, p_amount, p_currency)
+  returning id into v_event_id;
   update public.creator_orders set status = 'paid', paid_at = now(), updated_at = now() where id = p_order_id;
   insert into public.creator_product_entitlements(order_item_id, order_id, buyer_id, product_id, product_file_id)
   select i.id, i.order_id, v_order.buyer_id, i.product_id, i.product_file_id
