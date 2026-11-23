@@ -102,6 +102,7 @@ as $$
 declare
   v_order public.creator_orders%rowtype;
   v_event_id uuid;
+  v_existing public.creator_payment_events%rowtype;
 begin
   if auth.role() <> 'service_role' then
     raise exception 'service role required' using errcode = '42501';
@@ -122,6 +123,12 @@ begin
   on conflict (provider, provider_event_id) do nothing
   returning id into v_event_id;
   if v_event_id is null then
+    select * into v_existing from public.creator_payment_events
+      where provider = p_provider and provider_event_id = p_provider_event_id;
+    if not found or v_existing.order_id <> p_order_id
+      or v_existing.amount <> p_amount or v_existing.currency <> p_currency then
+      raise exception 'provider event replay does not match this order' using errcode = '22023';
+    end if;
     return jsonb_build_object('success', true, 'duplicate', true, 'order_id', v_order.id);
   end if;
   update public.creator_orders set status = 'paid', paid_at = now(), updated_at = now() where id = p_order_id;
