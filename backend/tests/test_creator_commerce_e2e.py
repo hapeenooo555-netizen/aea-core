@@ -251,8 +251,9 @@ def test_e2e_purchase_fake_payment_and_paid_download(monkeypatch):
     assert delivered.json()["download_url"].endswith(f"/{PRODUCT_ID}/guide.pdf")
 
 
-def test_e2e_fake_payment_rejects_a_second_distinct_event_for_paid_order():
+def test_e2e_fake_payment_rejects_a_second_distinct_event_for_paid_order(monkeypatch):
     db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     api = make_client(db)
     intent = api.post(
         f"/store/products/{PRODUCT_ID}/purchase-intent",
@@ -276,8 +277,9 @@ def test_e2e_fake_payment_rejects_a_second_distinct_event_for_paid_order():
     assert len(db.tables["creator_product_entitlements"]) == 1
 
 
-def test_e2e_fake_payment_rejects_event_replay_with_changed_reference():
+def test_e2e_fake_payment_rejects_event_replay_with_changed_reference(monkeypatch):
     db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     api = make_client(db)
     intent = api.post(
         f"/store/products/{PRODUCT_ID}/purchase-intent",
@@ -318,8 +320,9 @@ def test_e2e_purchase_intent_is_idempotent_for_same_buyer_key():
     assert len(db.tables["creator_order_items"]) == 1
 
 
-def test_e2e_order_download_is_not_available_to_another_buyer():
+def test_e2e_order_download_is_not_available_to_another_buyer(monkeypatch):
     db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     owner_api = make_client(db)
     intent = owner_api.post(
         f"/store/products/{PRODUCT_ID}/purchase-intent",
