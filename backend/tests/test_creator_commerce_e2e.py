@@ -550,6 +550,7 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
     assert body["orders"][0]["items"][0]["commission_status"] == "payable"
     assert body["orders"][0]["items"][0]["commission_rate_bps"] == 1500
     assert body["orders"][0]["items"][0]["commission_amount"] == 2250
+    assert db.tables["creator_order_items"][0]["commission_status"] == "payable"
     assert body["orders"][0]["status"] == "paid"
     assert "buyer_id" not in body["orders"][0]
 
