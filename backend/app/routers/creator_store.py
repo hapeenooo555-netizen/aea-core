@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
+from app.database import get_supabase_product_file_client
 
 router = APIRouter(prefix="/store/products", tags=["creator-store"])
 
@@ -259,9 +260,12 @@ def complete_product_file_upload(
     actual_size = metadata.get("size") or metadata.get("contentLength")
     if not match or actual_size is None or int(actual_size) != int(file_row.get("size_bytes") or 0):
         raise HTTPException(status_code=409, detail="Uploaded file is missing or its verified size does not match the upload declaration.")
-    updated = _rows(db.table("creator_product_files").update({"status": "ready"}).eq(
+    privileged = get_supabase_product_file_client()
+    if privileged is None:
+        raise HTTPException(status_code=503, detail="Secure file verification persistence is not configured.")
+    updated = _rows(privileged.table("creator_product_files").update({"status": "ready"}).eq(
         "id", str(body.file_id)
-    ).eq("owner_id", owner_id).select("*").execute())
+    ).eq("product_id", str(product_id)).eq("owner_id", owner_id).eq("status", "pending").select("*").execute())
     if not updated:
         raise HTTPException(status_code=502, detail="Verified file status could not be saved.")
     return {"success": True, "file": updated[0], "buyer_delivery_enabled": False}
