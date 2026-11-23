@@ -82,7 +82,7 @@ def create_product_listing(
     """Create a private draft listing from a content asset owned by the caller."""
     db = _db(client)
     asset_response = db.table("content_asset_versions").select(
-        "asset_id,owner_id,title,version,status"
+        "asset_id,owner_id,title,content,version,status"
     ).eq("owner_id", owner_id).eq("asset_id", str(body.asset_id)).order(
         "version", desc=True
     ).limit(1).execute()
