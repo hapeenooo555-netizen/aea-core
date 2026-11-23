@@ -74,6 +74,8 @@ $$;
 revoke all on function public.create_creator_affiliate_link(uuid,text) from public, anon;
 grant execute on function public.create_creator_affiliate_link(uuid,text) to authenticated, service_role;
 
+drop function if exists public.resolve_creator_affiliate_attribution(text,uuid);
+
 create or replace function public.resolve_creator_affiliate_attribution(
   p_code text,
   p_product_id uuid
