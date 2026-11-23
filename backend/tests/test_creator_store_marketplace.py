@@ -268,4 +268,5 @@ def test_marketplace_browse_joins_approved_listing_product_and_public_vendor():
     items = response.json()["listings"]
     assert len(items) == 1
     assert items[0]["product"]["title"] == "Test product"
+    assert items[0]["product"]["slug"] == "test-product"
     assert items[0]["vendor"]["display_name"] == "Vendor"
