@@ -146,3 +146,61 @@ def test_promoter_earnings_fails_closed_when_database_rpc_is_unavailable():
     response = make_client(BrokenRpc()).get("/store/affiliate/earnings")
     assert response.status_code == 503
     assert "sensitive database error" not in response.text
+
+
+def test_promoter_can_request_payout_using_only_payable_commissions():
+    rpc = RpcClient([{
+        "id": "77777777-7777-4777-8777-777777777777",
+        "amount": 12500,
+        "currency": "TZS",
+        "payment_method": "mobile_money",
+        "status": "pending",
+        "created_at": "2026-11-23T12:00:00Z",
+    }])
+    response = make_client(rpc).post(
+        "/store/affiliate/payout-requests",
+        json={"payment_method": "mobile_money"},
+    )
+    assert response.status_code == 201
+    assert response.json()["payout_request"]["amount"] == 12500
+    assert rpc.calls == [("create_my_creator_payout_request", {"p_payment_method": "mobile_money"})]
+
+
+def test_promoter_payout_request_rejects_unknown_payment_method():
+    response = make_client(RpcClient([])).post(
+        "/store/affiliate/payout-requests",
+        json={"payment_method": "cash"},
+    )
+    assert response.status_code == 422
+
+
+def test_promoter_payout_request_fails_closed_when_no_payable_commission_exists():
+    response = make_client(RpcClient([])).post(
+        "/store/affiliate/payout-requests",
+        json={"payment_method": "bank_transfer"},
+    )
+    assert response.status_code == 409
+
+
+def test_promoter_can_read_only_their_own_payout_history_rpc():
+    rpc = RpcClient([{
+        "id": "77777777-7777-4777-8777-777777777777",
+        "amount": 12500,
+        "currency": "TZS",
+        "payment_method": "bank_transfer",
+        "status": "paid",
+        "created_at": "2026-11-23T12:00:00Z",
+    }])
+    response = make_client(rpc).get("/store/affiliate/payout-requests")
+    assert response.status_code == 200
+    assert response.json()["payout_requests"][0]["status"] == "paid"
+    assert rpc.calls == [("get_my_creator_payout_requests", {})]
+
+
+def test_promoter_payout_history_fails_closed_when_rpc_is_unavailable():
+    class BrokenRpc:
+        def rpc(self, *_args):
+            raise RuntimeError("private payout database details")
+    response = make_client(BrokenRpc()).get("/store/affiliate/payout-requests")
+    assert response.status_code == 503
+    assert "private payout database details" not in response.text
