@@ -398,3 +398,84 @@ def test_vendor_commission_rate_is_bounded():
         json={"status": "approved", "commission_rate_bps": 10001},
     )
     assert response.status_code == 422
+
+
+class PayoutAdminDatabase(Database):
+    def __init__(self, tables=None):
+        super().__init__(tables)
+        self.rpc_calls = []
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        if name == "list_creator_payout_requests_admin":
+            return RpcQuery(Response(self.tables.get("payout_rows", [])))
+        if name == "review_creator_payout_request":
+            return RpcQuery(Response([{
+                "id": params["p_request_id"], "status": params["p_status"],
+                "amount": 12500, "currency": "TZS",
+            }]))
+        if name == "mark_creator_payout_request_paid":
+            return RpcQuery(Response([{
+                "id": params["p_request_id"], "status": "paid",
+                "amount": 12500, "currency": "TZS",
+                "payout_reference": params["p_payout_reference"],
+            }]))
+        raise AssertionError(f"Unexpected RPC: {name}")
+
+
+def test_marketplace_admin_payout_queue_requires_active_admin():
+    response = client_for(PayoutAdminDatabase()).get("/store/products/marketplace/admin/payouts")
+    assert response.status_code == 403
+
+
+def test_active_marketplace_admin_can_list_payout_queue():
+    row = {
+        "id": "77777777-7777-4777-8777-777777777777",
+        "promoter_id": OTHER, "amount": 12500, "currency": "TZS",
+        "payment_method": "mobile_money", "status": "pending",
+        "created_at": "2026-11-23T12:00:00Z",
+    }
+    db = PayoutAdminDatabase({
+        "aea_marketplace_admins": [{"user_id": USER, "active": True}],
+        "payout_rows": [row],
+    })
+    response = client_for(db).get("/store/products/marketplace/admin/payouts")
+    assert response.status_code == 200
+    assert response.json()["payout_requests"][0]["promoter_id"] == OTHER
+    assert db.rpc_calls == [("list_creator_payout_requests_admin", {})]
+
+
+def test_admin_can_approve_pending_payout_request():
+    request_id = "77777777-7777-4777-8777-777777777777"
+    db = PayoutAdminDatabase({"aea_marketplace_admins": [{"user_id": USER, "active": True}]})
+    response = client_for(db).patch(
+        f"/store/products/marketplace/admin/payouts/{request_id}/review",
+        json={"status": "approved"},
+    )
+    assert response.status_code == 200
+    assert response.json()["payout_request"]["status"] == "approved"
+    assert db.rpc_calls[0][0] == "review_creator_payout_request"
+
+
+def test_admin_must_supply_reason_when_rejecting_payout():
+    request_id = "77777777-7777-4777-8777-777777777777"
+    db = PayoutAdminDatabase({"aea_marketplace_admins": [{"user_id": USER, "active": True}]})
+    response = client_for(db).patch(
+        f"/store/products/marketplace/admin/payouts/{request_id}/review",
+        json={"status": "rejected"},
+    )
+    assert response.status_code == 422
+    assert db.rpc_calls == []
+
+
+def test_admin_marks_payout_paid_only_with_transaction_reference():
+    request_id = "77777777-7777-4777-8777-777777777777"
+    db = PayoutAdminDatabase({"aea_marketplace_admins": [{"user_id": USER, "active": True}]})
+    response = client_for(db).patch(
+        f"/store/products/marketplace/admin/payouts/{request_id}/paid",
+        json={"payout_reference": "MNO-123456"},
+    )
+    assert response.status_code == 200
+    assert response.json()["payout_request"]["status"] == "paid"
+    assert response.json()["payout_request"]["payout_reference"] == "MNO-123456"
+    assert db.rpc_calls[0][0] == "mark_creator_payout_request_paid"
