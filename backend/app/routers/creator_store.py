@@ -514,6 +514,51 @@ def update_product_status(
     }
 
 
+@orders_router.get("/library")
+def list_buyer_product_library(
+    buyer_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """List only paid product items with an active buyer-specific entitlement.
+
+    The user-scoped client enforces RLS for orders, items and entitlements.
+    Download URLs are never persisted or included here; buyers request a
+    short-lived signed URL from the order-item download endpoint.
+    """
+    db = _db(client)
+    orders = _rows(db.table("creator_orders").select(
+        "id,status,currency,paid_at,created_at"
+    ).eq("buyer_id", buyer_id).eq("status", "paid").order(
+        "paid_at", desc=True
+    ).limit(100).execute())
+    library_items: list[dict[str, Any]] = []
+    for order in orders:
+        items = _rows(db.table("creator_order_items").select(
+            "id,order_id,product_id,product_title,product_type,unit_amount,currency"
+        ).eq("order_id", str(order["id"])).limit(100).execute())
+        for item in items:
+            entitlements = _rows(db.table("creator_product_entitlements").select(
+                "id,order_id,order_item_id,buyer_id,product_id,revoked_at"
+            ).eq("order_id", str(order["id"])).eq(
+                "order_item_id", str(item["id"])
+            ).eq("buyer_id", buyer_id).limit(1).execute())
+            if not entitlements or entitlements[0].get("revoked_at"):
+                continue
+            library_items.append({
+                "order_id": str(order["id"]),
+                "order_item_id": str(item["id"]),
+                "product_id": str(item["product_id"]),
+                "title": str(item.get("product_title") or "Purchased product"),
+                "product_type": str(item.get("product_type") or "digital_product"),
+                "amount": int(item.get("unit_amount") or 0),
+                "currency": str(item.get("currency") or order.get("currency") or "TZS"),
+                "paid_at": order.get("paid_at"),
+                "delivery_available": True,
+                "download_path": f"/store/orders/{order['id']}/items/{item['id']}/download",
+            })
+    return {"success": True, "items": library_items, "count": len(library_items)}
+
+
 @orders_router.get("/{order_id}/items/{order_item_id}/download")
 def download_paid_order_item(
     order_id: UUID,
