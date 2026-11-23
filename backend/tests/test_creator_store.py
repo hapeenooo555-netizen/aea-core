@@ -172,3 +172,46 @@ def test_owner_cannot_change_another_users_product():
         json={"status": "listed"},
     )
     assert response.status_code == 404
+
+def test_owner_can_read_approved_ebook_in_private_reader():
+    db = Database()
+    db.tables["content_asset_versions"][0].update({
+        "status": "approved",
+        "content": {"chapters": [{"title": "Utangulizi", "body": "Maudhui ya kitabu."}]},
+    })
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "title": "Mwongozo wa AEA",
+        "product_type": "ebook",
+        "completion_status": "finished",
+    })
+    response = client(db).get("/store/products/22222222-2222-4222-8222-222222222222/reader")
+    assert response.status_code == 200
+    assert response.json()["access"] == "owner_preview_only"
+    assert response.json()["chapters"][0]["body"] == "Maudhui ya kitabu."
+
+
+def test_reader_rejects_unapproved_asset():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "product_type": "ebook",
+    })
+    response = client(db).get("/store/products/22222222-2222-4222-8222-222222222222/reader")
+    assert response.status_code == 409
+
+
+def test_reader_does_not_expose_another_owners_product():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "different-user",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "product_type": "ebook",
+    })
+    response = client(db).get("/store/products/22222222-2222-4222-8222-222222222222/reader")
+    assert response.status_code == 404
