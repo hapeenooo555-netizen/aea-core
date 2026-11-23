@@ -376,3 +376,46 @@ def test_e2e_fake_payment_rejects_amount_mismatch():
         provider.deliver_webhook(event, provider.sign(event))
     assert db.tables["creator_orders"][0]["status"] == "pending"
     assert db.tables["creator_product_entitlements"] == []
+
+
+def test_e2e_idempotency_key_cannot_be_reused_for_another_product(monkeypatch):
+    db = E2EDatabase()
+    other_product_id = "77777777-7777-4777-8777-777777777777"
+    other_file_id = "88888888-8888-4888-8888-888888888888"
+    db.tables["creator_products"].append({
+        "id": other_product_id,
+        "owner_id": "seller-002",
+        "title": "Another Guide",
+        "product_type": "guide",
+        "price_amount": 25000,
+        "currency": "TZS",
+        "status": "listed",
+        "completion_status": "finished",
+    })
+    db.tables["creator_product_files"].append({
+        "id": other_file_id,
+        "product_id": other_product_id,
+        "owner_id": "seller-002",
+        "object_path": f"seller-002/{other_product_id}/another.pdf",
+        "original_filename": "another.pdf",
+        "status": "ready",
+    })
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    api = make_client(db)
+    key = "e2e-cross-product-key-001"
+
+    first = api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": key},
+    )
+    conflict = api.post(
+        f"/store/products/{other_product_id}/purchase-intent",
+        json={"idempotency_key": key},
+    )
+
+    assert first.status_code == 201
+    assert conflict.status_code == 409
+    assert "different product" in conflict.json()["detail"]
+    assert len(db.tables["creator_orders"]) == 1
+    assert len(db.tables["creator_order_items"]) == 1
+    assert db.tables["creator_order_items"][0]["product_id"] == PRODUCT_ID
