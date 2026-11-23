@@ -34,8 +34,7 @@ create table if not exists public.creator_payout_request_items (
   order_item_id uuid not null references public.creator_order_items(id) on delete restrict,
   commission_amount bigint not null check (commission_amount > 0),
   created_at timestamptz not null default now(),
-  primary key (payout_request_id, order_item_id),
-  unique (order_item_id)
+  primary key (payout_request_id, order_item_id)
 );
 
 create index if not exists creator_payout_requests_promoter_created_idx
