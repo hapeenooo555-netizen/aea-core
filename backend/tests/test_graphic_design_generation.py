@@ -292,4 +292,4 @@ def test_graphic_design_generate_accepts_pinterest_portrait_ratio_2_by_3(monkeyp
     assert payload["published"] is False
     assert payload["status"] == "completed"
     assert payload["width"] == 1024
-    assert payload["height"] == 1024
+    assert payload["height"] == 1280
