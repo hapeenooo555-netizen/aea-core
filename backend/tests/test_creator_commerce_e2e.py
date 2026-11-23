@@ -636,3 +636,34 @@ def test_e2e_idempotent_purchase_rejects_changed_affiliate_attribution(monkeypat
     assert second.status_code == 409
     assert len(db.tables["creator_orders"]) == 1
     assert db.tables["creator_order_items"][0]["promoter_id"] == "promoter-001"
+
+
+def test_e2e_same_affiliate_referral_purchase_intent_is_idempotent(monkeypatch):
+    db = E2EDatabase()
+    db.tables["creator_affiliate_links"].append({
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "product_id": PRODUCT_ID,
+        "owner_id": "seller-001",
+        "promoter_id": "promoter-001",
+        "referral_code": "same-referral-idempotency-123456",
+        "status": "active",
+        "listing_status": "approved",
+        "request_status": "approved",
+    })
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db, user_id="buyer-001")
+    payload = {
+        "idempotency_key": "e2e-same-affiliate-key-001",
+        "referral_code": "same-referral-idempotency-123456",
+    }
+
+    first = buyer_api.post(f"/store/products/{PRODUCT_ID}/purchase-intent", json=payload)
+    second = buyer_api.post(f"/store/products/{PRODUCT_ID}/purchase-intent", json=payload)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["order"]["id"] == first.json()["order"]["id"]
+    assert second.json()["affiliate_attributed"] is True
+    assert second.json()["commission_status"] == "rate_unconfigured"
+    assert len(db.tables["creator_orders"]) == 1
+    assert len(db.tables["creator_order_items"]) == 1
