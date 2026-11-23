@@ -139,6 +139,62 @@ def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> boo
     return False
 
 
+@router.get("/{product_id}/reader")
+def read_product_preview(
+    product_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return the owner's saved, approved ebook/course text for private preview only."""
+    db = _db(client)
+    products = _rows(db.table("creator_products").select(
+        "id,owner_id,asset_id,title,product_type,completion_status"
+    ).eq("id", str(product_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    product = products[0]
+    if product.get("product_type") not in {"ebook", "course", "workbook", "guide"}:
+        raise HTTPException(status_code=422, detail="This product type does not use the text reader.")
+    assets = _rows(db.table("content_asset_versions").select(
+        "asset_id,owner_id,title,content,status,version"
+    ).eq("owner_id", owner_id).eq("asset_id", str(product.get("asset_id"))).order(
+        "version", desc=True
+    ).limit(1).execute())
+    if not assets or assets[0].get("status") != "approved":
+        raise HTTPException(status_code=409, detail="Only approved saved content can be opened in the reader.")
+    content = assets[0].get("content")
+    if not isinstance(content, dict):
+        raise HTTPException(status_code=409, detail="This asset does not contain readable structured content.")
+    core = content.get("core_content")
+    chapters = content.get("chapters") or content.get("chapter_content")
+    if not chapters and isinstance(core, dict):
+        chapters = core.get("chapters") or core.get("chapter_content")
+    if not chapters and isinstance(core, str):
+        chapters = [{"title": product.get("title") or assets[0].get("title"), "body": core}]
+    if not isinstance(chapters, list) or not chapters:
+        raise HTTPException(status_code=409, detail="No readable chapter content is saved for this product yet.")
+    readable = []
+    for index, chapter in enumerate(chapters, start=1):
+        if isinstance(chapter, str):
+            title, body = f"Chapter {index}", chapter
+        elif isinstance(chapter, dict):
+            title = str(chapter.get("title") or f"Chapter {index}")
+            body = chapter.get("body") or chapter.get("content") or chapter.get("text") or ""
+        else:
+            continue
+        if isinstance(body, str) and body.strip():
+            readable.append({"number": index, "title": title, "body": body})
+    if not readable:
+        raise HTTPException(status_code=409, detail="No readable chapter text is available.")
+    return {
+        "success": True,
+        "access": "owner_preview_only",
+        "product": {"id": product.get("id"), "title": product.get("title"), "product_type": product.get("product_type")},
+        "chapters": readable,
+        "notice": "Private creator preview. This endpoint does not grant buyer access or paid delivery.",
+    }
+
+
 @router.post("/{product_id}/finish")
 def finish_product(
     product_id: UUID,
