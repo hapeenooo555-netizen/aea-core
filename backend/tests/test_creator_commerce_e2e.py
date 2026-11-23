@@ -115,6 +115,7 @@ class E2EDatabase:
             "creator_order_items": [],
             "creator_payment_events": [],
             "creator_product_entitlements": [],
+            "creator_affiliate_links": [],
         }
         self.storage = FakeStorage()
 
@@ -122,6 +123,19 @@ class E2EDatabase:
         return Query(self, name)
 
     def rpc(self, name, params):
+        if name == "resolve_creator_affiliate_attribution":
+            link = next((row for row in self.tables["creator_affiliate_links"]
+                         if row.get("referral_code") == params["p_code"]
+                         and row.get("product_id") == params["p_product_id"]
+                         and row.get("status") == "active"
+                         and row.get("listing_status") == "approved"
+                         and row.get("request_status") == "approved"), None)
+            if not link:
+                return Result([])
+            return Result([{
+                "affiliate_link_id": link["id"],
+                "promoter_id": link["promoter_id"],
+            }])
         assert name == "settle_creator_order"
         order = next(row for row in self.tables["creator_orders"] if row["id"] == params["p_order_id"])
         if params["p_event_type"] != "payment.succeeded" or not params["p_provider_reference"]:
@@ -522,3 +536,88 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
     assert other_seller.status_code == 200
     assert other_seller.json()["orders"] == []
     assert other_seller.json()["summary"]["paid_total_amount"] == 0
+
+
+def test_e2e_purchase_intent_persists_validated_affiliate_attribution_without_inventing_commission(monkeypatch):
+    db = E2EDatabase()
+    db.tables["creator_affiliate_links"].append({
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "product_id": PRODUCT_ID,
+        "owner_id": "seller-001",
+        "promoter_id": "promoter-001",
+        "referral_code": "valid-referral-code-123456",
+        "status": "active",
+        "listing_status": "approved",
+        "request_status": "approved",
+    })
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db, user_id="buyer-001")
+
+    response = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={
+            "idempotency_key": "e2e-affiliate-attribution-001",
+            "referral_code": "valid-referral-code-123456",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["affiliate_attributed"] is True
+    assert response.json()["commission_status"] == "rate_unconfigured"
+    item = db.tables["creator_order_items"][0]
+    assert item["affiliate_link_id"] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    assert item["promoter_id"] == "promoter-001"
+    assert item["commission_status"] == "rate_unconfigured"
+    assert item.get("commission_rate_bps") is None
+    assert item.get("commission_amount") is None
+
+
+def test_e2e_invalid_affiliate_referral_fails_closed_before_order_creation(monkeypatch):
+    db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db, user_id="buyer-001")
+
+    response = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={
+            "idempotency_key": "e2e-invalid-referral-001",
+            "referral_code": "invalid-referral-code-123456",
+        },
+    )
+    assert response.status_code == 422
+    assert db.tables["creator_orders"] == []
+    assert db.tables["creator_order_items"] == []
+
+
+def test_e2e_idempotent_purchase_rejects_changed_affiliate_attribution(monkeypatch):
+    db = E2EDatabase()
+    db.tables["creator_affiliate_links"].extend([
+        {
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "product_id": PRODUCT_ID, "promoter_id": "promoter-001",
+            "referral_code": "valid-referral-code-123456", "status": "active",
+            "listing_status": "approved", "request_status": "approved",
+        },
+        {
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "product_id": PRODUCT_ID, "promoter_id": "promoter-002",
+            "referral_code": "another-referral-code-123456", "status": "active",
+            "listing_status": "approved", "request_status": "approved",
+        },
+    ])
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db, user_id="buyer-001")
+    key = "e2e-attribution-idempotency-001"
+
+    first = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": key, "referral_code": "valid-referral-code-123456"},
+    )
+    second = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": key, "referral_code": "another-referral-code-123456"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert len(db.tables["creator_orders"]) == 1
+    assert db.tables["creator_order_items"][0]["promoter_id"] == "promoter-001"
