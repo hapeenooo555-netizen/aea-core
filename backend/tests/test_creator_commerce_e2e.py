@@ -124,8 +124,8 @@ class E2EDatabase:
     def rpc(self, name, params):
         assert name == "settle_creator_order"
         order = next(row for row in self.tables["creator_orders"] if row["id"] == params["p_order_id"])
-        assert order["total_amount"] == params["p_amount"]
-        assert order["currency"] == params["p_currency"]
+        if order["total_amount"] != params["p_amount"] or order["currency"] != params["p_currency"]:
+            raise ValueError("payment amount or currency mismatch")
         event_key = (params["p_provider"], params["p_provider_event_id"])
         prior = next((row for row in self.tables["creator_payment_events"]
                       if (row["provider"], row["provider_event_id"]) == event_key), None)
