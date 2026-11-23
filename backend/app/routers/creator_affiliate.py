@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 import secrets
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, ConfigDict
 
 from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client
@@ -42,6 +43,11 @@ def get_public_marketplace_product(slug: str) -> dict[str, Any]:
 
 
 @router.get("/earnings")
+class PayoutRequestBody(BaseModel):
+    payment_method: Literal["mobile_money", "bank_transfer"]
+    model_config = ConfigDict(extra="forbid")
+
+
 def get_my_affiliate_earnings(
     promoter_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
@@ -86,7 +92,7 @@ def get_my_affiliate_earnings(
 
 @router.post("/payout-requests", status_code=201)
 def create_my_payout_request(
-    payment_method: str = Body(..., embed=True),
+    body: PayoutRequestBody,
     promoter_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
@@ -95,7 +101,7 @@ def create_my_payout_request(
         raise HTTPException(status_code=503, detail="User-scoped database access is unavailable.")
     try:
         rows = _rows(client.rpc("create_my_creator_payout_request", {
-            "p_payment_method": payment_method,
+            "p_payment_method": body.payment_method,
         }).execute())
     except Exception as exc:
         raise HTTPException(status_code=409, detail="Payout request could not be created. Check your payable balance and any active request.") from exc
