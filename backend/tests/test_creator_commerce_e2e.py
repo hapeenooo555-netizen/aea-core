@@ -124,17 +124,22 @@ class E2EDatabase:
     def rpc(self, name, params):
         assert name == "settle_creator_order"
         order = next(row for row in self.tables["creator_orders"] if row["id"] == params["p_order_id"])
+        if params["p_event_type"] != "payment.succeeded" or not params["p_provider_reference"]:
+            raise ValueError("invalid successful payment event")
         if order["total_amount"] != params["p_amount"] or order["currency"] != params["p_currency"]:
             raise ValueError("payment amount or currency mismatch")
         event_key = (params["p_provider"], params["p_provider_event_id"])
         prior = next((row for row in self.tables["creator_payment_events"]
                       if (row["provider"], row["provider_event_id"]) == event_key), None)
         if prior:
-            assert prior["order_id"] == order["id"]
-            assert prior["amount"] == params["p_amount"]
-            assert prior["currency"] == params["p_currency"]
+            if (prior["order_id"] != order["id"] or prior["amount"] != params["p_amount"]
+                    or prior["currency"] != params["p_currency"]
+                    or prior["provider_reference"] != params["p_provider_reference"]
+                    or prior["event_type"] != params["p_event_type"]):
+                raise ValueError("provider event replay does not match this order")
             return Result({"success": True, "duplicate": True, "order_id": order["id"]})
-        assert order["status"] == "pending"
+        if order["status"] != "pending":
+            raise ValueError("order is not payable or was already settled by another event")
         self.tables["creator_payment_events"].append({
             "order_id": order["id"], "provider": params["p_provider"],
             "provider_event_id": params["p_provider_event_id"],
@@ -244,6 +249,55 @@ def test_e2e_purchase_fake_payment_and_paid_download(monkeypatch):
     assert delivered.status_code == 200, delivered.text
     assert delivered.json()["expires_in_seconds"] == 300
     assert delivered.json()["download_url"].endswith(f"/{PRODUCT_ID}/guide.pdf")
+
+
+def test_e2e_fake_payment_rejects_a_second_distinct_event_for_paid_order():
+    db = E2EDatabase()
+    api = make_client(db)
+    intent = api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-second-event-0001"},
+    )
+    assert intent.status_code == 201
+    event = {
+        "event_id": "fake-event-original",
+        "order_id": ORDER_ID,
+        "reference": "fake-ref-original",
+        "amount": 15000,
+        "currency": "TZS",
+    }
+    provider = FakePaymentProviderE2E(db)
+    first = provider.deliver_webhook(event, provider.sign(event))
+    assert first["accepted"] is True
+    second_event = {**event, "event_id": "fake-event-second", "reference": "fake-ref-second"}
+    with pytest.raises(ValueError, match="already settled by another event"):
+        provider.deliver_webhook(second_event, provider.sign(second_event))
+    assert len(db.tables["creator_payment_events"]) == 1
+    assert len(db.tables["creator_product_entitlements"]) == 1
+
+
+def test_e2e_fake_payment_rejects_event_replay_with_changed_reference():
+    db = E2EDatabase()
+    api = make_client(db)
+    intent = api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-replay-mismatch-001"},
+    )
+    assert intent.status_code == 201
+    event = {
+        "event_id": "fake-event-replay",
+        "order_id": ORDER_ID,
+        "reference": "fake-ref-original",
+        "amount": 15000,
+        "currency": "TZS",
+    }
+    provider = FakePaymentProviderE2E(db)
+    provider.deliver_webhook(event, provider.sign(event))
+    replay = {**event, "reference": "fake-ref-tampered"}
+    with pytest.raises(ValueError, match="provider event replay does not match"):
+        provider.deliver_webhook(replay, provider.sign(replay))
+    assert len(db.tables["creator_payment_events"]) == 1
+    assert len(db.tables["creator_product_entitlements"]) == 1
 
 
 def test_e2e_fake_payment_rejects_amount_mismatch():
