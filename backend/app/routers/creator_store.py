@@ -19,6 +19,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_product_file_client
 
 router = APIRouter(prefix="/store/products", tags=["creator-store"])
+orders_router = APIRouter(prefix="/store/orders", tags=["creator-orders"])
 
 
 class ProductCreateRequest(BaseModel):
@@ -28,6 +29,11 @@ class ProductCreateRequest(BaseModel):
     product_type: Literal["ebook", "video", "course", "template", "workbook", "guide", "digital_pack"] = "guide"
     price_amount: int = Field(gt=0, le=100000000)
     currency: Literal["TZS"] = "TZS"
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProductPurchaseIntentRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -171,6 +177,82 @@ def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> boo
     if product_type in {"ebook", "guide", "workbook"} and isinstance(core, str):
         return len(core.strip()) >= 300
     return False
+
+
+@router.post("/{product_id}/purchase-intent", status_code=status.HTTP_201_CREATED)
+def create_product_purchase_intent(
+    product_id: UUID,
+    body: ProductPurchaseIntentRequest,
+    buyer_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a pending order intent; it does not start or confirm a payment."""
+    db = _db(client)
+    products = _rows(db.table("creator_products").select(
+        "id,owner_id,title,product_type,price_amount,currency,status,completion_status"
+    ).eq("id", str(product_id)).eq("status", "listed").limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Listed product not found.")
+    product = products[0]
+    if str(product.get("owner_id")) == buyer_id:
+        raise HTTPException(status_code=409, detail="You cannot purchase your own product.")
+    if product.get("completion_status") != "finished":
+        raise HTTPException(status_code=409, detail="This product is not available for purchase.")
+    privileged = get_supabase_product_file_client()
+    if privileged is None:
+        raise HTTPException(status_code=503, detail="Secure order processing is not configured.")
+    files = _rows(privileged.table("creator_product_files").select(
+        "id,owner_id,product_id,status"
+    ).eq("product_id", str(product_id)).eq("owner_id", str(product.get("owner_id"))).eq("status", "ready").limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=409, detail="This product has no verified delivery file.")
+    existing = _rows(privileged.table("creator_orders").select(
+        "id,status,total_amount,currency"
+    ).eq("buyer_id", buyer_id).eq("idempotency_key", body.idempotency_key).limit(1).execute())
+    if existing:
+        order = existing[0]
+        existing_items = _rows(privileged.table("creator_order_items").select(
+            "id,product_id"
+        ).eq("order_id", str(order["id"])).limit(100).execute())
+        if not any(str(item.get("product_id")) == str(product_id) for item in existing_items):
+            raise HTTPException(
+                status_code=409,
+                detail="This idempotency key is already associated with a different product.",
+            )
+        return {"success": True, "order": order, "payment_status": order.get("status"), "payment_initiation_enabled": False, "notice": "Order intent already exists; payment provider is not configured."}
+    amount = int(product.get("price_amount") or 0)
+    order_rows = _rows(privileged.table("creator_orders").insert({
+        "buyer_id": buyer_id,
+        "seller_id": str(product.get("owner_id")),
+        "currency": str(product.get("currency") or "TZS"),
+        "subtotal_amount": amount,
+        "total_amount": amount,
+        "status": "pending",
+        "idempotency_key": body.idempotency_key,
+    }).execute())
+    if not order_rows:
+        raise HTTPException(status_code=502, detail="Purchase intent could not be saved.")
+    order = order_rows[0]
+    items = _rows(privileged.table("creator_order_items").insert({
+        "order_id": str(order["id"]),
+        "product_id": str(product_id),
+        "product_file_id": str(files[0]["id"]),
+        "seller_id": str(product.get("owner_id")),
+        "product_title": str(product.get("title") or "Digital product"),
+        "product_type": str(product.get("product_type") or "digital_product"),
+        "unit_amount": amount,
+        "currency": str(product.get("currency") or "TZS"),
+    }).execute())
+    if not items:
+        privileged.table("creator_orders").update({"status": "cancelled"}).eq("id", str(order["id"])).execute()
+        raise HTTPException(status_code=502, detail="Order item could not be saved; order was cancelled.")
+    return {
+        "success": True,
+        "order": {"id": order["id"], "status": "pending", "total_amount": amount, "currency": product.get("currency", "TZS")},
+        "payment_initiation_enabled": False,
+        "delivery_enabled": False,
+        "notice": "Purchase intent saved. No payment has been requested or received.",
+    }
 
 
 @router.post("/{product_id}/files/upload-url", status_code=status.HTTP_201_CREATED)
@@ -432,4 +514,52 @@ def update_product_status(
     }
 
 
-__all__ = ["router"]
+@orders_router.get("/{order_id}/items/{order_item_id}/download")
+def download_paid_order_item(
+    order_id: UUID,
+    order_item_id: UUID,
+    buyer_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Deliver only when a paid order has an active entitlement for this exact item."""
+    db = _db(client)
+    orders = _rows(db.table("creator_orders").select("id,status,buyer_id").eq(
+        "id", str(order_id)
+    ).eq("buyer_id", buyer_id).limit(1).execute())
+    if not orders or orders[0].get("status") != "paid":
+        raise HTTPException(status_code=403, detail="A confirmed paid order is required for delivery.")
+    privileged = get_supabase_product_file_client()
+    if privileged is None:
+        raise HTTPException(status_code=503, detail="Secure delivery is not configured.")
+    entitlements = _rows(privileged.table("creator_product_entitlements").select(
+        "id,order_id,order_item_id,buyer_id,product_id,product_file_id,revoked_at"
+    ).eq("order_id", str(order_id)).eq("order_item_id", str(order_item_id)).eq(
+        "buyer_id", buyer_id
+    ).limit(1).execute())
+    if not entitlements or entitlements[0].get("revoked_at"):
+        raise HTTPException(status_code=403, detail="No active delivery entitlement exists for this order item.")
+    entitlement = entitlements[0]
+    files = _rows(privileged.table("creator_product_files").select(
+        "id,object_path,original_filename,status,product_id"
+    ).eq("id", str(entitlement.get("product_file_id"))).eq(
+        "product_id", str(entitlement.get("product_id"))
+    ).eq("status", "ready").limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=410, detail="The purchased delivery file is unavailable.")
+    try:
+        signed = _storage(privileged).from_("aea-product-files").create_signed_url(
+            str(files[0]["object_path"]), 300,
+            {"download": str(files[0].get("original_filename") or "purchased-product")}
+        )
+        payload = _storage_payload(signed)
+        url = payload.get("signed_url") or payload.get("signedURL")
+        if not url:
+            raise ValueError("Storage did not return a signed URL.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Secure delivery is temporarily unavailable.") from exc
+    return {"success": True, "download_url": url, "expires_in_seconds": 300, "order_id": str(order_id)}
+
+
+
+
+__all__ = ["router", "orders_router"]
