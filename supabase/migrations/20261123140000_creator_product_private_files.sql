@@ -37,10 +37,6 @@ create policy "owners create own product files" on public.creator_product_files
     (select auth.uid()) = owner_id
     and exists (select 1 from public.creator_products p where p.id = product_id and p.owner_id = (select auth.uid()))
   );
-drop policy if exists "owners update own product files" on public.creator_product_files;
-create policy "owners update own product files" on public.creator_product_files
-  for update to authenticated using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
 revoke all on public.creator_product_files from anon, authenticated;
 grant select, insert on public.creator_product_files to authenticated;
 grant all on public.creator_product_files to service_role;
