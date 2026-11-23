@@ -267,3 +267,23 @@ def get_supabase_pin_publish_client() -> Any:
         return _pin_publish_client
     except Exception:  # pragma: no cover - defensive runtime handling
         return None
+
+
+_product_file_client: Any = None
+
+
+def get_supabase_product_file_client() -> Any:
+    """Server-only client for product-file state changes after owner-scoped validation."""
+    global _product_file_client
+    if _product_file_client is not None:
+        return _product_file_client
+    url = os.getenv("SUPABASE_URL", "")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not (url and service_role_key):
+        return None
+    try:
+        from supabase import create_client
+        _product_file_client = create_client(url, service_role_key)
+        return _product_file_client
+    except Exception:  # pragma: no cover - defensive runtime handling
+        return None
