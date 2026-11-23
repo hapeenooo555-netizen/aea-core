@@ -480,4 +480,32 @@ def review_marketplace_payout(
 
 
 
+class PayoutMarkPaidRequest(BaseModel):
+    payout_reference: str = Field(min_length=3, max_length=200)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.patch("/marketplace/admin/payouts/{request_id}/paid")
+def mark_marketplace_payout_paid(
+    request_id: UUID,
+    body: PayoutMarkPaidRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    _require_admin(db, owner_id)
+    try:
+        rows = _rows(db.rpc("mark_creator_payout_request_paid", {
+            "p_request_id": str(request_id),
+            "p_payout_reference": body.payout_reference.strip(),
+        }).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Payout settlement could not be recorded. Confirm it is approved and has a valid transaction reference.") from exc
+    if not rows:
+        raise HTTPException(status_code=409, detail="Payout settlement was not confirmed.")
+    return {"success": True, "payout_request": rows[0]}
+
+
+
+
 __all__ = ["router"]
