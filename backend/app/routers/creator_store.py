@@ -561,7 +561,7 @@ def list_seller_sales(
     pending_orders = 0
     for order in orders:
         items = _rows(db.table("creator_order_items").select(
-            "id,product_id,product_title,product_type,unit_amount,currency"
+            "id,product_id,product_title,product_type,unit_amount,currency,affiliate_link_id,commission_status"
         ).eq("order_id", str(order["id"])).limit(100).execute())
         if order.get("status") == "paid":
             paid_orders += 1
@@ -581,6 +581,8 @@ def list_seller_sales(
                 "product_type": str(item.get("product_type") or "digital_product"),
                 "amount": int(item.get("unit_amount") or 0),
                 "currency": str(item.get("currency") or order.get("currency") or "TZS"),
+                "affiliate_attributed": bool(item.get("affiliate_link_id")),
+                "commission_status": str(item.get("commission_status") or "not_applicable"),
             } for item in items],
         })
     return {
