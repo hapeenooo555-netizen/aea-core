@@ -19,6 +19,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_product_file_client
 
 router = APIRouter(prefix="/store/products", tags=["creator-store"])
+orders_router = APIRouter(prefix="/store/orders", tags=["creator-orders"])
 
 
 class ProductCreateRequest(BaseModel):
