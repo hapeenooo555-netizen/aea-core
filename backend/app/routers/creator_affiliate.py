@@ -83,6 +83,41 @@ def get_my_affiliate_earnings(
     }
 
 
+
+@router.post("/payout-requests", status_code=201)
+def create_my_payout_request(
+    payment_method: str = Body(..., embed=True),
+    promoter_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Reserve all currently payable commissions for this authenticated promoter."""
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database access is unavailable.")
+    try:
+        rows = _rows(client.rpc("create_my_creator_payout_request", {
+            "p_payment_method": payment_method,
+        }).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Payout request could not be created. Check your payable balance and any active request.") from exc
+    if not rows:
+        raise HTTPException(status_code=409, detail="No payable commissions are available for payout.")
+    return {"success": True, "payout_request": rows[0]}
+
+
+@router.get("/payout-requests")
+def list_my_payout_requests(
+    promoter_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database access is unavailable.")
+    try:
+        rows = _rows(client.rpc("get_my_creator_payout_requests", {}).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Payout history is temporarily unavailable.") from exc
+    return {"success": True, "payout_requests": rows}
+
+
 @router.post("/requests/{request_id}/link", status_code=201)
 def create_affiliate_link(
     request_id: UUID,
