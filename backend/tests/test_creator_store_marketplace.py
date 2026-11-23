@@ -20,6 +20,14 @@ class Response:
         self.data = data
 
 
+class RpcQuery:
+    def __init__(self, response):
+        self.response = response
+
+    def execute(self):
+        return self.response
+
+
 class Query:
     def __init__(self, db, table):
         self.db, self.table = db, table
@@ -99,7 +107,7 @@ class Database:
         for row in matches:
             row["status"] = params["p_status"]
             row["commission_rate_bps"] = params["p_commission_rate_bps"]
-        return Response(deepcopy(matches))
+        return RpcQuery(Response(deepcopy(matches)))
 
 
 def client_for(db=None, user_id=USER):
