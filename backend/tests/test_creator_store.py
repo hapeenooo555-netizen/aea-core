@@ -74,6 +74,7 @@ class Database:
 def client(db=None):
     app = FastAPI()
     app.include_router(creator_store.router)
+    app.include_router(creator_store.orders_router)
     app.dependency_overrides[get_current_user_id] = lambda: "owner-123"
     app.dependency_overrides[get_user_scoped_client] = lambda: db or Database()
     return TestClient(app)
@@ -118,7 +119,7 @@ def test_owner_cannot_list_unfinished_product():
         "completion_status": "draft",
     })
     response = client(db).patch(
-        "/store/products/22222222-2222-4222-222222222222/status",
+        "/store/products/22222222-2222-4222-8222-222222222222/status",
         json={"status": "listed"},
     )
     assert response.status_code == 409
@@ -320,3 +321,114 @@ def test_product_file_completion_rejects_wrong_storage_size(monkeypatch):
     )
     assert response.status_code == 409
     assert db.tables["creator_product_files"][0]["status"] == "pending"
+
+
+def test_purchase_intent_requires_listed_finished_product_and_ready_file(monkeypatch):
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "seller-456",
+        "title": "Digital Guide",
+        "product_type": "guide",
+        "price_amount": 15000,
+        "currency": "TZS",
+        "status": "listed",
+        "completion_status": "finished",
+    })
+    db.tables["creator_product_files"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "seller-456",
+        "status": "ready",
+    }]
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/purchase-intent",
+        json={"idempotency_key": "buyer-guide-2026-001"},
+    )
+    assert response.status_code == 201
+    assert response.json()["order"]["status"] == "pending"
+    assert response.json()["payment_initiation_enabled"] is False
+    assert response.json()["delivery_enabled"] is False
+    assert db.tables["creator_order_items"][0]["product_file_id"] == "33333333-3333-4333-8333-333333333333"
+
+
+def test_purchase_intent_rejects_seller_buying_own_product():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "title": "My Product",
+        "product_type": "guide",
+        "price_amount": 15000,
+        "currency": "TZS",
+        "status": "listed",
+        "completion_status": "finished",
+    })
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/purchase-intent",
+        json={"idempotency_key": "self-buy-2026-001"},
+    )
+    assert response.status_code == 409
+
+
+def test_pending_order_cannot_download_paid_product(monkeypatch):
+    db = Database()
+    db.tables["creator_orders"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "buyer_id": "owner-123",
+        "status": "pending",
+    }]
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).get(
+        "/store/orders/44444444-4444-4444-8444-444444444444/items/55555555-5555-4555-8555-555555555555/download"
+    )
+    assert response.status_code == 403
+
+
+def test_paid_order_without_entitlement_cannot_download(monkeypatch):
+    db = Database()
+    db.tables["creator_orders"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "buyer_id": "owner-123",
+        "status": "paid",
+    }]
+    db.tables["creator_product_entitlements"] = []
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).get(
+        "/store/orders/44444444-4444-4444-8444-444444444444/items/55555555-5555-4555-8555-555555555555/download"
+    )
+    assert response.status_code == 403
+
+
+def test_active_entitlement_on_paid_order_gets_short_lived_download(monkeypatch):
+    db = Database()
+    db.tables["creator_orders"] = [{
+        "id": "44444444-4444-4444-8444-444444444444",
+        "buyer_id": "owner-123",
+        "status": "paid",
+    }]
+    db.tables["creator_product_entitlements"] = [{
+        "id": "66666666-6666-4666-8666-666666666666",
+        "order_id": "44444444-4444-4444-8444-444444444444",
+        "order_item_id": "55555555-5555-4555-8555-555555555555",
+        "buyer_id": "owner-123",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "product_file_id": "33333333-3333-4333-8333-333333333333",
+        "revoked_at": None,
+    }]
+    db.tables["creator_product_files"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "object_path": "seller-456/22222222-2222-4222-8222-222222222222/guide.pdf",
+        "original_filename": "guide.pdf",
+        "status": "ready",
+    }]
+    db.storage = FakeStorage()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).get(
+        "/store/orders/44444444-4444-4444-8444-444444444444/items/55555555-5555-4555-8555-555555555555/download"
+    )
+    assert response.status_code == 200
+    assert response.json()["expires_in_seconds"] == 300
+    assert response.json()["download_url"].endswith("/seller-456/22222222-2222-4222-8222-222222222222/guide.pdf")
