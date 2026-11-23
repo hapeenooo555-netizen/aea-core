@@ -506,4 +506,52 @@ def update_product_status(
     }
 
 
-__all__ = ["router"]
+@orders_router.get("/{order_id}/items/{order_item_id}/download")
+def download_paid_order_item(
+    order_id: UUID,
+    order_item_id: UUID,
+    buyer_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Deliver only when a paid order has an active entitlement for this exact item."""
+    db = _db(client)
+    orders = _rows(db.table("creator_orders").select("id,status,buyer_id").eq(
+        "id", str(order_id)
+    ).eq("buyer_id", buyer_id).limit(1).execute())
+    if not orders or orders[0].get("status") != "paid":
+        raise HTTPException(status_code=403, detail="A confirmed paid order is required for delivery.")
+    privileged = get_supabase_product_file_client()
+    if privileged is None:
+        raise HTTPException(status_code=503, detail="Secure delivery is not configured.")
+    entitlements = _rows(privileged.table("creator_product_entitlements").select(
+        "id,order_id,order_item_id,buyer_id,product_id,product_file_id,revoked_at"
+    ).eq("order_id", str(order_id)).eq("order_item_id", str(order_item_id)).eq(
+        "buyer_id", buyer_id
+    ).limit(1).execute())
+    if not entitlements or entitlements[0].get("revoked_at"):
+        raise HTTPException(status_code=403, detail="No active delivery entitlement exists for this order item.")
+    entitlement = entitlements[0]
+    files = _rows(privileged.table("creator_product_files").select(
+        "id,object_path,original_filename,status,product_id"
+    ).eq("id", str(entitlement.get("product_file_id"))).eq(
+        "product_id", str(entitlement.get("product_id"))
+    ).eq("status", "ready").limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=410, detail="The purchased delivery file is unavailable.")
+    try:
+        signed = _storage(privileged).from_("aea-product-files").create_signed_url(
+            str(files[0]["object_path"]), 300,
+            {"download": str(files[0].get("original_filename") or "purchased-product")}
+        )
+        payload = _storage_payload(signed)
+        url = payload.get("signed_url") or payload.get("signedURL")
+        if not url:
+            raise ValueError("Storage did not return a signed URL.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Secure delivery is temporarily unavailable.") from exc
+    return {"success": True, "download_url": url, "expires_in_seconds": 300, "order_id": str(order_id)}
+
+
+
+
+__all__ = ["router", "orders_router"]
