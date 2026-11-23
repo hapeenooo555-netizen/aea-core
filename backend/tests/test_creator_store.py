@@ -215,3 +215,108 @@ def test_reader_does_not_expose_another_owners_product():
     })
     response = client(db).get("/store/products/22222222-2222-4222-8222-222222222222/reader")
     assert response.status_code == 404
+
+
+class FakeBucket:
+    def __init__(self, objects=None):
+        self.objects = objects or []
+
+    def create_signed_upload_url(self, path):
+        return {"signed_url": "https://storage.example/upload/" + path, "token": "upload-token"}
+
+    def list(self, _folder, _options=None):
+        return self.objects
+
+    def create_signed_url(self, path, _expires, _options=None):
+        return {"signed_url": "https://storage.example/download/" + path}
+
+
+class FakeStorage:
+    def __init__(self, objects=None):
+        self.bucket = FakeBucket(objects)
+
+    def from_(self, _bucket):
+        return self.bucket
+
+
+def test_private_product_upload_url_is_owner_scoped_and_pending():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "status": "draft",
+    })
+    db.storage = FakeStorage()
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/files/upload-url",
+        json={"filename": "guide.pdf", "mime_type": "application/pdf", "size_bytes": 1200},
+    )
+    assert response.status_code == 201
+    assert response.json()["file"]["mime_type"] == "application/pdf"
+    assert response.json()["upload"]["token"] == "upload-token"
+    row = db.tables["creator_product_files"][0]
+    assert row["owner_id"] == "owner-123"
+    assert row["status"] == "pending"
+    assert row["object_path"].startswith("owner-123/22222222-2222-4222-8222-222222222222/")
+
+
+def test_private_product_upload_rejects_mime_extension_mismatch():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "status": "draft",
+    })
+    db.storage = FakeStorage()
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/files/upload-url",
+        json={"filename": "guide.exe", "mime_type": "application/pdf", "size_bytes": 1200},
+    )
+    assert response.status_code == 422
+
+
+def test_product_file_completion_requires_verified_storage_and_privileged_write(monkeypatch):
+    db = Database()
+    db.tables["creator_product_files"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "bucket_id": "aea-product-files",
+        "object_path": "owner-123/22222222-2222-4222-8222-222222222222/file.pdf",
+        "original_filename": "file.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 1200,
+        "status": "pending",
+    }]
+    db.storage = FakeStorage([{"name": "file.pdf", "metadata": {"size": 1200}}])
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/files/complete",
+        json={"file_id": "33333333-3333-4333-8333-333333333333"},
+    )
+    assert response.status_code == 200
+    assert db.tables["creator_product_files"][0]["status"] == "ready"
+    assert response.json()["buyer_delivery_enabled"] is False
+
+
+def test_product_file_completion_rejects_wrong_storage_size(monkeypatch):
+    db = Database()
+    db.tables["creator_product_files"] = [{
+        "id": "33333333-3333-4333-8333-333333333333",
+        "product_id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "bucket_id": "aea-product-files",
+        "object_path": "owner-123/22222222-2222-4222-8222-222222222222/file.pdf",
+        "original_filename": "file.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 1200,
+        "status": "pending",
+    }]
+    db.storage = FakeStorage([{"name": "file.pdf", "metadata": {"size": 1000}}])
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    response = client(db).post(
+        "/store/products/22222222-2222-4222-8222-222222222222/files/complete",
+        json={"file_id": "33333333-3333-4333-8333-333333333333"},
+    )
+    assert response.status_code == 409
+    assert db.tables["creator_product_files"][0]["status"] == "pending"
