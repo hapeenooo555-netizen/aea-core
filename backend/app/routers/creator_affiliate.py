@@ -41,6 +41,48 @@ def get_public_marketplace_product(slug: str) -> dict[str, Any]:
     return {"success": True, "product": rows[0]}
 
 
+@router.get("/earnings")
+def get_my_affiliate_earnings(
+    promoter_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return only the authenticated promoter's attributed commission ledger."""
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database access is unavailable.")
+    try:
+        result = client.rpc("get_my_creator_affiliate_earnings", {}).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Affiliate earnings are temporarily unavailable.") from exc
+    rows = _rows(result)
+    entries = [{
+        "order_id": row.get("order_id"),
+        "product_id": row.get("product_id"),
+        "product_title": str(row.get("product_title") or "Digital product"),
+        "product_type": str(row.get("product_type") or "digital_product"),
+        "unit_amount": int(row.get("unit_amount") or 0),
+        "currency": str(row.get("currency") or "TZS"),
+        "commission_rate_bps": row.get("commission_rate_bps"),
+        "commission_amount": int(row.get("commission_amount") or 0),
+        "commission_status": str(row.get("commission_status") or "pending"),
+        "created_at": row.get("created_at"),
+    } for row in rows]
+    payable = sum(x["commission_amount"] for x in entries if x["commission_status"] == "payable")
+    paid = sum(x["commission_amount"] for x in entries if x["commission_status"] == "paid")
+    pending = sum(x["commission_amount"] for x in entries if x["commission_status"] in {"pending", "approved"})
+    return {
+        "success": True,
+        "earnings": entries,
+        "summary": {
+            "referral_order_count": len(entries),
+            "payable_amount": payable,
+            "paid_amount": paid,
+            "pending_amount": pending,
+            "currency": "TZS",
+        },
+        "notice": "Only commission entries attributed to your account are returned. Payable is not the same as paid out.",
+    }
+
+
 @router.post("/requests/{request_id}/link", status_code=201)
 def create_affiliate_link(
     request_id: UUID,
