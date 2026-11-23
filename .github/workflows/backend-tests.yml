@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   pull_request:
-    branches: [main, "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue", "feat/marketplace-store-api-contracts"]
+    branches: [main, "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue", "feat/marketplace-store-api-contracts", "feat/marketplace-public-product-links"]
   push:
     branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/country-intelligence-content-to-revenue", "feat/country-revenue-attribution", "feat/country-revenue-attribution-synced", "feat/marketplace-store-api-contracts"]
   workflow_dispatch:
