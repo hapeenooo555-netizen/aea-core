@@ -115,6 +115,71 @@ def create_product_listing(
     return {"success": True, "product": rows[0], "checkout_enabled": False, "delivery_enabled": False}
 
 
+def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> bool:
+    """Require approved, substantive content before a product can be finished."""
+    if asset.get("status") != "approved":
+        return False
+    content = asset.get("content")
+    if not isinstance(content, dict):
+        return False
+    core = content.get("core_content")
+    if isinstance(core, str) and len(core.strip()) >= 300:
+        return True
+    if isinstance(core, dict):
+        core_text = " ".join(str(value) for value in core.values() if isinstance(value, (str, int, float)))
+        if len(core_text.strip()) >= 300:
+            return True
+    # Long-form ebooks/courses need actual readable chapter/module bodies,
+    # not only a title or table of contents.
+    if product_type in {"ebook", "course", "workbook", "guide"}:
+        chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules")
+        if isinstance(chapters, list) and chapters:
+            readable = [item for item in chapters if isinstance(item, dict) and len(str(item.get("body") or item.get("content") or "").strip()) >= 200]
+            return len(readable) == len(chapters)
+    return False
+
+
+@router.post("/{product_id}/finish")
+def finish_product(
+    product_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Mark a product finished only after its latest owned content asset is approved and substantive."""
+    db = _db(client)
+    existing = db.table("creator_products").select(
+        "id,owner_id,asset_id,product_type,status,completion_status"
+    ).eq("id", str(product_id)).eq("owner_id", owner_id).limit(1).execute()
+    products = _rows(existing)
+    if not products:
+        raise HTTPException(status_code=404, detail="Product listing not found.")
+    product = products[0]
+    asset_response = db.table("content_asset_versions").select(
+        "asset_id,owner_id,title,content_type,content,status,version"
+    ).eq("owner_id", owner_id).eq("asset_id", str(product.get("asset_id"))).order(
+        "version", desc=True
+    ).limit(1).execute()
+    assets = _rows(asset_response)
+    if not assets or not _asset_has_finished_content(str(product.get("product_type") or ""), assets[0]):
+        raise HTTPException(
+            status_code=409,
+            detail="Product is not ready. Approve its latest saved content and ensure the actual product text or chapter bodies are complete before finishing.",
+        )
+    rows = _rows(db.table("creator_products").update({
+        "completion_status": "finished"
+    }).eq("id", str(product_id)).eq("owner_id", owner_id).select("*").execute())
+    if not rows:
+        raise HTTPException(status_code=409, detail="Product completion could not be saved.")
+    return {
+        "success": True,
+        "product": rows[0],
+        "completion_status": "finished",
+        "checkout_enabled": False,
+        "delivery_enabled": False,
+        "notice": "Product content is marked finished. Checkout and paid delivery are still disabled.",
+    }
+
+
 @router.patch("/{product_id}/status")
 def update_product_status(
     product_id: UUID,
@@ -124,11 +189,14 @@ def update_product_status(
 ) -> dict[str, Any]:
     """Allow owner to list or archive a product; never activates checkout."""
     db = _db(client)
-    existing = db.table("creator_products").select("id,status").eq(
+    existing = db.table("creator_products").select("id,status,completion_status").eq(
         "id", str(product_id)
     ).eq("owner_id", owner_id).limit(1).execute()
-    if not _rows(existing):
+    existing_rows = _rows(existing)
+    if not existing_rows:
         raise HTTPException(status_code=404, detail="Product listing not found.")
+    if body.status == "listed" and existing_rows[0].get("completion_status") != "finished":
+        raise HTTPException(status_code=409, detail="Finish and validate the product before listing it for sale.")
     updated = db.table("creator_products").update({"status": body.status}).eq(
         "id", str(product_id)
     ).eq("owner_id", owner_id).select("*").execute()
