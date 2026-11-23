@@ -514,6 +514,57 @@ def update_product_status(
     }
 
 
+@orders_router.get("/sales")
+def list_seller_sales(
+    seller_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Return a seller-scoped order ledger; buyer identity and payment secrets are omitted."""
+    db = _db(client)
+    orders = _rows(db.table("creator_orders").select(
+        "id,status,currency,subtotal_amount,total_amount,created_at,paid_at"
+    ).eq("seller_id", seller_id).order("created_at", desc=True).limit(100).execute())
+    ledger: list[dict[str, Any]] = []
+    paid_total = 0
+    paid_orders = 0
+    pending_orders = 0
+    for order in orders:
+        items = _rows(db.table("creator_order_items").select(
+            "id,product_id,product_title,product_type,unit_amount,currency"
+        ).eq("order_id", str(order["id"])).limit(100).execute())
+        if order.get("status") == "paid":
+            paid_orders += 1
+            paid_total += int(order.get("total_amount") or 0)
+        elif order.get("status") == "pending":
+            pending_orders += 1
+        ledger.append({
+            "order_id": str(order["id"]),
+            "status": str(order.get("status") or "unknown"),
+            "currency": str(order.get("currency") or "TZS"),
+            "total_amount": int(order.get("total_amount") or 0),
+            "created_at": order.get("created_at"),
+            "paid_at": order.get("paid_at"),
+            "items": [{
+                "product_id": str(item.get("product_id") or ""),
+                "title": str(item.get("product_title") or "Digital product"),
+                "product_type": str(item.get("product_type") or "digital_product"),
+                "amount": int(item.get("unit_amount") or 0),
+                "currency": str(item.get("currency") or order.get("currency") or "TZS"),
+            } for item in items],
+        })
+    return {
+        "success": True,
+        "orders": ledger,
+        "summary": {
+            "order_count": len(ledger),
+            "paid_order_count": paid_orders,
+            "pending_order_count": pending_orders,
+            "paid_total_amount": paid_total,
+            "currency": "TZS",
+        },
+    }
+
+
 @orders_router.get("/library")
 def list_buyer_product_library(
     buyer_id: str = Depends(get_current_user_id),
