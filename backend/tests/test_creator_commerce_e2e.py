@@ -138,6 +138,7 @@ class E2EDatabase:
             return Result([{
                 "affiliate_link_id": link["id"],
                 "promoter_id": link["promoter_id"],
+                "commission_rate_bps": link["commission_rate_bps"],
             }])
         assert name == "settle_creator_order"
         order = next(row for row in self.tables["creator_orders"] if row["id"] == params["p_order_id"])
@@ -510,6 +511,7 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
         "status": "active",
         "listing_status": "approved",
         "request_status": "approved",
+        "commission_rate_bps": 1500,
     })
     monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     buyer_api = make_client(db, user_id="buyer-001")
@@ -543,7 +545,9 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
     assert body["orders"][0]["order_id"] == order["id"]
     assert body["orders"][0]["items"][0]["title"] == "AEA Digital Guide"
     assert body["orders"][0]["items"][0]["affiliate_attributed"] is True
-    assert body["orders"][0]["items"][0]["commission_status"] == "rate_unconfigured"
+    assert body["orders"][0]["items"][0]["commission_status"] == "payable"
+    assert body["orders"][0]["items"][0]["commission_rate_bps"] == 1500
+    assert body["orders"][0]["items"][0]["commission_amount"] == 2250
     assert body["orders"][0]["status"] == "paid"
     assert "buyer_id" not in body["orders"][0]
 
@@ -553,7 +557,7 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
     assert other_seller.json()["summary"]["paid_total_amount"] == 0
 
 
-def test_e2e_purchase_intent_persists_validated_affiliate_attribution_without_inventing_commission(monkeypatch):
+def test_e2e_purchase_intent_snapshots_vendor_approved_affiliate_commission(monkeypatch):
     db = E2EDatabase()
     db.tables["creator_affiliate_links"].append({
         "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -564,6 +568,7 @@ def test_e2e_purchase_intent_persists_validated_affiliate_attribution_without_in
         "status": "active",
         "listing_status": "approved",
         "request_status": "approved",
+        "commission_rate_bps": 1500,
     })
     monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     buyer_api = make_client(db, user_id="buyer-001")
@@ -577,13 +582,15 @@ def test_e2e_purchase_intent_persists_validated_affiliate_attribution_without_in
     )
     assert response.status_code == 201, response.text
     assert response.json()["affiliate_attributed"] is True
-    assert response.json()["commission_status"] == "rate_unconfigured"
+    assert response.json()["commission_status"] == "pending"
+    assert response.json()["commission_rate_bps"] == 1500
+    assert response.json()["commission_amount"] == 2250
     item = db.tables["creator_order_items"][0]
     assert item["affiliate_link_id"] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     assert item["promoter_id"] == "promoter-001"
-    assert item["commission_status"] == "rate_unconfigured"
-    assert item.get("commission_rate_bps") is None
-    assert item.get("commission_amount") is None
+    assert item["commission_status"] == "pending"
+    assert item["commission_rate_bps"] == 1500
+    assert item["commission_amount"] == 2250
 
 
 def test_e2e_invalid_affiliate_referral_fails_closed_before_order_creation(monkeypatch):
@@ -611,12 +618,14 @@ def test_e2e_idempotent_purchase_rejects_changed_affiliate_attribution(monkeypat
             "product_id": PRODUCT_ID, "promoter_id": "promoter-001",
             "referral_code": "valid-referral-code-123456", "status": "active",
             "listing_status": "approved", "request_status": "approved",
+        "commission_rate_bps": 1500,
         },
         {
             "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
             "product_id": PRODUCT_ID, "promoter_id": "promoter-002",
             "referral_code": "another-referral-code-123456", "status": "active",
             "listing_status": "approved", "request_status": "approved",
+        "commission_rate_bps": 1500,
         },
     ])
     monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
@@ -649,6 +658,7 @@ def test_e2e_same_affiliate_referral_purchase_intent_is_idempotent(monkeypatch):
         "status": "active",
         "listing_status": "approved",
         "request_status": "approved",
+        "commission_rate_bps": 1500,
     })
     monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     buyer_api = make_client(db, user_id="buyer-001")
@@ -664,6 +674,8 @@ def test_e2e_same_affiliate_referral_purchase_intent_is_idempotent(monkeypatch):
     assert second.status_code == 201, second.text
     assert second.json()["order"]["id"] == first.json()["order"]["id"]
     assert second.json()["affiliate_attributed"] is True
-    assert second.json()["commission_status"] == "rate_unconfigured"
+    assert second.json()["commission_status"] == "pending"
+    assert second.json()["commission_rate_bps"] == 1500
+    assert second.json()["commission_amount"] == 2250
     assert len(db.tables["creator_orders"]) == 1
     assert len(db.tables["creator_order_items"]) == 1
