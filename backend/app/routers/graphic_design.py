@@ -159,7 +159,16 @@ async def generate_graphic_design_image(
             detail="Could not prepare professional graphic-design content. Please retry.",
         ) from exc
     final_overlay = body.text_overlay or DesignTextOverlay(**creative["text_overlay"])
-    provider_prompt = creative["visual_prompt"]
+    # Generate clean background art only. The exact copy is composited locally
+    # after inspection; asking the image model to render typography conflicts
+    # with the OCR gate and causes costly, multi-minute retry loops.
+    provider_prompt = (
+        creative["visual_prompt"]
+        + "\\n\\nBACKGROUND ART ONLY. Do not render any text, letters, words, "
+        "numbers, typography, logos, watermarks, labels, signage, signatures, "
+        "or pseudo-text. Leave clean negative space for the exact copy to be "
+        "composited by AEA after image inspection."
+    )
     provider_name = "fal.ai"
     model_id = (
         "fal-ai/z-image/turbo"
