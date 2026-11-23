@@ -125,17 +125,19 @@ def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> boo
     core = content.get("core_content")
     if isinstance(core, str) and len(core.strip()) >= 300:
         return True
-    if isinstance(core, dict):
-        core_text = " ".join(str(value) for value in core.values() if isinstance(value, (str, int, float)))
-        if len(core_text.strip()) >= 300:
-            return True
-    # Long-form ebooks/courses need actual readable chapter/module bodies,
-    # not only a title or table of contents.
-    if product_type in {"ebook", "course", "workbook", "guide"}:
-        chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules")
-        if isinstance(chapters, list) and chapters:
-            readable = [item for item in chapters if isinstance(item, dict) and len(str(item.get("body") or item.get("content") or "").strip()) >= 200]
-            return len(readable) == len(chapters)
+    # A nested core_content object may hold the structured chapter list.
+    nested_chapters = core.get("chapters") or core.get("chapter_content") if isinstance(core, dict) else None
+    chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules") or nested_chapters
+    if isinstance(chapters, list) and chapters:
+        readable = [
+            item for item in chapters
+            if isinstance(item, dict)
+            and len(str(item.get("body") or item.get("content") or item.get("text") or "").strip()) >= 200
+        ]
+        return len(readable) == len(chapters)
+    # Single-body digital guides are allowed only when the actual text is present.
+    if product_type in {"ebook", "guide", "workbook"} and isinstance(core, str):
+        return len(core.strip()) >= 300
     return False
 
 
