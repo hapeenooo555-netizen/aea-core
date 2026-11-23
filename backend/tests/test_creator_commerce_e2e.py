@@ -185,11 +185,11 @@ class FakePaymentProviderE2E:
         return {"accepted": True, **result}
 
 
-def make_client(db):
+def make_client(db, user_id="buyer-001"):
     app = FastAPI()
     app.include_router(creator_store.router)
     app.include_router(creator_store.orders_router)
-    app.dependency_overrides[get_current_user_id] = lambda: "buyer-001"
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
     app.dependency_overrides[get_user_scoped_client] = lambda: db
     return TestClient(app)
 
@@ -298,6 +298,42 @@ def test_e2e_fake_payment_rejects_event_replay_with_changed_reference():
         provider.deliver_webhook(replay, provider.sign(replay))
     assert len(db.tables["creator_payment_events"]) == 1
     assert len(db.tables["creator_product_entitlements"]) == 1
+
+
+def test_e2e_order_download_is_not_available_to_another_buyer():
+    db = E2EDatabase()
+    owner_api = make_client(db)
+    intent = owner_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-owner-check-0001"},
+    )
+    assert intent.status_code == 201
+    order = intent.json()["order"]
+    event = {
+        "event_id": "fake-event-owner-check",
+        "order_id": order["id"],
+        "reference": "fake-ref-owner-check",
+        "amount": 15000,
+        "currency": "TZS",
+    }
+    provider = FakePaymentProviderE2E(db)
+    provider.deliver_webhook(event, provider.sign(event))
+
+    other_buyer_api = make_client(db, user_id="buyer-002")
+    denied = other_buyer_api.get(f"/store/orders/{order['id']}/items/{ITEM_ID}/download")
+    assert denied.status_code == 403
+
+
+def test_e2e_creator_cannot_purchase_own_product():
+    db = E2EDatabase()
+    seller_api = make_client(db, user_id="seller-001")
+    response = seller_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-self-purchase-0001"},
+    )
+    assert response.status_code == 409
+    assert db.tables["creator_orders"] == []
+    assert db.tables["creator_order_items"] == []
 
 
 def test_e2e_fake_payment_rejects_amount_mismatch():
