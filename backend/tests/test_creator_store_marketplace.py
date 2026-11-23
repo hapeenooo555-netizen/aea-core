@@ -91,6 +91,16 @@ class Database:
     def table(self, name):
         return Query(self, name)
 
+    def rpc(self, name, params):
+        if name != "review_creator_promotion_request":
+            raise AssertionError(f"Unexpected RPC: {name}")
+        rows = self.tables.setdefault("creator_promotion_requests", [])
+        matches = [row for row in rows if row.get("id") == params["p_request_id"] and row.get("status") == "pending"]
+        for row in matches:
+            row["status"] = params["p_status"]
+            row["commission_rate_bps"] = params["p_commission_rate_bps"]
+        return Response(deepcopy(matches))
+
 
 def client_for(db=None, user_id=USER):
     app = FastAPI()
