@@ -302,8 +302,9 @@ def test_e2e_fake_payment_rejects_event_replay_with_changed_reference(monkeypatc
     assert len(db.tables["creator_product_entitlements"]) == 1
 
 
-def test_e2e_purchase_intent_is_idempotent_for_same_buyer_key():
+def test_e2e_purchase_intent_is_idempotent_for_same_buyer_key(monkeypatch):
     db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     api = make_client(db)
     first = api.post(
         f"/store/products/{PRODUCT_ID}/purchase-intent",
