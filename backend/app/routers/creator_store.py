@@ -227,7 +227,7 @@ def create_product_purchase_intent(
     if existing:
         order = existing[0]
         existing_items = _rows(privileged.table("creator_order_items").select(
-            "id,product_id,affiliate_link_id"
+            "id,product_id,affiliate_link_id,commission_rate_bps,commission_amount,commission_status"
         ).eq("order_id", str(order["id"])).limit(100).execute())
         matching_item = next((item for item in existing_items if str(item.get("product_id")) == str(product_id)), None)
         if not matching_item:
@@ -243,10 +243,21 @@ def create_product_purchase_intent(
             "payment_status": order.get("status"),
             "payment_initiation_enabled": False,
             "affiliate_attributed": bool(matching_item.get("affiliate_link_id")),
-            "commission_status": "rate_unconfigured" if matching_item.get("affiliate_link_id") else "not_applicable",
+            "commission_rate_bps": matching_item.get("commission_rate_bps"),
+            "commission_amount": matching_item.get("commission_amount"),
+            "commission_status": str(matching_item.get("commission_status") or "not_applicable"),
             "notice": "Order intent already exists; payment provider is not configured.",
         }
     amount = int(product.get("price_amount") or 0)
+    commission_rate_bps = (
+        int(affiliate_attribution["commission_rate_bps"])
+        if affiliate_attribution and affiliate_attribution.get("commission_rate_bps") is not None
+        else None
+    )
+    commission_amount = (
+        (amount * commission_rate_bps + 5000) // 10000
+        if commission_rate_bps is not None else None
+    )
     order_rows = _rows(privileged.table("creator_orders").insert({
         "buyer_id": buyer_id,
         "seller_id": str(product.get("owner_id")),
@@ -270,7 +281,9 @@ def create_product_purchase_intent(
         "currency": str(product.get("currency") or "TZS"),
         "affiliate_link_id": affiliate_attribution.get("affiliate_link_id") if affiliate_attribution else None,
         "promoter_id": affiliate_attribution.get("promoter_id") if affiliate_attribution else None,
-        "commission_status": "rate_unconfigured" if affiliate_attribution else "not_applicable",
+        "commission_rate_bps": commission_rate_bps,
+        "commission_amount": commission_amount,
+        "commission_status": "pending" if commission_rate_bps is not None else ("rate_unconfigured" if affiliate_attribution else "not_applicable"),
     }).execute())
     if not items:
         privileged.table("creator_orders").update({"status": "cancelled"}).eq("id", str(order["id"])).execute()
@@ -281,8 +294,10 @@ def create_product_purchase_intent(
         "payment_initiation_enabled": False,
         "delivery_enabled": False,
         "affiliate_attributed": bool(affiliate_attribution),
-        "commission_status": "rate_unconfigured" if affiliate_attribution else "not_applicable",
-        "notice": "Purchase intent saved. No payment has been requested or received. Affiliate commission is not calculated until vendor-approved terms are configured.",
+        "commission_rate_bps": commission_rate_bps,
+        "commission_amount": commission_amount,
+        "commission_status": "pending" if commission_rate_bps is not None else ("rate_unconfigured" if affiliate_attribution else "not_applicable"),
+        "notice": "Purchase intent saved. No payment has been requested or received. The vendor-approved commission is provisional until payment settles.",
     }
 
 
