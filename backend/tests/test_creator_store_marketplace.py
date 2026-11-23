@@ -102,7 +102,7 @@ def client_for(db=None, user_id=USER):
 
 def product_row(**overrides):
     return {
-        "id": PRODUCT, "owner_id": USER, "status": "listed",
+        "id": PRODUCT, "owner_id": USER, "status": "listed", "completion_status": "finished",
         "marketplace_enabled": True, "price_amount": 25000,
         "currency": "TZS", "title": "Test product",
         "description": "A product", "product_type": "digital",
@@ -203,6 +203,24 @@ def test_distribution_request_cannot_be_created_for_another_users_product():
     )
     assert response.status_code == 404
     assert db.tables.get("creator_distribution_jobs", []) == []
+
+
+def test_marketplace_and_distribution_require_finished_products():
+    db = Database({"creator_products": [product_row(completion_status="draft")]})
+    distribution = client_for(db).post(
+        f"/store/products/{PRODUCT}/distribution",
+        json={"destination": "pinterest"},
+    )
+    assert distribution.status_code == 409
+
+    marketplace = client_for(db).patch(
+        f"/store/products/{PRODUCT}/marketplace",
+        json={"enabled": True},
+    )
+    assert marketplace.status_code == 409
+
+    listing = client_for(db).post(f"/store/products/{PRODUCT}/marketplace/listing")
+    assert listing.status_code == 409
 
 
 def test_marketplace_toggle_requires_listed_product_and_updates_owner_row():

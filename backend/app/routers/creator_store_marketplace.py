@@ -141,9 +141,11 @@ def create_distribution_job(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
-    product = _one(db, "creator_products", "id,owner_id,status", id=str(product_id), owner_id=owner_id)
+    product = _one(db, "creator_products", "id,owner_id,status,completion_status", id=str(product_id), owner_id=owner_id)
     if not product:
         raise HTTPException(status_code=404, detail="Creator product not found.")
+    if product.get("status") != "listed" or product.get("completion_status") != "finished":
+        raise HTTPException(status_code=409, detail="Finish and list the product before creating distribution drafts.")
     # Repeated taps/retries must not create duplicate draft requests for the
     # same owner, product and destination. This is draft deduplication only;
     # it does not claim that approval or external publishing has occurred.
@@ -205,11 +207,11 @@ def set_marketplace_enabled(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
-    product = _one(db, "creator_products", "id,status,marketplace_enabled", id=str(product_id), owner_id=owner_id)
+    product = _one(db, "creator_products", "id,status,completion_status,marketplace_enabled", id=str(product_id), owner_id=owner_id)
     if not product:
         raise HTTPException(status_code=404, detail="Creator product not found.")
-    if body.enabled and product.get("status") != "listed":
-        raise HTTPException(status_code=409, detail="List the product before enabling Marketplace discovery.")
+    if body.enabled and (product.get("status") != "listed" or product.get("completion_status") != "finished"):
+        raise HTTPException(status_code=409, detail="Finish and list the product before enabling Marketplace discovery.")
     rows = _rows(db.table("creator_products").update({
         "marketplace_enabled": body.enabled
     }).eq("id", str(product_id)).eq("owner_id", owner_id).select("*").execute())
@@ -251,11 +253,11 @@ def submit_marketplace_listing(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
-    product = _one(db, "creator_products", "id,owner_id,status,marketplace_enabled,price_amount,currency", id=str(product_id), owner_id=owner_id)
+    product = _one(db, "creator_products", "id,owner_id,status,completion_status,marketplace_enabled,price_amount,currency", id=str(product_id), owner_id=owner_id)
     if not product:
         raise HTTPException(status_code=404, detail="Creator product not found.")
-    if product.get("status") != "listed" or not product.get("marketplace_enabled"):
-        raise HTTPException(status_code=409, detail="List the product and enable Marketplace discovery first.")
+    if product.get("status") != "listed" or product.get("completion_status") != "finished" or not product.get("marketplace_enabled"):
+        raise HTTPException(status_code=409, detail="Finish the product, list it and enable Marketplace discovery first.")
     existing = _one(db, "creator_marketplace_listings", "id,status", product_id=str(product_id), owner_id=owner_id)
     if existing and existing.get("status") == "pending":
         return {"success": True, "listing": existing, "notice": "Listing is already awaiting review."}
