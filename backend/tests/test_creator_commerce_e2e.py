@@ -419,3 +419,64 @@ def test_e2e_idempotency_key_cannot_be_reused_for_another_product(monkeypatch):
     assert len(db.tables["creator_orders"]) == 1
     assert len(db.tables["creator_order_items"]) == 1
     assert db.tables["creator_order_items"][0]["product_id"] == PRODUCT_ID
+
+
+def test_e2e_buyer_library_lists_only_paid_active_entitlements(monkeypatch):
+    db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db)
+
+    intent = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-library-purchase-0001"},
+    )
+    assert intent.status_code == 201
+    order = intent.json()["order"]
+    event = {
+        "event_id": "fake-event-library-001",
+        "order_id": order["id"],
+        "reference": "fake-ref-library-001",
+        "amount": 15000,
+        "currency": "TZS",
+    }
+    provider = FakePaymentProviderE2E(db)
+    provider.deliver_webhook(event, provider.sign(event))
+
+    # A second paid order with a revoked entitlement must not appear.
+    db.tables["creator_orders"].append({
+        "id": "99999999-9999-4999-8999-999999999999",
+        "buyer_id": "buyer-001", "seller_id": "seller-001",
+        "total_amount": 15000, "currency": "TZS", "status": "paid",
+        "paid_at": "e2e-revoked-time", "created_at": "e2e-revoked-time",
+    })
+    db.tables["creator_order_items"].append({
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "order_id": "99999999-9999-4999-8999-999999999999",
+        "product_id": PRODUCT_ID, "product_title": "Revoked Guide",
+        "product_type": "guide", "unit_amount": 15000, "currency": "TZS",
+    })
+    db.tables["creator_product_entitlements"].append({
+        "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "order_id": "99999999-9999-4999-8999-999999999999",
+        "order_item_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "buyer_id": "buyer-001", "product_id": PRODUCT_ID,
+        "product_file_id": FILE_ID, "revoked_at": "e2e-revoked-time",
+    })
+
+    library = buyer_api.get("/store/orders/library")
+    assert library.status_code == 200, library.text
+    body = library.json()
+    assert body["count"] == 1
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["order_id"] == order["id"]
+    assert item["order_item_id"] == ITEM_ID
+    assert item["title"] == "AEA Digital Guide"
+    assert item["delivery_available"] is True
+    assert item["download_path"] == f"/store/orders/{order['id']}/items/{ITEM_ID}/download"
+    assert "download_url" not in item
+
+    # The authenticated buyer identity is part of the query boundary.
+    another_buyer = make_client(db, user_id="buyer-002").get("/store/orders/library")
+    assert another_buyer.status_code == 200
+    assert another_buyer.json() == {"success": True, "items": [], "count": 0}
