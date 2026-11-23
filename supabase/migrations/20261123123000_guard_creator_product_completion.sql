@@ -70,6 +70,7 @@ begin
       end if;
       end if;
     end if;
+  end if;
   return new;
 end;
 $$;
