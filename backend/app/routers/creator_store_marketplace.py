@@ -434,4 +434,50 @@ def review_marketplace_listing(
     return {"success": True, "listing": rows[0]}
 
 
+class PayoutReviewRequest(BaseModel):
+    status: Literal["approved", "rejected"]
+    rejection_reason: str | None = Field(default=None, max_length=500)
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/marketplace/admin/payouts")
+def list_marketplace_admin_payouts(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    _require_admin(db, owner_id)
+    try:
+        rows = _rows(db.rpc("list_creator_payout_requests_admin", {}).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Payout review queue is temporarily unavailable.") from exc
+    return {"success": True, "payout_requests": rows}
+
+
+@router.patch("/marketplace/admin/payouts/{request_id}/review")
+def review_marketplace_payout(
+    request_id: UUID,
+    body: PayoutReviewRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    db = _db(client)
+    _require_admin(db, owner_id)
+    if body.status == "rejected" and len((body.rejection_reason or "").strip()) < 3:
+        raise HTTPException(status_code=422, detail="Provide a clear reason when rejecting a payout.")
+    try:
+        rows = _rows(db.rpc("review_creator_payout_request", {
+            "p_request_id": str(request_id),
+            "p_status": body.status,
+            "p_rejection_reason": body.rejection_reason,
+        }).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Payout review could not be saved. Confirm the request is still pending.") from exc
+    if not rows:
+        raise HTTPException(status_code=409, detail="Payout review was not confirmed.")
+    return {"success": True, "payout_request": rows[0]}
+
+
+
+
 __all__ = ["router"]
