@@ -14,6 +14,7 @@ from app.services.mission_orchestration import MissionOrchestrationService
 from app.services.mission_execution_service import MissionExecutionService
 from app.services.pinterest_live_verification import PinterestVerificationError, verify_account_and_boards
 from app.services.pinterest_token_vault import get_access_token
+from app.services.aea_marketplace_referral import validate_aea_marketplace_referral
 
 router = APIRouter(prefix="/affiliate/pinterest", tags=["affiliate-pinterest"])
 
@@ -27,6 +28,7 @@ class PinterestDraftPreviewRequest(BaseModel):
     image_url: str | None = Field(default=None, max_length=2048)
     image_asset_id: str | None = Field(default=None, min_length=1, max_length=128)
     board_id: str = Field(min_length=1, max_length=128)
+    marketplace_product_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PinterestDraftApprovalRequest(PinterestDraftPreviewRequest):
@@ -157,6 +159,13 @@ def pinterest_draft_preview(
     This endpoint is intentionally read-only: it never calls a create-Pin API.
     """
     _validate_http_url(request.destination_url, "destination_url")
+    if request.marketplace_product_id and not validate_aea_marketplace_referral(
+        client=client,
+        destination_url=request.destination_url,
+        product_id=request.marketplace_product_id,
+        promoter_id=owner_id,
+    ):
+        raise HTTPException(status_code=422, detail="This AEA Marketplace referral link is invalid, inactive, or does not belong to the selected product and promoter.")
     asset = _validate_image_source(request, client, owner_id)
     try:
         stored = get_access_token(owner_id=owner_id)
@@ -353,7 +362,7 @@ def pinterest_draft_approval(
         for approval in existing:
             if approval.get("owner_id") == owner_id and approval.get("action_type") == "publish_content":
                 payload = approval.get("payload") or {}
-                if payload.get("source") == "affiliate_pinterest_draft":
+                if payload.get("source") in {"affiliate_pinterest_draft", "aea_marketplace_pinterest_promotion"} and payload.get("marketplace_product_id") == request.marketplace_product_id:
                     return {
                         "success": True,
                         "approval": approval,
@@ -430,7 +439,8 @@ def pinterest_draft_approval(
                         "board_id": selected["id"],
                         "board_name": selected["name"],
                     },
-                    "source": "affiliate_pinterest_draft",
+                    "source": "aea_marketplace_pinterest_promotion" if request.marketplace_product_id else "affiliate_pinterest_draft",
+                    "marketplace_product_id": request.marketplace_product_id,
                     "source_worker_id": selected_worker_id,
                     "source_mission_id": selected_mission_id,
                     "preview": preview,
