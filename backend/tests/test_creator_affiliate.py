@@ -82,3 +82,67 @@ def test_public_referral_redirect_requires_https_storefront(monkeypatch):
     monkeypatch.setenv("AEA_HUB_PUBLIC_URL", "http://unsafe.example")
     response = make_client().get(f"/store/affiliate/r/{CODE}")
     assert response.status_code == 503
+
+
+def test_promoter_earnings_returns_only_rpc_scoped_commission_fields():
+    rpc = RpcClient([
+        {
+            "order_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "product_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "product_title": "AI Toolkit",
+            "product_type": "guide",
+            "unit_amount": 15000,
+            "currency": "TZS",
+            "commission_rate_bps": 1500,
+            "commission_amount": 2250,
+            "commission_status": "payable",
+            "created_at": "2026-11-23T10:00:00Z",
+        },
+        {
+            "order_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "product_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "product_title": "Business Workbook",
+            "product_type": "workbook",
+            "unit_amount": 10000,
+            "currency": "TZS",
+            "commission_rate_bps": 1000,
+            "commission_amount": 1000,
+            "commission_status": "pending",
+            "created_at": "2026-11-22T10:00:00Z",
+        },
+        {
+            "order_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            "product_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+            "product_title": "Paid course",
+            "product_type": "course",
+            "unit_amount": 20000,
+            "currency": "TZS",
+            "commission_rate_bps": 500,
+            "commission_amount": 1000,
+            "commission_status": "paid",
+            "created_at": "2026-11-21T10:00:00Z",
+        },
+    ])
+    response = make_client(rpc).get("/store/affiliate/earnings")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {
+        "referral_order_count": 3,
+        "payable_amount": 2250,
+        "paid_amount": 1000,
+        "pending_amount": 1000,
+        "currency": "TZS",
+    }
+    assert body["earnings"][0]["commission_rate_bps"] == 1500
+    assert "buyer_id" not in body["earnings"][0]
+    assert "seller_id" not in body["earnings"][0]
+    assert rpc.calls == [("get_my_creator_affiliate_earnings", {})]
+
+
+def test_promoter_earnings_fails_closed_when_database_rpc_is_unavailable():
+    class BrokenRpc:
+        def rpc(self, *_args):
+            raise RuntimeError("sensitive database error")
+    response = make_client(BrokenRpc()).get("/store/affiliate/earnings")
+    assert response.status_code == 503
+    assert "sensitive database error" not in response.text
