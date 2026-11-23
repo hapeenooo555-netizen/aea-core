@@ -208,7 +208,7 @@ def browse_marketplace(
         return {"success": True, "listings": []}
     product_ids = list({row["product_id"] for row in listings})
     products = _rows(db.table("creator_products").select(
-        "id,title,description,product_type,price_amount,currency,age_rating,owner_id"
+        "id,slug,title,description,product_type,price_amount,currency,age_rating,owner_id"
     ).in_("id", product_ids).execute())
     owner_ids = list({row["owner_id"] for row in listings})
     profiles = _rows(db.table("creator_profiles").select(
