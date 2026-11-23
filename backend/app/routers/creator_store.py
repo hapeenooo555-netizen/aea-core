@@ -257,8 +257,8 @@ def complete_product_file_upload(
     match = next((item for item in (entries or []) if item.get("name") == filename), None)
     metadata = (match or {}).get("metadata") or {}
     actual_size = metadata.get("size") or metadata.get("contentLength")
-    if not match or (actual_size is not None and int(actual_size) != int(file_row.get("size_bytes") or 0)):
-        raise HTTPException(status_code=409, detail="Uploaded file is missing or its size does not match the upload declaration.")
+    if not match or actual_size is None or int(actual_size) != int(file_row.get("size_bytes") or 0):
+        raise HTTPException(status_code=409, detail="Uploaded file is missing or its verified size does not match the upload declaration.")
     updated = _rows(db.table("creator_product_files").update({"status": "ready"}).eq(
         "id", str(body.file_id)
     ).eq("owner_id", owner_id).select("*").execute())
