@@ -104,7 +104,7 @@ def product_row(**overrides):
     return {
         "id": PRODUCT, "owner_id": USER, "status": "listed", "completion_status": "finished",
         "marketplace_enabled": True, "price_amount": 25000,
-        "currency": "TZS", "title": "Test product",
+        "currency": "TZS", "slug": "test-product", "title": "Test product",
         "description": "A product", "product_type": "digital",
         "age_rating": "general", "is_sensitive": False,
         **overrides,
@@ -324,6 +324,7 @@ def test_marketplace_browse_joins_approved_listing_product_and_public_vendor():
     items = response.json()["listings"]
     assert len(items) == 1
     assert items[0]["product"]["title"] == "Test product"
+    assert items[0]["product"]["slug"] == "test-product"
     assert items[0]["vendor"]["display_name"] == "Vendor"
 
 
