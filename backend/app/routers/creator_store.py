@@ -31,6 +31,11 @@ class ProductCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProductPurchaseIntentRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    model_config = ConfigDict(extra="forbid")
+
+
 class ProductFileUploadRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     mime_type: Literal["application/pdf", "application/epub+zip", "application/zip", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
@@ -171,6 +176,74 @@ def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> boo
     if product_type in {"ebook", "guide", "workbook"} and isinstance(core, str):
         return len(core.strip()) >= 300
     return False
+
+
+@router.post("/{product_id}/purchase-intent", status_code=status.HTTP_201_CREATED)
+def create_product_purchase_intent(
+    product_id: UUID,
+    body: ProductPurchaseIntentRequest,
+    buyer_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a pending order intent; it does not start or confirm a payment."""
+    db = _db(client)
+    products = _rows(db.table("creator_products").select(
+        "id,owner_id,title,product_type,price_amount,currency,status,completion_status"
+    ).eq("id", str(product_id)).eq("status", "listed").limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Listed product not found.")
+    product = products[0]
+    if str(product.get("owner_id")) == buyer_id:
+        raise HTTPException(status_code=409, detail="You cannot purchase your own product.")
+    if product.get("completion_status") != "finished":
+        raise HTTPException(status_code=409, detail="This product is not available for purchase.")
+    privileged = get_supabase_product_file_client()
+    if privileged is None:
+        raise HTTPException(status_code=503, detail="Secure order processing is not configured.")
+    files = _rows(privileged.table("creator_product_files").select(
+        "id,owner_id,product_id,status"
+    ).eq("product_id", str(product_id)).eq("owner_id", str(product.get("owner_id"))).eq("status", "ready").limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=409, detail="This product has no verified delivery file.")
+    existing = _rows(privileged.table("creator_orders").select(
+        "id,status,total_amount,currency"
+    ).eq("buyer_id", buyer_id).eq("idempotency_key", body.idempotency_key).limit(1).execute())
+    if existing:
+        order = existing[0]
+        return {"success": True, "order": order, "payment_status": order.get("status"), "payment_initiation_enabled": False, "notice": "Order intent already exists; payment provider is not configured."}
+    amount = int(product.get("price_amount") or 0)
+    order_rows = _rows(privileged.table("creator_orders").insert({
+        "buyer_id": buyer_id,
+        "seller_id": str(product.get("owner_id")),
+        "currency": str(product.get("currency") or "TZS"),
+        "subtotal_amount": amount,
+        "total_amount": amount,
+        "status": "pending",
+        "idempotency_key": body.idempotency_key,
+    }).execute())
+    if not order_rows:
+        raise HTTPException(status_code=502, detail="Purchase intent could not be saved.")
+    order = order_rows[0]
+    items = _rows(privileged.table("creator_order_items").insert({
+        "order_id": str(order["id"]),
+        "product_id": str(product_id),
+        "product_file_id": str(files[0]["id"]),
+        "seller_id": str(product.get("owner_id")),
+        "product_title": str(product.get("title") or "Digital product"),
+        "product_type": str(product.get("product_type") or "digital_product"),
+        "unit_amount": amount,
+        "currency": str(product.get("currency") or "TZS"),
+    }).execute())
+    if not items:
+        privileged.table("creator_orders").update({"status": "cancelled"}).eq("id", str(order["id"])).execute()
+        raise HTTPException(status_code=502, detail="Order item could not be saved; order was cancelled.")
+    return {
+        "success": True,
+        "order": {"id": order["id"], "status": "pending", "total_amount": amount, "currency": product.get("currency", "TZS")},
+        "payment_initiation_enabled": False,
+        "delivery_enabled": False,
+        "notice": "Purchase intent saved. No payment has been requested or received.",
+    }
 
 
 @router.post("/{product_id}/files/upload-url", status_code=status.HTTP_201_CREATED)
