@@ -369,12 +369,14 @@ def review_promotion_request(
         raise HTTPException(status_code=409, detail="Only pending promotion requests can be reviewed.")
     if body.status == "approved" and body.commission_rate_bps is None:
         raise HTTPException(status_code=422, detail="Set the affiliate commission rate (1–10000 basis points) before approving promotion.")
-    update_payload = {"status": body.status}
-    if body.status == "approved":
-        update_payload["commission_rate_bps"] = body.commission_rate_bps
-    rows = _rows(db.table("creator_promotion_requests").update(
-        update_payload
-    ).eq("id", str(request_id)).eq("owner_id", owner_id).eq("status", "pending").select("*").execute())
+    try:
+        rows = _rows(db.rpc("review_creator_promotion_request", {
+            "p_request_id": str(request_id),
+            "p_status": body.status,
+            "p_commission_rate_bps": body.commission_rate_bps,
+        }).execute())
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Promotion decision could not be saved. Confirm the request is still pending and belongs to your vendor account.") from exc
     if not rows:
         raise HTTPException(status_code=409, detail="Promotion decision was not saved.")
     return {"success": True, "request": rows[0]}
