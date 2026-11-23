@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import pytest
 from copy import deepcopy
 
 from fastapi import FastAPI
@@ -259,12 +260,7 @@ def test_e2e_fake_payment_rejects_amount_mismatch():
         "amount": 1000,
         "currency": "TZS",
     }
-    try:
+    with pytest.raises(ValueError, match="amount or currency mismatch"):
         provider.deliver_webhook(event, provider.sign(event))
-        assert False, "Amount mismatch must fail settlement."
-    except AssertionError:
-        raise
-    except Exception:
-        pass
     assert db.tables["creator_orders"][0]["status"] == "pending"
     assert db.tables["creator_product_entitlements"] == []
