@@ -34,6 +34,7 @@ class ProductCreateRequest(BaseModel):
 
 class ProductPurchaseIntentRequest(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    referral_code: str | None = Field(default=None, min_length=20, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -206,6 +207,20 @@ def create_product_purchase_intent(
     ).eq("product_id", str(product_id)).eq("owner_id", str(product.get("owner_id"))).eq("status", "ready").limit(1).execute())
     if not files:
         raise HTTPException(status_code=409, detail="This product has no verified delivery file.")
+
+    affiliate_attribution: dict[str, Any] | None = None
+    if body.referral_code:
+        try:
+            attribution_rows = _rows(privileged.rpc(
+                "resolve_creator_affiliate_attribution",
+                {"p_code": body.referral_code, "p_product_id": str(product_id)},
+            ).execute())
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Affiliate attribution could not be verified.") from exc
+        if not attribution_rows:
+            raise HTTPException(status_code=422, detail="This affiliate referral is invalid, revoked, or not approved for this product.")
+        affiliate_attribution = attribution_rows[0]
+
     existing = _rows(privileged.table("creator_orders").select(
         "id,status,total_amount,currency"
     ).eq("buyer_id", buyer_id).eq("idempotency_key", body.idempotency_key).limit(1).execute())
@@ -214,12 +229,23 @@ def create_product_purchase_intent(
         existing_items = _rows(privileged.table("creator_order_items").select(
             "id,product_id"
         ).eq("order_id", str(order["id"])).limit(100).execute())
-        if not any(str(item.get("product_id")) == str(product_id) for item in existing_items):
+        matching_item = next((item for item in existing_items if str(item.get("product_id")) == str(product_id)), None)
+        if not matching_item:
             raise HTTPException(
                 status_code=409,
                 detail="This idempotency key is already associated with a different product.",
             )
-        return {"success": True, "order": order, "payment_status": order.get("status"), "payment_initiation_enabled": False, "notice": "Order intent already exists; payment provider is not configured."}
+        if affiliate_attribution and str(matching_item.get("affiliate_link_id") or "") != str(affiliate_attribution.get("affiliate_link_id") or ""):
+            raise HTTPException(status_code=409, detail="This idempotency key is already associated with a different affiliate attribution.")
+        return {
+            "success": True,
+            "order": order,
+            "payment_status": order.get("status"),
+            "payment_initiation_enabled": False,
+            "affiliate_attributed": bool(matching_item.get("affiliate_link_id")),
+            "commission_status": "rate_unconfigured" if matching_item.get("affiliate_link_id") else "not_applicable",
+            "notice": "Order intent already exists; payment provider is not configured.",
+        }
     amount = int(product.get("price_amount") or 0)
     order_rows = _rows(privileged.table("creator_orders").insert({
         "buyer_id": buyer_id,
@@ -242,6 +268,9 @@ def create_product_purchase_intent(
         "product_type": str(product.get("product_type") or "digital_product"),
         "unit_amount": amount,
         "currency": str(product.get("currency") or "TZS"),
+        "affiliate_link_id": affiliate_attribution.get("affiliate_link_id") if affiliate_attribution else None,
+        "promoter_id": affiliate_attribution.get("promoter_id") if affiliate_attribution else None,
+        "commission_status": "rate_unconfigured" if affiliate_attribution else "not_applicable",
     }).execute())
     if not items:
         privileged.table("creator_orders").update({"status": "cancelled"}).eq("id", str(order["id"])).execute()
@@ -251,7 +280,9 @@ def create_product_purchase_intent(
         "order": {"id": order["id"], "status": "pending", "total_amount": amount, "currency": product.get("currency", "TZS")},
         "payment_initiation_enabled": False,
         "delivery_enabled": False,
-        "notice": "Purchase intent saved. No payment has been requested or received.",
+        "affiliate_attributed": bool(affiliate_attribution),
+        "commission_status": "rate_unconfigured" if affiliate_attribution else "not_applicable",
+        "notice": "Purchase intent saved. No payment has been requested or received. Affiliate commission is not calculated until vendor-approved terms are configured.",
     }
 
 
