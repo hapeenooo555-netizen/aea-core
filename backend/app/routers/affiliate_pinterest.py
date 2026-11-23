@@ -219,6 +219,13 @@ def pinterest_draft_approval(
     This endpoint deliberately stops at pending approval. It never publishes.
     """
     _validate_http_url(request.destination_url, "destination_url")
+    if request.marketplace_product_id and not validate_aea_marketplace_referral(
+        client=client,
+        destination_url=request.destination_url,
+        product_id=request.marketplace_product_id,
+        promoter_id=owner_id,
+    ):
+        raise HTTPException(status_code=422, detail="This AEA Marketplace referral link is invalid, inactive, or does not belong to the selected product and promoter.")
     asset = _validate_image_source(request, client, owner_id)
     if client is None:
         raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable")
