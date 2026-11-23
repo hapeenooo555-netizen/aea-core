@@ -480,3 +480,45 @@ def test_e2e_buyer_library_lists_only_paid_active_entitlements(monkeypatch):
     another_buyer = make_client(db, user_id="buyer-002").get("/store/orders/library")
     assert another_buyer.status_code == 200
     assert another_buyer.json() == {"success": True, "items": [], "count": 0}
+
+
+def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeypatch):
+    db = E2EDatabase()
+    monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
+    buyer_api = make_client(db, user_id="buyer-001")
+    intent = buyer_api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-seller-ledger-0001"},
+    )
+    assert intent.status_code == 201
+    order = intent.json()["order"]
+    event = {
+        "event_id": "fake-event-seller-ledger",
+        "order_id": order["id"],
+        "reference": "fake-ref-seller-ledger",
+        "amount": 15000,
+        "currency": "TZS",
+    }
+    provider = FakePaymentProviderE2E(db)
+    provider.deliver_webhook(event, provider.sign(event))
+
+    seller_api = make_client(db, user_id="seller-001")
+    response = seller_api.get("/store/orders/sales")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"] == {
+        "order_count": 1,
+        "paid_order_count": 1,
+        "pending_order_count": 0,
+        "paid_total_amount": 15000,
+        "currency": "TZS",
+    }
+    assert body["orders"][0]["order_id"] == order["id"]
+    assert body["orders"][0]["items"][0]["title"] == "AEA Digital Guide"
+    assert body["orders"][0]["status"] == "paid"
+    assert "buyer_id" not in body["orders"][0]
+
+    other_seller = make_client(db, user_id="seller-002").get("/store/orders/sales")
+    assert other_seller.status_code == 200
+    assert other_seller.json()["orders"] == []
+    assert other_seller.json()["summary"]["paid_total_amount"] == 0
