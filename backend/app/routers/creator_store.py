@@ -7,6 +7,8 @@ order-scoped delivery implementation.
 from __future__ import annotations
 
 import re
+import os
+import uuid
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -26,6 +28,35 @@ class ProductCreateRequest(BaseModel):
     price_amount: int = Field(gt=0, le=100000000)
     currency: Literal["TZS"] = "TZS"
     model_config = ConfigDict(extra="forbid")
+
+
+class ProductFileUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: Literal["application/pdf", "application/epub+zip", "application/zip", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    size_bytes: int = Field(gt=0, le=52428800)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProductFileCompleteRequest(BaseModel):
+    file_id: UUID
+    model_config = ConfigDict(extra="forbid")
+
+
+def _storage(client: Any) -> Any:
+    storage = getattr(client, "storage", None)
+    if storage is None:
+        raise HTTPException(status_code=503, detail="Private product storage is not configured.")
+    return storage
+
+
+def _storage_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "__dict__"):
+        return vars(value)
+    return {}
 
 
 class ProductStatusRequest(BaseModel):
@@ -139,6 +170,101 @@ def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> boo
     if product_type in {"ebook", "guide", "workbook"} and isinstance(core, str):
         return len(core.strip()) >= 300
     return False
+
+
+@router.post("/{product_id}/files/upload-url", status_code=status.HTTP_201_CREATED)
+def create_product_file_upload(
+    product_id: UUID,
+    body: ProductFileUploadRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a short-lived signed upload URL into the private product bucket."""
+    db = _db(client)
+    products = _rows(db.table("creator_products").select("id,owner_id,status").eq(
+        "id", str(product_id)
+    ).eq("owner_id", owner_id).limit(1).execute())
+    if not products:
+        raise HTTPException(status_code=404, detail="Product not found.")
+    if products[0].get("status") != "draft":
+        raise HTTPException(status_code=409, detail="Only draft products can receive a new file.")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", body.filename).strip(".-")[:180]
+    if not safe_name:
+        raise HTTPException(status_code=422, detail="Invalid filename.")
+    extension = os.path.splitext(safe_name)[1].lower()
+    allowed = {
+        "application/pdf": {".pdf"},
+        "application/epub+zip": {".epub"},
+        "application/zip": {".zip"},
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
+    }
+    if extension not in allowed[body.mime_type]:
+        raise HTTPException(status_code=422, detail="Filename extension does not match the declared file type.")
+    path = f"{owner_id}/{product_id}/{uuid.uuid4().hex}-{safe_name}"
+    try:
+        response = _storage(client).from_("aea-product-files").create_signed_upload_url(path)
+        payload = _storage_payload(response)
+        signed_url = payload.get("signed_url") or payload.get("signedURL") or payload.get("url")
+        token = payload.get("token")
+        if not signed_url and not token:
+            raise ValueError("Storage did not return a signed upload credential.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not create a private upload URL.") from exc
+    saved = _rows(db.table("creator_product_files").insert({
+        "product_id": str(product_id),
+        "owner_id": owner_id,
+        "bucket_id": "aea-product-files",
+        "object_path": path,
+        "original_filename": safe_name,
+        "mime_type": body.mime_type,
+        "size_bytes": body.size_bytes,
+        "status": "pending",
+    }).execute())
+    if not saved:
+        raise HTTPException(status_code=502, detail="Upload record could not be saved.")
+    return {
+        "success": True,
+        "file": {"id": saved[0].get("id"), "filename": safe_name, "mime_type": body.mime_type, "size_bytes": body.size_bytes},
+        "upload": {"signed_url": signed_url, "token": token, "path": path, "bucket": "aea-product-files"},
+        "expires_in_seconds": 7200,
+        "notice": "Private upload only. The file is not yet verified or available to buyers.",
+    }
+
+
+@router.post("/{product_id}/files/complete")
+def complete_product_file_upload(
+    product_id: UUID,
+    body: ProductFileCompleteRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Verify the uploaded object exists with the expected size before marking it ready."""
+    db = _db(client)
+    files = _rows(db.table("creator_product_files").select(
+        "id,product_id,owner_id,bucket_id,object_path,original_filename,mime_type,size_bytes,status"
+    ).eq("id", str(body.file_id)).eq("product_id", str(product_id)).eq("owner_id", owner_id).limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=404, detail="Product file not found.")
+    file_row = files[0]
+    if file_row.get("status") == "ready":
+        return {"success": True, "file": file_row, "duplicate": True}
+    path = str(file_row.get("object_path") or "")
+    folder, _, filename = path.rpartition("/")
+    try:
+        entries = _storage(client).from_("aea-product-files").list(folder, {"search": filename})
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Uploaded object could not be verified in private storage.") from exc
+    match = next((item for item in (entries or []) if item.get("name") == filename), None)
+    metadata = (match or {}).get("metadata") or {}
+    actual_size = metadata.get("size") or metadata.get("contentLength")
+    if not match or (actual_size is not None and int(actual_size) != int(file_row.get("size_bytes") or 0)):
+        raise HTTPException(status_code=409, detail="Uploaded file is missing or its size does not match the upload declaration.")
+    updated = _rows(db.table("creator_product_files").update({"status": "ready"}).eq(
+        "id", str(body.file_id)
+    ).eq("owner_id", owner_id).select("*").execute())
+    if not updated:
+        raise HTTPException(status_code=502, detail="Verified file status could not be saved.")
+    return {"success": True, "file": updated[0], "buyer_delivery_enabled": False}
 
 
 @router.get("/{product_id}/reader")
