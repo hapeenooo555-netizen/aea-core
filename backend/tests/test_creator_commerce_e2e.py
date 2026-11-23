@@ -501,11 +501,21 @@ def test_e2e_buyer_library_lists_only_paid_active_entitlements(monkeypatch):
 
 def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeypatch):
     db = E2EDatabase()
+    db.tables["creator_affiliate_links"].append({
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "product_id": PRODUCT_ID,
+        "owner_id": "seller-001",
+        "promoter_id": "promoter-001",
+        "referral_code": "seller-ledger-referral-123456",
+        "status": "active",
+        "listing_status": "approved",
+        "request_status": "approved",
+    })
     monkeypatch.setattr(creator_store, "get_supabase_product_file_client", lambda: db)
     buyer_api = make_client(db, user_id="buyer-001")
     intent = buyer_api.post(
         f"/store/products/{PRODUCT_ID}/purchase-intent",
-        json={"idempotency_key": "e2e-seller-ledger-0001"},
+        json={"idempotency_key": "e2e-seller-ledger-0001", "referral_code": "seller-ledger-referral-123456"},
     )
     assert intent.status_code == 201
     order = intent.json()["order"]
@@ -532,6 +542,8 @@ def test_e2e_seller_sales_ledger_shows_paid_order_without_buyer_identity(monkeyp
     }
     assert body["orders"][0]["order_id"] == order["id"]
     assert body["orders"][0]["items"][0]["title"] == "AEA Digital Guide"
+    assert body["orders"][0]["items"][0]["affiliate_attributed"] is True
+    assert body["orders"][0]["items"][0]["commission_status"] == "rate_unconfigured"
     assert body["orders"][0]["status"] == "paid"
     assert "buyer_id" not in body["orders"][0]
 
