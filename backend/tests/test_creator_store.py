@@ -109,20 +109,55 @@ def test_create_product_rejects_asset_owned_by_another_user():
     assert response.status_code == 404
 
 
-def test_owner_can_list_product_but_checkout_remains_disabled():
+def test_owner_cannot_list_unfinished_product():
     db = Database()
     db.tables["creator_products"].append({
         "id": "22222222-2222-4222-8222-222222222222",
         "owner_id": "owner-123",
         "status": "draft",
+        "completion_status": "draft",
     })
     response = client(db).patch(
-        "/store/products/22222222-2222-4222-8222-222222222222/status",
+        "/store/products/22222222-2222-4222-222222222222/status",
         json={"status": "listed"},
     )
+    assert response.status_code == 409
+    assert db.tables["creator_products"][0]["status"] == "draft"
+
+
+def test_owner_can_finish_approved_product_with_substantive_chapters():
+    db = Database()
+    db.tables["content_asset_versions"][0].update({
+        "status": "approved",
+        "content": {"chapters": [{"title": "Chapter 1", "body": "A" * 250}]},
+    })
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "product_type": "ebook",
+        "status": "draft",
+        "completion_status": "draft",
+    })
+    response = client(db).post("/store/products/22222222-2222-4222-8222-222222222222/finish")
     assert response.status_code == 200
-    assert response.json()["product"]["status"] == "listed"
+    assert response.json()["completion_status"] == "finished"
     assert response.json()["checkout_enabled"] is False
+    assert db.tables["creator_products"][0]["completion_status"] == "finished"
+
+
+def test_owner_cannot_finish_unapproved_or_empty_product():
+    db = Database()
+    db.tables["creator_products"].append({
+        "id": "22222222-2222-4222-8222-222222222222",
+        "owner_id": "owner-123",
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "product_type": "ebook",
+        "status": "draft",
+        "completion_status": "draft",
+    })
+    response = client(db).post("/store/products/22222222-2222-4222-8222-222222222222/finish")
+    assert response.status_code == 409
 
 
 def test_owner_cannot_change_another_users_product():
