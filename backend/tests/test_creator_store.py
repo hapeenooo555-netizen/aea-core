@@ -119,7 +119,7 @@ def test_owner_cannot_list_unfinished_product():
         "completion_status": "draft",
     })
     response = client(db).patch(
-        "/store/products/22222222-2222-4222-222222222222/status",
+        "/store/products/22222222-2222-4222-8222-222222222222/status",
         json={"status": "listed"},
     )
     assert response.status_code == 409
