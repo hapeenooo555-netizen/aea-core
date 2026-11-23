@@ -274,3 +274,22 @@ def test_graphic_design_generate_renders_exact_text_overlay(monkeypatch):
     assert payload["width"] == 1024
     assert payload["height"] == 1280
     assert payload["published"] is False
+
+
+def test_graphic_design_generate_accepts_pinterest_portrait_ratio_2_by_3(monkeypatch):
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
+    monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _content: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))
+    response = TestClient(app).post("/graphic-design/generate", json={
+        "prompt": "Create a portrait Pinterest background for an AI business automation product.",
+        "aspect_ratio": "2:3",
+        "model": "z_image_turbo",
+    })
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["published"] is False
+    assert payload["status"] == "completed"
+    assert payload["width"] == 1024
+    assert payload["height"] == 1024
