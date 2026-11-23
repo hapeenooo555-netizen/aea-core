@@ -18,18 +18,28 @@ begin
         using errcode = '23514';
     end if;
 
-    select * into latest_asset
-      from public.content_asset_versions
-      where owner_id = new.owner_id and asset_id = new.asset_id
-      order by version desc
-      limit 1;
+    -- A product may be completed by either approved substantive saved content
+    -- or a verified private delivery file. Keep this rule aligned with the API.
+    if not exists (
+      select 1
+        from public.creator_product_files f
+        where f.product_id = new.id
+          and f.owner_id = new.owner_id
+          and f.bucket_id = 'aea-product-files'
+          and f.status = 'ready'
+    ) then
+      select * into latest_asset
+        from public.content_asset_versions
+        where owner_id = new.owner_id and asset_id = new.asset_id
+        order by version desc
+        limit 1;
 
-    if latest_asset.id is null or latest_asset.status <> 'approved' then
-      raise exception 'Latest product content must be approved'
-        using errcode = '23514';
-    end if;
+      if latest_asset.id is null or latest_asset.status <> 'approved' then
+        raise exception 'Latest product content must be approved or a verified private product file must exist'
+          using errcode = '23514';
+      end if;
 
-    core_text_length := case
+      core_text_length := case
       when jsonb_typeof(latest_asset.content->'core_content') = 'string'
         then char_length(trim(latest_asset.content->>'core_content'))
       else 0
@@ -58,8 +68,8 @@ begin
         raise exception 'Product content must contain substantive readable text or complete chapters'
           using errcode = '23514';
       end if;
+      end if;
     end if;
-  end if;
   return new;
 end;
 $$;
