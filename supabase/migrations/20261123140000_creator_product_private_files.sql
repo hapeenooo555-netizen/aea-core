@@ -42,7 +42,7 @@ create policy "owners update own product files" on public.creator_product_files
   for update to authenticated using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);
 revoke all on public.creator_product_files from anon, authenticated;
-grant select, insert, update on public.creator_product_files to authenticated;
+grant select, insert on public.creator_product_files to authenticated;
 grant all on public.creator_product_files to service_role;
 
 drop policy if exists "product file owner uploads" on storage.objects;
@@ -51,6 +51,11 @@ create policy "product file owner uploads" on storage.objects
   with check (
     bucket_id = 'aea-product-files'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.creator_products p
+      where p.id::text = (storage.foldername(name))[2]
+        and p.owner_id = (select auth.uid())
+    )
   );
 drop policy if exists "product file owner reads" on storage.objects;
 create policy "product file owner reads" on storage.objects
@@ -58,4 +63,9 @@ create policy "product file owner reads" on storage.objects
   using (
     bucket_id = 'aea-product-files'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.creator_products p
+      where p.id::text = (storage.foldername(name))[2]
+        and p.owner_id = (select auth.uid())
+    )
   );
