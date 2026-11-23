@@ -43,7 +43,7 @@ begin
                    and char_length(trim(coalesce(chapter->>'body', chapter->>'content', chapter->>'text', ''))) >= 200
                )
           into chapter_count, valid_chapter_count
-          from jsonb_array_elements(latest_asset.content->'chapters') as chapter;
+          from jsonb_array_elements(latest_asset.content->'chapters') as chapters(chapter);
       elsif jsonb_typeof(latest_asset.content->'chapter_content') = 'array' then
         select count(*),
                count(*) filter (
@@ -51,7 +51,7 @@ begin
                    and char_length(trim(coalesce(chapter->>'body', chapter->>'content', chapter->>'text', ''))) >= 200
                )
           into chapter_count, valid_chapter_count
-          from jsonb_array_elements(latest_asset.content->'chapter_content') as chapter;
+          from jsonb_array_elements(latest_asset.content->'chapter_content') as chapters(chapter);
       end if;
 
       if chapter_count = 0 or valid_chapter_count <> chapter_count then
@@ -66,6 +66,6 @@ $$;
 
 drop trigger if exists creator_products_completion_guard on public.creator_products;
 create trigger creator_products_completion_guard
-before insert or update of status, completion_status, marketplace_enabled, asset_id, owner_id
+before insert or update
 on public.creator_products
 for each row execute function public.guard_creator_product_completion();
