@@ -29,6 +29,9 @@ class Result:
     def __init__(self, data):
         self.data = data
 
+    def execute(self):
+        return self
+
 
 class Query:
     def __init__(self, db, table):
