@@ -300,6 +300,24 @@ def test_e2e_fake_payment_rejects_event_replay_with_changed_reference():
     assert len(db.tables["creator_product_entitlements"]) == 1
 
 
+def test_e2e_purchase_intent_is_idempotent_for_same_buyer_key():
+    db = E2EDatabase()
+    api = make_client(db)
+    first = api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-same-request-0001"},
+    )
+    second = api.post(
+        f"/store/products/{PRODUCT_ID}/purchase-intent",
+        json={"idempotency_key": "e2e-same-request-0001"},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["order"]["id"] == first.json()["order"]["id"]
+    assert len(db.tables["creator_orders"]) == 1
+    assert len(db.tables["creator_order_items"]) == 1
+
+
 def test_e2e_order_download_is_not_available_to_another_buyer():
     db = E2EDatabase()
     owner_api = make_client(db)
