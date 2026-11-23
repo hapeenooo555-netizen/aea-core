@@ -285,10 +285,11 @@ def test_promoter_can_request_approved_listing_and_vendor_can_approve():
 
     vendor = client_for(db, user_id=OTHER).patch(
         f"/store/products/marketplace/requests/{request_id}",
-        json={"status": "approved"},
+        json={"status": "approved", "commission_rate_bps": 1500},
     )
     assert vendor.status_code == 200
     assert vendor.json()["request"]["status"] == "approved"
+    assert vendor.json()["request"]["commission_rate_bps"] == 1500
 
 
 def test_promoter_cannot_request_own_product():
@@ -354,3 +355,28 @@ def test_distribution_capabilities_fail_closed_until_publishers_are_verified():
         assert capabilities[destination]["publishing_supported"] is False
         assert capabilities[destination]["mode"] == "draft_only"
         assert "draft" in capabilities[destination]["message"].lower()
+
+
+def test_vendor_cannot_approve_promotion_without_commission_terms():
+    db = Database({"creator_promotion_requests": [{
+        "id": "55555555-5555-4555-8555-555555555555",
+        "owner_id": OTHER, "promoter_id": USER, "status": "pending",
+    }]})
+    response = client_for(db, user_id=OTHER).patch(
+        "/store/products/marketplace/requests/55555555-5555-4555-8555-555555555555",
+        json={"status": "approved"},
+    )
+    assert response.status_code == 422
+    assert db.tables["creator_promotion_requests"][0]["status"] == "pending"
+
+
+def test_vendor_commission_rate_is_bounded():
+    db = Database({"creator_promotion_requests": [{
+        "id": "55555555-5555-4555-8555-555555555555",
+        "owner_id": OTHER, "promoter_id": USER, "status": "pending",
+    }]})
+    response = client_for(db, user_id=OTHER).patch(
+        "/store/products/marketplace/requests/55555555-5555-4555-8555-555555555555",
+        json={"status": "approved", "commission_rate_bps": 10001},
+    )
+    assert response.status_code == 422
