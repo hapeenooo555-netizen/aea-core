@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   pull_request:
-    branches: [main, "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue"]
+    branches: [main, "feat/finished-product-lifecycle", "feat/paid-order-entitlements", "feat/content-studio-emotion-aware-emojis", "feat/country-intelligence-content-to-revenue"]
   push:
     branches: [main, "fix/healthcheck-supabase-query", "fix/missions-error-column-schema-drift", "feat/country-intelligence-content-to-revenue", "feat/country-revenue-attribution", "feat/country-revenue-attribution-synced"]
   workflow_dispatch:
@@ -69,8 +69,12 @@ jobs:
       - name: Run Creator Community API tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_community.py
 
-      - name: Run AEA Creator Store and Marketplace API tests
-        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_store_marketplace.py
+      - name: Run AEA Creator Store, private file and commerce E2E tests
+        run: >-
+          PYTHONPATH=backend python -m pytest -q
+          backend/tests/test_creator_store.py
+          backend/tests/test_creator_store_marketplace.py
+          backend/tests/test_creator_commerce_e2e.py
 
       - name: Run AEA Content Studio tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_content_studio.py
