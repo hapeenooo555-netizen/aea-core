@@ -211,6 +211,14 @@ def create_product_purchase_intent(
     ).eq("buyer_id", buyer_id).eq("idempotency_key", body.idempotency_key).limit(1).execute())
     if existing:
         order = existing[0]
+        existing_items = _rows(privileged.table("creator_order_items").select(
+            "id,product_id"
+        ).eq("order_id", str(order["id"])).limit(100).execute())
+        if not any(str(item.get("product_id")) == str(product_id) for item in existing_items):
+            raise HTTPException(
+                status_code=409,
+                detail="This idempotency key is already associated with a different product.",
+            )
         return {"success": True, "order": order, "payment_status": order.get("status"), "payment_initiation_enabled": False, "notice": "Order intent already exists; payment provider is not configured."}
     amount = int(product.get("price_amount") or 0)
     order_rows = _rows(privileged.table("creator_orders").insert({
