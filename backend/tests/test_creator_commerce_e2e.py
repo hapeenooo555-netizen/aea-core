@@ -173,6 +173,8 @@ class E2EDatabase:
             "buyer_id": order["buyer_id"], "product_id": item["product_id"],
             "product_file_id": item["product_file_id"], "revoked_at": None,
         })
+        if item.get("affiliate_link_id") and item.get("commission_rate_bps") is not None:
+            item["commission_status"] = "payable" if int(item.get("commission_amount") or 0) > 0 else "approved"
         return Result({"success": True, "duplicate": False, "order_id": order["id"]})
 
 
