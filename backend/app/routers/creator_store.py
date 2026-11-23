@@ -227,7 +227,7 @@ def create_product_purchase_intent(
     if existing:
         order = existing[0]
         existing_items = _rows(privileged.table("creator_order_items").select(
-            "id,product_id"
+            "id,product_id,affiliate_link_id"
         ).eq("order_id", str(order["id"])).limit(100).execute())
         matching_item = next((item for item in existing_items if str(item.get("product_id")) == str(product_id)), None)
         if not matching_item:
