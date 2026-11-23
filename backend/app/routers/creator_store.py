@@ -267,6 +267,34 @@ def complete_product_file_upload(
     return {"success": True, "file": updated[0], "buyer_delivery_enabled": False}
 
 
+@router.get("/{product_id}/files/{file_id}/owner-download")
+def create_owner_product_file_download(
+    product_id: UUID,
+    file_id: UUID,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create a short-lived private download URL for the product owner only."""
+    db = _db(client)
+    files = _rows(db.table("creator_product_files").select(
+        "id,product_id,owner_id,bucket_id,object_path,original_filename,status"
+    ).eq("id", str(file_id)).eq("product_id", str(product_id)).eq("owner_id", owner_id).eq("status", "ready").limit(1).execute())
+    if not files:
+        raise HTTPException(status_code=404, detail="Verified product file not found.")
+    row = files[0]
+    try:
+        signed = _storage(client).from_("aea-product-files").create_signed_url(
+            str(row["object_path"]), 300, {"download": str(row.get("original_filename") or "product-file")}
+        )
+        payload = _storage_payload(signed)
+        url = payload.get("signed_url") or payload.get("signedURL")
+        if not url:
+            raise ValueError("Storage did not return a signed download URL.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Private product download is temporarily unavailable.") from exc
+    return {"success": True, "download_url": url, "expires_in_seconds": 300, "access": "owner_only"}
+
+
 @router.get("/{product_id}/reader")
 def read_product_preview(
     product_id: UUID,
@@ -344,10 +372,14 @@ def finish_product(
         "version", desc=True
     ).limit(1).execute()
     assets = _rows(asset_response)
-    if not assets or not _asset_has_finished_content(str(product.get("product_type") or ""), assets[0]):
+    has_structured_content = bool(assets and _asset_has_finished_content(str(product.get("product_type") or ""), assets[0]))
+    ready_files = _rows(db.table("creator_product_files").select(
+        "id,status"
+    ).eq("product_id", str(product_id)).eq("owner_id", owner_id).eq("status", "ready").limit(1).execute())
+    if not has_structured_content and not ready_files:
         raise HTTPException(
             status_code=409,
-            detail="Product is not ready. Approve its latest saved content and ensure the actual product text or chapter bodies are complete before finishing.",
+            detail="Product is not ready. Approve substantive saved content or upload and verify a real product file before finishing.",
         )
     rows = _rows(db.table("creator_products").update({
         "completion_status": "finished"
