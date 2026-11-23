@@ -74,7 +74,7 @@ def get_my_affiliate_earnings(
     } for row in rows]
     payable = sum(x["commission_amount"] for x in entries if x["commission_status"] == "payable")
     paid = sum(x["commission_amount"] for x in entries if x["commission_status"] == "paid")
-    pending = sum(x["commission_amount"] for x in entries if x["commission_status"] in {"pending", "approved"})
+    pending = sum(x["commission_amount"] for x in entries if x["commission_status"] in {"pending", "approved", "payout_requested"})
     return {
         "success": True,
         "earnings": entries,
