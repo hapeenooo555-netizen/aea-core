@@ -1,4 +1,4 @@
-"""Meta OAuth orchestration for Facebook Login and WhatsApp Embedded Signup."""
+""""Meta OAuth orchestration for Facebook Login and WhatsApp Embedded Signup."""
 from __future__ import annotations
 import os
 from urllib.parse import urlencode
@@ -15,7 +15,7 @@ def _required(name: str) -> str:
     return value
 
 def graph_version() -> str:
-    value=os.getenv("META_GRAPH_API_VERSION","v23.0").strip()
+    value=os.getenv("META_GRAPH_API_VERSION","v27.0").strip()
     if not value.startswith("v") or not value[1:].replace(".","").isdigit():
         raise MetaOAuthError("Meta Graph API version is invalid.")
     return value
