@@ -5,7 +5,21 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app.services.connectors.meta_marketing import MetaMarketingConnector
+from app.services.connectors.meta_marketing import MetaMarketingConnector, MetaConfig
+from app.services.meta_oauth import graph_version
+
+
+def test_meta_graph_api_defaults_to_v27(monkeypatch) -> None:
+    monkeypatch.delenv("META_GRAPH_API_VERSION", raising=False)
+    assert graph_version() == "v27.0"
+    assert MetaConfig().api_version == "v27.0"
+    assert MetaMarketingConnector().config.api_version == "v27.0"
+
+
+def test_meta_graph_api_version_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v26.0")
+    assert graph_version() == "v26.0"
+    assert MetaMarketingConnector().config.api_version == "v26.0"
 
 
 def test_meta_connector_has_three_channel_capabilities() -> None:
