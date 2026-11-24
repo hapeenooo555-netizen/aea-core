@@ -13,7 +13,7 @@ from .base import BaseConnector, ConnectorCapabilities
 @dataclass
 class MetaConfig:
     graph_base_url: str = "https://graph.facebook.com"
-    api_version: str = "v23.0"
+    api_version: str = "v27.0"
 
     @property
     def base_url(self) -> str:
@@ -26,7 +26,7 @@ class MetaMarketingConnector(BaseConnector):
         super().__init__()
         self.config = config or MetaConfig(
             graph_base_url=os.getenv("META_GRAPH_BASE_URL", "https://graph.facebook.com"),
-            api_version=os.getenv("META_GRAPH_API_VERSION", "v23.0"),
+            api_version=os.getenv("META_GRAPH_API_VERSION", "v27.0"),
         )
         self._transport = transport
 
