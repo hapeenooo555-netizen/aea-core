@@ -21,6 +21,10 @@ async def test_asset_discovery_maps_pages_instagram_and_whatsapp(monkeypatch):
       "/me?fields=id,name":{"id":"meta-user","name":"Enock"},
       "/me/accounts?fields=":{"data":[{"id":"page-1","name":"NextGen Page","category":"Business","tasks":["CREATE_CONTENT"],"instagram_business_account":{"id":"ig-1","username":"nextgen"}}]},
       "/me/businesses?fields=":{"data":[{"id":"biz-1","name":"NextGen Portfolio"}]},
+      "/biz-1/owned_pages?fields=":{"data":[{"id":"page-owned","name":"Owned Page"}]},
+      "/biz-1/client_pages?fields=":{"data":[{"id":"page-client","name":"Client Page"}]},
+      "/biz-1/owned_instagram_assets?fields=":{"data":[{"id":"ig-owned","username":"owned_ig","account_type":"BUSINESS"}]},
+      "/biz-1/client_instagram_assets?fields=":{"data":[{"id":"ig-client","username":"client_ig","account_type":"BUSINESS"}]},
       "/biz-1/owned_whatsapp_business_accounts?fields=":{"data":[{"id":"waba-1","name":"Production WABA"}]},
       "/waba-1/phone_numbers?fields=":{"data":[{"id":"phone-1","display_phone_number":"+255700000000","verified_name":"NextGen","quality_rating":"GREEN","code_verification_status":"VERIFIED"}]},
       "/biz-1/client_whatsapp_business_accounts?fields=":{"data":[]},
@@ -37,6 +41,11 @@ async def test_asset_discovery_maps_pages_instagram_and_whatsapp(monkeypatch):
     result=await discovery.discover_assets("owner-1","facebook_login")
     assert result["assets"]["facebook_pages"][0]["id"]=="page-1"
     assert result["assets"]["instagram_accounts"][0]["id"]=="ig-1"
+    portfolio=result["assets"]["business_portfolios"][0]
+    assert portfolio["owned_pages"][0]["id"]=="page-owned"
+    assert portfolio["client_pages"][0]["id"]=="page-client"
+    assert portfolio["owned_instagram_accounts"][0]["id"]=="ig-owned"
+    assert portfolio["client_instagram_accounts"][0]["id"]=="ig-client"
     assert saved["owner"]=="owner-1"
     assert saved["purpose"]=="facebook_login"
 
