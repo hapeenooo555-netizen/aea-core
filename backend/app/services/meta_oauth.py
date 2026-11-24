@@ -1,4 +1,4 @@
-""""Meta OAuth orchestration for Facebook Login and WhatsApp Embedded Signup."""
+"""Meta OAuth orchestration for Facebook Login and WhatsApp Embedded Signup."""
 from __future__ import annotations
 import os
 from urllib.parse import urlencode
