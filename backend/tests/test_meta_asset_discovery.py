@@ -78,3 +78,26 @@ async def test_whatsapp_discovery_uses_whatsapp_token_and_persists_only_whatsapp
     assert result["assets"]["whatsapp_accounts"][0]["phone_numbers"][0]["id"]=="phone-1"
     assert result["assets"]["facebook_pages"]==[]
     assert saved["purpose"]=="whatsapp_embedded_signup"
+
+@pytest.mark.asyncio
+async def test_business_asset_discovery_keeps_successful_edges_when_one_permission_is_missing():
+    import httpx
+
+    class PartialClient:
+        async def get(self, url, headers=None):
+            if "/owned_pages?" in url:
+                request = httpx.Request("GET", url)
+                response = httpx.Response(403, request=request, json={"error": {"message": "permission denied"}})
+                raise httpx.HTTPStatusError("permission denied", request=request, response=response)
+            return FakeResponse({"data": [{"id": "asset-1", "name": "Accessible asset"}]})
+
+    result = await discovery._discover_business_assets(
+        PartialClient(),
+        "https://graph.facebook.com/v27.0",
+        "token",
+        {"id": "business-1", "name": "NextGen"},
+    )
+    assert result["owned_pages"] == []
+    assert result["client_pages"][0]["id"] == "asset-1"
+    assert "owned_pages" in result["discovery_errors"]
+    assert result["discovery_complete"] is False
