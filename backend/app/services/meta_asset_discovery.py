@@ -64,8 +64,8 @@ async def _discover_business_assets(
     edges = {
         "owned_pages": "owned_pages?fields=id,name,category",
         "client_pages": "client_pages?fields=id,name,category",
-        "owned_instagram_accounts": "owned_instagram_assets",
-        "client_instagram_accounts": "client_instagram_assets",
+        "owned_instagram_accounts": "owned_instagram_assets?fields=id,username,name,account_type",
+        "client_instagram_accounts": "client_instagram_assets?fields=id,username,name,account_type",
     }
     discovered: dict[str, Any] = {"id": business_id, "name": business.get("name")}
     for key, edge in edges.items():
