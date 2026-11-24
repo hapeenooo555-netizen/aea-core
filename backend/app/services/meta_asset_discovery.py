@@ -68,9 +68,17 @@ async def _discover_business_assets(
         "client_instagram_accounts": "client_instagram_assets?fields=id,username,name,account_type",
     }
     discovered: dict[str, Any] = {"id": business_id, "name": business.get("name")}
+    edge_errors: dict[str, str] = {}
     for key, edge in edges.items():
-        rows = await _edge(client, f"{base}/{business_id}/{edge}", token)
-        discovered[key] = _asset_rows(rows)
+        try:
+            rows = await _edge(client, f"{base}/{business_id}/{edge}", token)
+            discovered[key] = _asset_rows(rows)
+        except MetaAssetDiscoveryError as exc:
+            # One missing permission must not hide other assets the user can access.
+            discovered[key] = []
+            edge_errors[key] = str(exc)
+    discovered["discovery_errors"] = edge_errors
+    discovered["discovery_complete"] = not edge_errors
     return discovered
 
 
