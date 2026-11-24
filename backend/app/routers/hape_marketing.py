@@ -11,6 +11,7 @@ from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.hape_marketing_os import HapeBrothersMarketingOS
 from app.services.connectors.meta_marketing import MetaMarketingConnector
 from app.services.approval_gateway import ApprovalGateway
+from app.services import meta_user_connection as meta_vault
 
 SUPPORTED_CHANNELS = {"facebook", "instagram", "whatsapp"}
 
@@ -105,7 +106,11 @@ def _result_or_raise(result: dict[str, Any]) -> dict[str, Any]:
 async def meta_status(
     owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
-    return {"success": True, "owner_id": owner_id, "connector": MetaMarketingConnector().health_check()}
+    try:
+        connection = meta_vault.connection_status(owner_id)
+    except meta_vault.MetaCredentialError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Meta connection status is temporarily unavailable.") from exc
+    return {"success": True, "owner_id": owner_id, "connector": MetaMarketingConnector().health_check(), "connection": connection}
 
 
 @router.post("/publish")
@@ -148,6 +153,7 @@ async def publish_marketing_content(
         owner_id,
         {"channel": channel, "message": body.message},
         idempotency_key=body.idempotency_key,
+        owner_id=owner_id,
     )
 
 

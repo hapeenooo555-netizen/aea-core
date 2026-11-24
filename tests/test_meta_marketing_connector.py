@@ -5,7 +5,21 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app.services.connectors.meta_marketing import MetaMarketingConnector
+from app.services.connectors.meta_marketing import MetaMarketingConnector, MetaConfig
+from app.services.meta_oauth import graph_version
+
+
+def test_meta_graph_api_defaults_to_v27(monkeypatch) -> None:
+    monkeypatch.delenv("META_GRAPH_API_VERSION", raising=False)
+    assert graph_version() == "v27.0"
+    assert MetaConfig().api_version == "v27.0"
+    assert MetaMarketingConnector().config.api_version == "v27.0"
+
+
+def test_meta_graph_api_version_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v26.0")
+    assert graph_version() == "v26.0"
+    assert MetaMarketingConnector().config.api_version == "v26.0"
 
 
 def test_meta_connector_has_three_channel_capabilities() -> None:
@@ -16,28 +30,37 @@ def test_meta_connector_has_three_channel_capabilities() -> None:
     assert caps["disconnect_account"] is False
 
 
-def test_meta_connector_does_not_expose_token(monkeypatch) -> None:
-    monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
-    result = MetaMarketingConnector().get_account_status()
-    assert "secret" not in str(result)
-    assert result["status"] == "not_started"
-    assert result["configuration_status"] == "server_configured_unverified"
-    assert result["user_oauth_supported"] is False
+def test_meta_health_check_never_claims_a_shared_token_is_connected(monkeypatch) -> None:
+    monkeypatch.setenv("META_ACCESS_TOKEN", "legacy-shared-secret")
+    result = MetaMarketingConnector().health_check()
+    assert result["status"] == "owner_scoped_oauth_required"
+    assert result["connection_type"] == "per_user_encrypted_vault"
+    assert "legacy-shared-secret" not in str(result)
 
 
-def test_meta_publish_requires_configuration(monkeypatch) -> None:
-    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+def test_meta_publish_requires_authenticated_owner(monkeypatch) -> None:
+    monkeypatch.setenv("META_ACCESS_TOKEN", "legacy-shared-secret")
+    result = MetaMarketingConnector().publish_content(
+        "worker-a",
+        {"channel": "facebook", "message": "Habari"},
+    )
+    assert result["success"] is False
+    assert result["status"] == "owner_required"
+
+
+def test_meta_publish_never_falls_back_to_shared_environment_token(monkeypatch) -> None:
+    monkeypatch.setenv("META_ACCESS_TOKEN", "legacy-shared-secret")
     result = MetaMarketingConnector().publish_content(
         "worker-a",
         {"channel": "whatsapp", "message": "Habari"},
+        owner_id="owner-1",
     )
     assert result["success"] is False
-    assert result["status"] == "not_configured"
-    assert result["checkpoint_type"] == "oauth_authorization_required"
+    assert result["status"] == "not_connected"
+    assert "legacy-shared-secret" not in str(result)
 
 
-def test_meta_publish_uses_transport_without_leaking_token(monkeypatch) -> None:
-    monkeypatch.setenv("META_ACCESS_TOKEN", "secret")
+def test_meta_publish_transport_receives_owner_and_channel_not_raw_credentials() -> None:
     captured = {}
 
     def transport(**kwargs):
@@ -48,7 +71,27 @@ def test_meta_publish_uses_transport_without_leaking_token(monkeypatch) -> None:
         "worker-a",
         {"channel": "facebook", "message": "New mabati stock"},
         idempotency_key="post-1",
+        owner_id="owner-1",
     )
     assert result == {"success": True, "id": "remote-1"}
     assert captured["channel"] == "facebook"
+    assert captured["owner_id"] == "owner-1"
+    assert captured["credential_purpose"] == "facebook_login"
     assert "access_token" not in captured
+    assert "token" not in captured
+
+
+def test_meta_whatsapp_transport_uses_embedded_signup_credential_scope() -> None:
+    captured = {}
+
+    def transport(**kwargs):
+        captured.update(kwargs)
+        return {"success": True, "id": "remote-wa-1"}
+
+    result = MetaMarketingConnector(transport=transport).publish_content(
+        "worker-a",
+        {"channel": "whatsapp", "message": "Habari", "recipient": "255700000000"},
+        owner_id="owner-1",
+    )
+    assert result["success"] is True
+    assert captured["credential_purpose"] == "whatsapp_embedded_signup"
