@@ -66,6 +66,9 @@ class FollowUpRequest(BaseModel):
 class PublishRequest(BaseModel):
     channel: str
     message: str = Field(..., min_length=1, max_length=5000)
+    image_url: str | None = Field(default=None, max_length=4096)
+    page_id: str | None = Field(default=None, max_length=64)
+    instagram_account_id: str | None = Field(default=None, max_length=64)
     approval_required: bool = True
     idempotency_key: str | None = None
 
@@ -134,6 +137,9 @@ async def publish_marketing_content(
                 "content": {
                     "channel": channel,
                     "message": body.message,
+                    **({"image_url": body.image_url} if body.image_url else {}),
+                    **({"page_id": body.page_id} if body.page_id else {}),
+                    **({"instagram_account_id": body.instagram_account_id} if body.instagram_account_id else {}),
                 },
             },
             client=None,
@@ -151,7 +157,7 @@ async def publish_marketing_content(
         }
     return MetaMarketingConnector().publish_content(
         owner_id,
-        {"channel": channel, "message": body.message},
+        {"channel": channel, "message": body.message, **({"image_url": body.image_url} if body.image_url else {}), **({"page_id": body.page_id} if body.page_id else {}), **({"instagram_account_id": body.instagram_account_id} if body.instagram_account_id else {})},
         idempotency_key=body.idempotency_key,
         owner_id=owner_id,
     )
