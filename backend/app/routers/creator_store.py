@@ -454,9 +454,9 @@ def read_product_preview(
     if not isinstance(content, dict):
         raise HTTPException(status_code=409, detail="This asset does not contain readable structured content.")
     core = content.get("core_content")
-    chapters = content.get("chapters") or content.get("chapter_content")
+    chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules")
     if not chapters and isinstance(core, dict):
-        chapters = core.get("chapters") or core.get("chapter_content")
+        chapters = core.get("chapters") or core.get("chapter_content") or core.get("modules")
     if not chapters and isinstance(core, str):
         chapters = [{"title": product.get("title") or assets[0].get("title"), "body": core}]
     if not isinstance(chapters, list) or not chapters:
