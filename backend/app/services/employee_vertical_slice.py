@@ -294,7 +294,7 @@ class EmployeeVerticalSlice:
 
         existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
-            return self._resume_execution(mission_id, existing_execution, report, validated_plan)
+            return self._resume_execution(mission_id, existing_execution, report, validated_plan, metadata)
 
         execution_id = str(uuid4())
         claim = self._execution.claim_execution(
@@ -306,7 +306,7 @@ class EmployeeVerticalSlice:
         execution_id = execution["execution_id"]
         report["execution_id"] = execution_id
         if not claim.get("created"):
-            return self._resume_execution(mission_id, execution, report, validated_plan)
+            return self._resume_execution(mission_id, execution, report, validated_plan, metadata)
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution start persistence failed"))
@@ -583,7 +583,11 @@ class EmployeeVerticalSlice:
                 continue
             if decision == "RETRY":
                 retry_decision = classify_failure(result.get("error", "execution failure"))
-                if result.get("retryable", retry_decision.retryable) and attempt_index < self._max_decisions:
+                if (
+                    result.get("retryable", retry_decision.retryable)
+                    and attempt_index < self._max_decisions
+                    and not (metadata or {}).get("_final_orchestration_attempt")
+                ):
                     retry_update = self._execution.update_execution_state(execution_id, self.owner_id, status="RETRYING", retry_count=attempt_index + 1, result=sanitize_payload({"decision": decision, "next_step": step_name, "result": result}))
                     if not retry_update.get("success"):
                         return self._failed_report(report, retry_update.get("error", "Retry state persistence failed"))
@@ -629,6 +633,7 @@ class EmployeeVerticalSlice:
         execution: dict[str, Any],
         report: dict[str, Any],
         plan: list[dict[str, Any]],
+        metadata: dict[str, Any] | None,
     ) -> dict[str, Any]:
         execution_id = execution["execution_id"]
         report["execution_id"] = execution_id
@@ -652,7 +657,7 @@ class EmployeeVerticalSlice:
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution resume persistence failed"))
-        return self._execute_plan(mission_id, execution_id, plan, report, None)
+        return self._execute_plan(mission_id, execution_id, plan, report, metadata)
 
     def _approval_worker_is_owned(self, worker_id: Any) -> bool:
         """Verify that an approval's worker belongs to this authenticated owner.

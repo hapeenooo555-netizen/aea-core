@@ -38,3 +38,13 @@ Authenticated production submission through Hub created mission `8cae3a6e-e9c1-4
 The recovery change uses an explicit response contract and a narrower brief on later generation attempts. It calls the provider again and preserves the same acceptance checks. Logs identify rejected property names without including draft text. The focused regression and existing Studio and employee suites passed 115 tests.
 
 Next action after the recovery deploy is to use **Check task** on the existing QA mission, verify one freshly generated version in Supabase, and open the chapter text in Hub. The remaining Phase 1 and external blockers above still apply.
+
+### Production follow-up · Groq schema constraint
+
+[Core #290](https://github.com/hapeenooo555-netizen/aea-core/pull/290) deployed `e7f7f496947ba614ee44c078232ae521ff209b6c` on the [API](https://dashboard.render.com/web/srv-dbcde09srm7s738ei680/deploys/dep-dc49gujbc2fs739h61v0) and [video worker](https://dashboard.render.com/worker/srv-dbuuihd9fdbs73b204e0/deploys/dep-dc49gujbc2fs739h61s0). [Backend CI](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45892363645) and the [SBOM and license audit](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45892363596) passed on the merged commit. The third attempt resumed the same mission but Groq returned HTTP 400 from the configured GPT-OSS 120B model. No asset was saved. The logs establish the provider response status. They do not identify the provider's underlying reason for the HTTP 400.
+
+Mission-based book generation now sends a strict JSON response schema on supported GPT-OSS models and still validates chapter body text before saving. Structured creation and other provider callers retain their normal path. The orchestration attempt limit now resolves the final rejected step as a failed execution instead of scheduling another retry. The local focused suite passed 147 tests.
+
+A read-only Supabase check evaluated the deployed RLS policies under the authenticated role with two account identities. The owner could see the QA mission. The other account saw zero matching mission, execution or step rows. A second-browser-session test and an asset-level check after successful generation are pending.
+
+Next action is to run one fresh, private QA e-book through the same Hub workspace after the strict-schema release. Record the new mission, the three dependent steps and their persisted outcomes. Open the result in the Hub reader before marking scenario A verified.

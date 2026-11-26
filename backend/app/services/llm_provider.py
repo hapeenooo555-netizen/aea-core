@@ -90,7 +90,10 @@ class GroqLLMProvider(BaseLLMProvider):
         except (TypeError, ValueError):
             return None
 
-    def generate(self, prompt: str, system_prompt: str | None = None) -> dict[str, Any]:
+    def generate(
+        self, prompt: str, system_prompt: str | None = None,
+        *, response_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not self.api_key:
             return self._error_response("Missing GROQ_API_KEY")
 
@@ -113,11 +116,17 @@ class GroqLLMProvider(BaseLLMProvider):
         models = (self.model, *self.fallback_models)
         last_rate_limited_model: str | None = None
         for model in models:
+            response_format: dict[str, Any] = {"type": "json_object"}
+            if response_schema is not None and model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
+                response_format = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "studio_book", "strict": True, "schema": response_schema},
+                }
             try:
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    response_format={"type": "json_object"},
+                    response_format=response_format,
                 )
             except Exception as exc:
                 status_code = self._status_code(exc)

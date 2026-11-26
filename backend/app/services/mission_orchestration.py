@@ -362,13 +362,22 @@ class MissionOrchestrationService:
         claimed = self._claim_mission(mission, claim_token)
         if not claimed:
             return {"success": False, "status": "RETRY", "mission": self.get_mission(mission_id), "reason": "mission_already_claimed"}
-        self._update_mission(mission_id, {"attempt_count": int(mission.get("attempt_count") or 0) + 1})
+        attempt_count = int(mission.get("attempt_count") or 0) + 1
+        self._update_mission(mission_id, {"attempt_count": attempt_count})
         started = self.transition(mission_id, "active")
         if not started.get("success"):
             return started
         employee = self._employee()
         try:
-            result = employee.run(mission.get("objective") or mission.get("description") or mission.get("title") or "", mission_id=mission_id, metadata=mission.get("metadata") or {})
+            metadata = {
+                **(mission.get("metadata") or {}),
+                "_final_orchestration_attempt": attempt_count >= int(mission.get("max_attempts") or self.max_mission_attempts),
+            }
+            result = employee.run(
+                mission.get("objective") or mission.get("description") or mission.get("title") or "",
+                mission_id=mission_id,
+                metadata=metadata,
+            )
         except Exception as exc:
             result = {"success": False, "status": "FAIL", "error": f"Employee execution failed: {exc}"}
         status = result.get("status")
