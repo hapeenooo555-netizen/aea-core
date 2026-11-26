@@ -9,6 +9,7 @@ from typing import Any, Callable
 import httpx
 
 from app.services import meta_user_connection as vault
+from app.database import get_supabase_image_budget_client
 from .base import BaseConnector, ConnectorCapabilities
 
 
@@ -125,6 +126,34 @@ class MetaMarketingConnector(BaseConnector):
             return str(value["id"])
         return None
 
+    @staticmethod
+    def _fresh_owner_image_url(owner_id: str, image_asset_id: str) -> str:
+        """Create a fresh short-lived URL for a completed image owned by this user."""
+        storage_client = get_supabase_image_budget_client()
+        if storage_client is None:
+            raise RuntimeError("Private image storage is unavailable; nothing was published.")
+        rows = (
+            storage_client.table("graphic_design_jobs")
+            .select("id,status,asset_path")
+            .eq("id", image_asset_id)
+            .eq("owner_id", owner_id)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        if not rows or not isinstance(rows[0], dict):
+            raise RuntimeError("Selected image asset was not found for this account; nothing was published.")
+        row = rows[0]
+        asset_path = row.get("asset_path")
+        if row.get("status") != "completed" or not isinstance(asset_path, str) or not asset_path.startswith(f"{owner_id}/"):
+            raise RuntimeError("Selected image asset is not a completed private asset owned by this account.")
+        signed = storage_client.storage.from_("aea-design-assets").create_signed_url(asset_path, 900)
+        data = signed if isinstance(signed, dict) else getattr(signed, "data", None) or {}
+        url = data.get("signedUrl") or data.get("signedURL") or data.get("signed_url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise RuntimeError("Could not create a fresh HTTPS URL for the selected image asset.")
+        return url
+
     def _page_access_token(self, client: httpx.Client, user_token: str, page_id: str) -> str:
         response = client.get(
             f"{self.config.base_url}/me/accounts",
@@ -170,10 +199,15 @@ class MetaMarketingConnector(BaseConnector):
             connection = vault.connection_status(owner_id)
             assets = connection.get("assets") if isinstance(connection, dict) else {}
             assets = assets if isinstance(assets, dict) else {}
+            publish_content = dict(content)
+            image_asset_id = publish_content.get("image_asset_id")
+            if channel in {"facebook", "instagram"} and image_asset_id:
+                # Resolve the private owner-scoped asset only after approval.
+                publish_content["image_url"] = self._fresh_owner_image_url(owner_id, str(image_asset_id))
             with httpx.Client(timeout=25.0) as client:
                 if channel == "whatsapp":
-                    return self._publish_whatsapp(client, token, assets, content)
-                return self._publish_page_channel(client, token, assets, channel, content)
+                    return self._publish_whatsapp(client, token, assets, publish_content)
+                return self._publish_page_channel(client, token, assets, channel, publish_content)
         except vault.MetaCredentialError as exc:
             return {
                 "success": False,
