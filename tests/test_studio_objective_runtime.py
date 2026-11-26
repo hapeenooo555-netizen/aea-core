@@ -109,12 +109,14 @@ class DraftQuery:
 class StudioProvider:
     def __init__(self, *, fail_first=False):
         self.prompts = []
+        self.system_prompts = []
         self.fail_first = fail_first
 
     def generate(self, *, prompt, system_prompt):
         self.prompts.append(json.loads(prompt))
+        self.system_prompts.append(system_prompt)
         if self.fail_first and len(self.prompts) == 1:
-            return {"success": False}
+            return {"success": True, "content": json.dumps({"title": "Rejected outline"})}
         topics = (
             "Select a suitable business concept and observe the customers' purchasing habits.",
             "Estimate operating expenses and track each expense in a written daily record.",
@@ -248,11 +250,16 @@ def test_failed_generation_recovers_with_fresh_output_after_restart(studio):
     first = make_employee("creator", database).run(goal, mission_id=mission_id)
     assert first["status"] == "RETRY"
     assert first["report"]["execution_evidence"][0]["success"] is False
+    assert first["report"]["failures_retries"] == ["AI provider draft is missing required content fields."]
     assert database.rows == []
     resumed = make_employee("creator", database).run(goal, mission_id=mission_id)
     assert resumed["report"]["outcome"] == "VERIFIED"
     assert resumed["report"]["execution_id"] == first["report"]["execution_id"]
     assert len(provider.prompts) == 2
+    assert "FORMAT RECOVERY" not in provider.system_prompts[0]
+    assert "FORMAT RECOVERY" in provider.system_prompts[1]
+    assert "prompt_intelligence" not in provider.prompts[1]
+    assert database.rows[0]["title"] != "Rejected outline"
     assert len(database.rows) == 1
 
 

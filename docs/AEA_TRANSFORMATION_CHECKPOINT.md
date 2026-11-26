@@ -25,3 +25,16 @@ Local CI-equivalent regression before submission passed **410 tests**, with **on
 PR, Actions, Render deployment and authenticated production verification are tracked in the linked implementation PR. Before claiming this milestone live, verify the merged SHA in Render, submit an English or Swahili QA objective with a stable request ID, repeat the request, and open the resulting private e-book through Hub. Confirm one asset version and persisted step evidence in Supabase. Keep QA drafts private and leave commercial data untouched.
 
 Phase 1 remains in progress. The next Phase 1 milestone should use owner-scoped Atlas context for a specific creator workflow and bind contextual dispatch to real tools for existing assets and unfinished work. Cross-workflow planning, broader output quality evaluation, the Home workspace and Phases 2–9 remain pending. Pinterest and Meta external publishing tests are on hold pending designated QA destinations. Supabase full backup and restore verification remains an outstanding external blocker.
+
+### Production follow-up · Structured generation recovery
+
+| Release | Production commit | Deployment and CI |
+|---|---|---|
+| [Core #289](https://github.com/hapeenooo555-netizen/aea-core/pull/289) | `37593090cc9f913eabdb405e753f91cfc267caad` | [API](https://dashboard.render.com/web/srv-dbcde09srm7s738ei680/deploys/dep-dc49a2a9lscs73e2vcpg), [worker](https://dashboard.render.com/worker/srv-dbuuihd9fdbs73b204e0/deploys/dep-dc49a2a9lscs73e2vdig), [backend tests](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45890576817), [SBOM](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45890576300) |
+| [Hub #194](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/pull/194) | `3c32e8e7480140b4173c20d33a436570a0a1879a` | [Hub](https://dashboard.render.com/web/srv-dbcrjsui0phs73fqcv8g/deploys/dep-dc49dk5bedkc73dc0hfg), [tests, lint and build](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/actions/runs/45891479415), [SBOM](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/actions/runs/45891479408) |
+
+Authenticated production submission through Hub created mission `8cae3a6e-e9c1-4a9d-b01b-f89280a2cbea` and execution `9d14a78b-e74c-4790-b397-dcafb7cf37a4`. Core interpreted the request as a Swahili e-book. The first two fresh provider attempts returned draft objects missing required keys. Supabase recorded both failed attempts in the same execution and the Hub displayed the retry state. The save and verification tools had yet to run.
+
+The recovery change uses an explicit response contract and a narrower brief on later generation attempts. It calls the provider again and preserves the same acceptance checks. Logs identify rejected property names without including draft text. The focused regression and existing Studio and employee suites passed 115 tests.
+
+Next action after the recovery deploy is to use **Check task** on the existing QA mission, verify one freshly generated version in Supabase, and open the chapter text in Hub. The remaining Phase 1 and external blockers above still apply.

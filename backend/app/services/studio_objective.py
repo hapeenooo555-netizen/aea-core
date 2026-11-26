@@ -148,6 +148,7 @@ def execute_studio_step(
     owner_id: str,
     client: Any,
     operation_key: str | None,
+    recover_format: bool = False,
 ) -> dict[str, Any]:
     # The Studio routes expose synchronous operations with explicit owner and
     # user-scoped client arguments. Reuse their provider and storage validation.
@@ -155,7 +156,7 @@ def execute_studio_step(
         StudioAssetCreateRequest,
         StudioGenerateRequest,
         create_studio_asset,
-        generate_studio_draft,
+        generate_studio_content,
         list_studio_asset_versions,
     )
 
@@ -163,12 +164,12 @@ def execute_studio_step(
         return {"success": False, "error": "Authenticated Studio storage is unavailable", "retryable": False}
     try:
         if tool == "studio.generate_draft":
-            result = generate_studio_draft(StudioGenerateRequest(
+            result = generate_studio_content(StudioGenerateRequest(
                 prompt=payload["prompt"],
                 niche=payload["topic"][:160],
                 content_type=payload["content_type"],
                 language=payload["language"],
-            ), owner_id)
+            ), owner_id, recover_format=recover_format)
             draft = sanitize_payload(result["draft"])
             title = draft.get("title")
             if not isinstance(title, str) or not title.strip() or not draft.get("core_content"):
