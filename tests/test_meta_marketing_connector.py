@@ -189,3 +189,77 @@ def test_instagram_image_publish_creates_and_publishes_media_container(monkeypat
     assert calls[1]["url"].endswith("/ig-1/media_publish")
     assert calls[1]["data"] == {"creation_id": "container-123"}
 
+
+
+def test_meta_connector_mints_fresh_signed_url_from_owner_scoped_asset(monkeypatch) -> None:
+    from types import SimpleNamespace
+    import app.services.connectors.meta_marketing as module
+
+    calls = []
+
+    class Query:
+        def select(self, fields):
+            calls.append(("select", fields))
+            return self
+
+        def eq(self, field, value):
+            calls.append(("eq", field, value))
+            return self
+
+        def limit(self, count):
+            calls.append(("limit", count))
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[{
+                "id": "asset-1",
+                "status": "completed",
+                "asset_path": "owner-1/asset-1/image.png",
+            }])
+
+    class StorageBucket:
+        def create_signed_url(self, path, expires):
+            calls.append(("sign", path, expires))
+            return {"signedURL": "https://storage.example/fresh-image"}
+
+    class Storage:
+        def from_(self, bucket):
+            calls.append(("bucket", bucket))
+            return StorageBucket()
+
+    class Client:
+        storage = Storage()
+
+        def table(self, name):
+            calls.append(("table", name))
+            return Query()
+
+    monkeypatch.setattr(module, "get_supabase_image_budget_client", lambda: Client())
+    url = MetaMarketingConnector._fresh_owner_image_url("owner-1", "asset-1")
+
+    assert url == "https://storage.example/fresh-image"
+    assert ("eq", "owner_id", "owner-1") in calls
+    assert ("sign", "owner-1/asset-1/image.png", 900) in calls
+
+
+def test_meta_connector_rejects_asset_owned_by_another_user(monkeypatch) -> None:
+    from types import SimpleNamespace
+    import app.services.connectors.meta_marketing as module
+
+    class Query:
+        def select(self, fields): return self
+        def eq(self, field, value): return self
+        def limit(self, count): return self
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class Client:
+        def table(self, name): return Query()
+
+    monkeypatch.setattr(module, "get_supabase_image_budget_client", lambda: Client())
+    try:
+        MetaMarketingConnector._fresh_owner_image_url("owner-1", "foreign-asset")
+    except RuntimeError as exc:
+        assert "not found for this account" in str(exc)
+    else:
+        raise AssertionError("Expected cross-owner asset lookup to fail closed.")
