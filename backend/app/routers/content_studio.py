@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
-from app.services.llm_provider import get_llm_provider
+from app.services.llm_provider import GroqLLMProvider, UnavailableLLMProvider, get_llm_provider
 from app.services.prompt_intelligence import build_intelligence_context
 from app.services.readable_chapters import has_substantive_content, readable_chapters
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
@@ -332,7 +332,11 @@ def generate_studio_draft(
 
     provider = get_llm_provider()
     provider_name = str(getattr(provider, "name", "") or provider.__class__.__name__).lower()
-    if provider_name in {"mockllmprovider", "mock"}:
+    if (
+        provider_name in {"mockllmprovider", "mock"}
+        or isinstance(provider, UnavailableLLMProvider)
+        or (isinstance(provider, GroqLLMProvider) and not provider.api_key)
+    ):
         raise HTTPException(
             status_code=503,
             detail="AI Content Studio is not configured with a production LLM provider. Configure GROQ_API_KEY and LLM_PROVIDER=groq before generating live content.",

@@ -93,10 +93,13 @@ class AEAAgentRuntime:
         if not mission_id:
             return {"success": False, "status": "FAILED",
                     "errors": ["Mission service returned no mission identifier"]}
+        if created.get("idempotent") and mission.get("objective") != request.objective.strip():
+            return {"success": False, "status": "REJECTED",
+                    "errors": ["This request ID is already bound to a different objective"]}
         if run_now:
             outcome = self._orchestration.run_mission(mission_id)
             mission = outcome.get("mission") or self._orchestration.get_mission(mission_id) or mission
-            if not outcome.get("success") and not outcome.get("status"):
+            if not outcome.get("success") and not outcome.get("mission") and not outcome.get("status"):
                 return {"success": False, "status": "FAILED", "mission_id": mission_id,
                         "errors": [str(outcome.get("error") or "Mission execution failed")]}
         try:
@@ -105,16 +108,20 @@ class AEAAgentRuntime:
             return {"success": False, "status": "FAILED", "mission_id": mission_id,
                     "errors": [str(exc)]}
         pending_approvals, execution_id = _approval_context(mission)
+        output = mission["result"] if isinstance(mission.get("result"), dict) else {}
+        report = output.get("report")
+        if runtime_status == "FAILED" and isinstance(report, dict) and report.get("outcome") == "PARTIAL":
+            runtime_status = "PARTIAL"
         result = RuntimeResult(
             request_id=request.request_id,
             owner_id=self.owner_id,
             status=runtime_status,
             mission_id=mission_id,
             execution_id=execution_id,
-            output=mission.get("result") if isinstance(mission.get("result"), dict) else {},
+            output=output,
             pending_approvals=pending_approvals,
             errors=tuple(
-                [str(mission["error"])] if mission.get("error") and runtime_status == "FAILED" else []
+                [str(mission["error"])] if mission.get("error") and runtime_status in {"FAILED", "PARTIAL"} else []
             ),
             evidence={
                 "runtime_contract_version": "1.0",

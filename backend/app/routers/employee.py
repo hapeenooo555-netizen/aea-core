@@ -58,12 +58,12 @@ def _raise(result: dict[str, Any]) -> None:
 
 
 @router.post("/objective", status_code=status.HTTP_201_CREATED)
-async def create_objective(
+def create_objective(
     body: ObjectiveRequest,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    """Turn an authenticated objective into a durable affiliate-capable mission."""
+    """Turn an authenticated objective into a durable employee mission."""
     request = RuntimeRequest(
         owner_id=owner_id,
         objective=body.objective,
@@ -131,7 +131,7 @@ async def get_employee_mission(
 
 
 @router.post("/missions/{mission_id}/run")
-async def run_employee_mission(
+def run_employee_mission(
     mission_id: str,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
