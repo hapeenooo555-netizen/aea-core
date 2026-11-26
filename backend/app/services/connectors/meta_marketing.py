@@ -231,7 +231,18 @@ class MetaMarketingConnector(BaseConnector):
                 )
             response.raise_for_status()
             result = response.json()
-            return {"success": True, "status": "published", "channel": channel, "page_id": page_id, "remote": result}
+            post_id = result.get("post_id") or result.get("id")
+            if not post_id:
+                raise RuntimeError("Meta accepted the request without returning a verifiable Facebook post ID.")
+            return {
+                "success": True,
+                "status": "published",
+                "channel": channel,
+                "page_id": page_id,
+                "post_id": str(post_id),
+                "provider_reference": str(post_id),
+                "remote": result,
+            }
 
         requested_ig = str(content.get("instagram_account_id") or "")
         account = next((item for item in instagram if isinstance(item, dict) and self._asset_id(item) == requested_ig), None) if requested_ig else next((item for item in instagram if isinstance(item, dict) and self._asset_id(item)), None)
@@ -258,7 +269,19 @@ class MetaMarketingConnector(BaseConnector):
             data={"creation_id": creation_id},
         )
         publish.raise_for_status()
-        return {"success": True, "status": "published", "channel": channel, "instagram_account_id": instagram_id, "remote": publish.json()}
+        published_result = publish.json()
+        post_id = published_result.get("id")
+        if not post_id:
+            raise RuntimeError("Meta published the Instagram media without returning a verifiable media ID.")
+        return {
+            "success": True,
+            "status": "published",
+            "channel": channel,
+            "instagram_account_id": instagram_id,
+            "post_id": str(post_id),
+            "provider_reference": str(post_id),
+            "remote": published_result,
+        }
 
     def _publish_whatsapp(
         self,
