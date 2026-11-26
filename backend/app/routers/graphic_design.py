@@ -247,8 +247,20 @@ async def generate_graphic_design_image(
                 )
 
         if generated is None or inspection is None or not inspection.accepted:
-            raise ValueError(
-                "Generated backgrounds repeatedly contained unwanted text"
+            # This is a content-quality rejection, not a provider/network outage.
+            # Mark the durable job failed and return a distinct client-actionable
+            # response; never upload or expose a rejected background.
+            worker_client.table("graphic_design_jobs").update({
+                "status": "failed",
+                "error": "Generated image did not pass text-free visual inspection",
+            }).eq("id", job_id).eq("owner_id", owner_id).execute()
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "AEA generated an image, but it did not pass the text-free "
+                    "visual quality check after 3 attempts. No image was saved. "
+                    "Please retry with a simpler background description."
+                ),
             )
         final_content = generated.content
         final_mime_type = generated.mime_type
@@ -313,6 +325,8 @@ async def generate_graphic_design_image(
             "width": final_width,
             "height": final_height,
         }
+    except HTTPException:
+        raise
     except ImageProviderNotConfigured as exc:
         logger.warning("Graphic design generation unavailable at stage=%s error_type=%s", stage, type(exc).__name__)
         worker_client.table("graphic_design_jobs").update({
