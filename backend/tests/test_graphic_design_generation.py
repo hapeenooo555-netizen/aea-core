@@ -293,3 +293,28 @@ def test_graphic_design_generate_accepts_pinterest_portrait_ratio_2_by_3(monkeyp
     assert payload["status"] == "completed"
     assert payload["width"] == 1024
     assert payload["height"] == 1280
+
+
+def test_graphic_design_rejected_background_returns_actionable_quality_error(monkeypatch):
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: FakeClient())
+    monkeypatch.setattr(graphic_design, "get_image_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr(
+        graphic_design,
+        "inspect_generated_background",
+        lambda _content: SimpleNamespace(
+            accepted=False,
+            reason="unwanted_text_detected",
+            quality_metrics={"ocr_tokens": 2},
+        ),
+    )
+
+    response = TestClient(app).post("/graphic-design/generate", json={
+        "prompt": "Create a text-free portrait background for a Pinterest business Pin.",
+        "aspect_ratio": "2:3",
+        "model": "z_image_turbo",
+    })
+
+    assert response.status_code == 422
+    assert "text-free visual quality check" in response.json()["detail"]
+    assert "No image was saved" in response.json()["detail"]
