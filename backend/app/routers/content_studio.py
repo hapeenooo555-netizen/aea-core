@@ -449,6 +449,8 @@ def generate_studio_content(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Configured AI provider failed to generate the draft.") from exc
 
+    if isinstance(response, dict) and response.get("provider_policy_block") is True:
+        raise HTTPException(status_code=422, detail="The AI provider declined this generation request.")
     if not isinstance(response, dict) or response.get("success") is not True:
         raise HTTPException(status_code=502, detail="Configured AI provider did not return a successful generation response.")
     raw = response.get("content")

@@ -48,3 +48,11 @@ Mission-based book generation now sends a strict JSON response schema on support
 A read-only Supabase check evaluated the deployed RLS policies under the authenticated role with two account identities. The owner could see the QA mission. The other account saw zero matching mission, execution or step rows. A second-browser-session test and an asset-level check after successful generation are pending.
 
 Next action is to run one fresh, private QA e-book through the same Hub workspace after the strict-schema release. Record the new mission, the three dependent steps and their persisted outcomes. Open the result in the Hub reader before marking scenario A verified.
+
+### Phase 1 production evidence and diagnostic follow-up
+
+[Core #291](https://github.com/hapeenooo555-netizen/aea-core/pull/291) at `3371bab164bc4729f0a216963bcfdd1f86339b57` and [Hub #194](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/pull/194) at `3c32e8e7480140b4173c20d33a436570a0a1879a` generated and reopened a fresh seven-chapter English e-book through the authenticated Hub. Replaying the same goal yielded one mission, one execution and one private version. The asset is `805bb53a-a5e2-4ad2-82aa-4b7f23b7b2e2`. Read-only production tests confirmed the second account could not see the draft or the checked execution records.
+
+The matched Swahili goal correctly resolved to the book tool and Swahili. Groq returned HTTP 400 on GPT-OSS 120B. Mission `2592e1af-1fbf-48e2-86b1-c59eb5ae1653` recorded a failed attempt with no saved draft. This evidence does not establish language as the cause.
+
+The diagnostic change records allowlisted provider error codes, provider request identifiers and request shape sizes. It retries with a configured model only on structured-output validation errors or the existing rate-limit path. Explicit provider policy blocks terminate the generation. No raw provider payload or user content is logged. Next action is to retry the exact Swahili objective on the deployed diagnostic adapter and inspect the provider code before changing the generation request.
