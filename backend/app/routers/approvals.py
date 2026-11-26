@@ -175,7 +175,9 @@ def _update_p1_8_mission_state(
     result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
     remote = result.get("remote") if isinstance(result.get("remote"), dict) else {}
     provider_id = (
-        outcome.get("pin_id")
+        outcome.get("provider_id")
+        or outcome.get("post_id")
+        or outcome.get("pin_id")
         or result.get("pin_id")
         or result.get("post_id")
         or result.get("provider_reference")
