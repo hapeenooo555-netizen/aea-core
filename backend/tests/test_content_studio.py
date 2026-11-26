@@ -21,7 +21,7 @@ class FakeProvider:
             "content": json.dumps({
                 "title": "AI for Small Business",
                 "content_type": "ebook",
-                "core_content": {"table_of_contents": ["Introduction", "Chapter 1"]},
+                "core_content": {"table_of_contents": ["Introduction", "Chapter 1", "Chapter 2", "Chapter 3"], "chapters": [{"title": "Chapter 1", "body": "This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. "}, {"title": "Chapter 2", "body": "This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. "}, {"title": "Chapter 3", "body": "This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. This chapter explains the practical workflow in clear steps. It describes the problem, the decisions to make, a realistic example, common mistakes, and an action checklist. Readers should apply each step to their own business, measure the result, and revise the process based on evidence. "}]},
                 "hooks": ["Hook one", "Hook two", "Hook three"],
                 "caption": "Learn practical AI workflows.",
                 "cta": "Get the guide",
@@ -113,6 +113,51 @@ def test_studio_generate_returns_structured_unpublished_draft(monkeypatch):
     assert len(payload["draft"]["hooks"]) == 3
     assert payload["draft"]["caption"] == "Learn practical AI workflows."
     assert payload["draft"]["cta"] == "Get the guide"
+
+
+def test_ebook_generation_rejects_outline_without_readable_chapters(monkeypatch):
+    class OutlineOnlyProvider:
+        def generate(self, prompt: str, system_prompt: str | None = None):
+            return {
+                "success": True,
+                "provider": "test",
+                "content": json.dumps({
+                    "title": "Outline Only",
+                    "content_type": "ebook",
+                    "core_content": {
+                        "table_of_contents": ["Introduction", "Chapter 1"],
+                        "chapter_or_module_outline": {"Chapter 1": "A short outline"},
+                    },
+                    "hooks": ["one", "two", "three"],
+                    "caption": "caption",
+                    "cta": "cta",
+                    "hashtags": ["#ebook"],
+                }),
+            }
+
+    monkeypatch.setattr(content_studio, "get_llm_provider", lambda: OutlineOnlyProvider())
+    response = TestClient(app).post(
+        "/content/studio/generate",
+        json={
+            "prompt": "Create a complete ebook about AI automation for small businesses.",
+            "niche": "AI automation",
+            "content_type": "ebook",
+            "audience": "Small business owners",
+        },
+    )
+    assert response.status_code == 502
+    assert "only an outline" in response.json()["detail"].lower()
+
+
+def test_ebook_readable_body_accepts_full_chapters_and_rejects_outline():
+    full = {"core_content": {"chapters": [
+        {"title": f"Chapter {i}", "body": "A useful complete chapter. " * 15}
+        for i in range(3)
+    ]}}
+    outline = {"core_content": {"table_of_contents": ["Introduction"], "chapter_outline": {"Chapter 1": "Topic"}}}
+    assert content_studio._ebook_has_readable_body(full) is True
+    assert content_studio._ebook_has_readable_body(outline) is False
+
 
 def test_emoji_enrichment_does_not_force_repeated_emojis():
     draft = {
