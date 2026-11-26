@@ -203,7 +203,7 @@ async def get_mission(
 
 
 @router.post("/objective")
-async def run_objective(
+def run_objective(
     request: Request,
     body: ObjectiveRunRequest,
     current_user_id: str = Depends(get_current_user_id),

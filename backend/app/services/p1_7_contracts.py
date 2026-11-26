@@ -100,6 +100,7 @@ class Objective:
     approval_preferences: dict[str, Any] = field(default_factory=dict)
     risk_tolerance: str | None = None
     success_criteria: list[str] = field(default_factory=list)
+    locale: str = "en"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,7 +113,8 @@ class ObjectiveParser:
         metadata = metadata if isinstance(metadata, dict) else {}
         actions = metadata.get("requested_actions", [])
         criteria = metadata.get("success_criteria", [])
-        content_inputs = dict(metadata.get("content_inputs", {}))
+        raw_inputs = metadata.get("content_inputs")
+        content_inputs = dict(raw_inputs) if isinstance(raw_inputs, dict) else {}
         if metadata.get("platform") and "platform" not in content_inputs:
             content_inputs["platform"] = metadata["platform"]
         if metadata.get("vertical") and "vertical" not in content_inputs:
@@ -120,7 +122,9 @@ class ObjectiveParser:
         for affiliate_key in ("country", "language", "niche", "daily_limit", "human_approval_required"):
             if affiliate_key in metadata and affiliate_key not in content_inputs:
                 content_inputs[affiliate_key] = metadata[affiliate_key]
-        platform_constraints = list(metadata.get("platform_constraints", []))
+        raw_constraints = metadata.get("platform_constraints")
+        platform_constraints = list(raw_constraints) if isinstance(raw_constraints, list) else []
+        preferences = metadata.get("approval_preferences")
         if metadata.get("platform") and metadata["platform"] not in platform_constraints:
             platform_constraints.append(metadata["platform"])
         return Objective(
@@ -130,9 +134,10 @@ class ObjectiveParser:
             content_inputs=content_inputs,
             requested_actions=list(actions) if isinstance(actions, list) else [],
             deadline=metadata.get("deadline"),
-            approval_preferences=dict(metadata.get("approval_preferences", {})),
+            approval_preferences=dict(preferences) if isinstance(preferences, dict) else {},
             risk_tolerance=metadata.get("risk_tolerance"),
             success_criteria=list(criteria) if isinstance(criteria, list) else [],
+            locale=metadata["locale"] if isinstance(metadata.get("locale"), str) else "en",
         )
 
 

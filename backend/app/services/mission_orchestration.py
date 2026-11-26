@@ -16,6 +16,7 @@ from uuid import uuid4
 from .employee_vertical_slice import EmployeeVerticalSlice
 from .memory_engine import AtlasMemoryEngine
 from .p1_7_contracts import sanitize_payload
+from .studio_objective import STUDIO_GENERATION_LEASE_SECONDS, interpret_studio_goal
 
 
 MISSION_STATES = {
@@ -275,7 +276,9 @@ class MissionOrchestrationService:
     # ------------------------------------------------------------------
     def readiness(self, mission: dict[str, Any]) -> dict[str, Any]:
         status = str(mission.get("status") or "pending")
-        if status not in READY_STATES and status != "waiting_dependency":
+        expiry = mission.get("orchestration_lease_expires_at")
+        interrupted = status == "active" and expiry and self._is_due(expiry)
+        if status not in READY_STATES and status != "waiting_dependency" and not interrupted:
             return {"ready": False, "reason": f"status_{status}"}
         scheduled_at = mission.get("scheduled_at")
         if scheduled_at and not self._is_due(scheduled_at):
@@ -566,15 +569,18 @@ class MissionOrchestrationService:
         expiry = self._parse_time(mission.get("orchestration_lease_expires_at")) if mission.get("orchestration_lease_expires_at") else None
         if expiry and expiry > now and mission.get("orchestration_claim_token"):
             return False
+        goal = mission.get("objective") or mission.get("description") or ""
+        studio_intent = interpret_studio_goal(goal, {}, "en")
+        lease = STUDIO_GENERATION_LEASE_SECONDS if studio_intent else ORCHESTRATION_LEASE_SECONDS
         updates = {
             "orchestration_claim_token": claim_token,
-            "orchestration_lease_expires_at": _iso(now + timedelta(seconds=ORCHESTRATION_LEASE_SECONDS)),
+            "orchestration_lease_expires_at": _iso(now + timedelta(seconds=lease)),
         }
         if self.client is not None:
             try:
                 response = self.client.rpc(
                     "claim_mission_for_orchestration",
-                    {"p_mission_id": mission["id"], "p_claim_token": claim_token, "p_lease_seconds": ORCHESTRATION_LEASE_SECONDS},
+                    {"p_mission_id": mission["id"], "p_claim_token": claim_token, "p_lease_seconds": lease},
                 ).execute()
                 row = (getattr(response, "data", None) or [{}])[0]
                 return bool(row.get("claimed"))

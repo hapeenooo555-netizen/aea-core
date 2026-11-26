@@ -66,6 +66,8 @@ jobs:
           tests/test_p1_7b_employee_slice.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
+      - name: Run bilingual Studio objective and execution tests
+        run: PYTHONPATH=backend python -m pytest -q tests/test_studio_objective_runtime.py tests/test_agent_runtime.py tests/test_agent_runtime_contract.py
       - name: Run Creator Community API tests
         run: PYTHONPATH=backend python -m pytest -q backend/tests/test_creator_community.py
 

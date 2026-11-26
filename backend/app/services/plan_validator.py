@@ -70,10 +70,21 @@ class PlanValidator:
                 }
 
         validated_steps: list[dict[str, Any]] = []
+        prior_steps: set[str] = set()
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
                 errors.append(f"Step {index} must be an object")
                 continue
+            step_name = step.get("step_name")
+            dependencies = step.get("depends_on", [])
+            if not isinstance(dependencies, list) or any(
+                not isinstance(name, str) or name not in prior_steps for name in dependencies
+            ):
+                errors.append(f"Step {index}: dependencies must name earlier steps")
+            if isinstance(step_name, str) and step_name:
+                if step_name in prior_steps:
+                    errors.append(f"Step {index}: duplicate step name '{step_name}'")
+                prior_steps.add(step_name)
             tool_name = step.get("tool_name") or step.get("action_type")
             result = self._tools.get_tool(tool_name or "")
             if not result.get("success"):

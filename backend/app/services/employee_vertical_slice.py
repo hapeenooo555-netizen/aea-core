@@ -7,7 +7,6 @@ MissionExecutionService and external side effects go through ApprovalGateway.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -21,7 +20,6 @@ from .memory_engine import AtlasMemoryEngine
 from .mission_execution_service import MissionExecutionService
 from .mission_engine import MissionEngine
 from .p1_7_contracts import (
-    BoundedDecisionLoop,
     ObjectiveParser,
     Observation,
     ToolContract,
@@ -32,6 +30,13 @@ from .retry_classifier import classify_failure
 from .stores.platform_connection_store import PlatformConnectionStore
 from .stores.onboarding_workflow_store import OnboardingWorkflowStore
 from .stores.pin_publish_store import PinPublishStore
+from .studio_objective import (
+    STUDIO_GENERATION_LEASE_SECONDS,
+    execute_studio_step,
+    interpret_studio_goal,
+    register_studio_tools,
+    studio_plan,
+)
 from app import database as database_module
 from .tool_registry import ToolRegistry
 from .tool_safety import ToolSafetyError, ToolValidator
@@ -82,6 +87,7 @@ class EmployeeVerticalSlice:
         self._memory = memory_engine or AtlasMemoryEngine(client=client, owner_id=owner_id)
         self._tools = ToolRegistry()
         self._register_tools()
+        register_studio_tools(self._tools)
         self._discovery = CapabilityDiscovery(self._tools, self._connectors)
         self._validator = PlanValidator(self._tools, self._discovery)
         self._tool_validator = ToolValidator(self._tools, ActionEngine(owner_id=owner_id))
@@ -199,44 +205,6 @@ class EmployeeVerticalSlice:
             for key in ("board_name", "pin_text", "link_url", "image_url", "title")
         )
 
-    def _publish_intent(self, goal: str) -> bool:
-        """Return True for a Pin creation/publishing request unless it is draft-only."""
-        normalized = " ".join(goal.lower().replace("pinterest", "").split())
-
-        # Hard negative requests must be evaluated before generic words such as
-        # "publish", "create", or "Pin" can make the request look affirmative.
-        approval_gated = any(phrase in normalized for phrase in (
-            "do not publish automatically",
-            "don't publish automatically",
-            "dont publish automatically",
-            "wait for my explicit approval before publishing",
-            "wait for approval before publishing",
-        ))
-        draft_only = any(phrase in normalized for phrase in (
-            "do not publish anything",
-            "don't publish anything",
-            "dont publish anything",
-            "prepare five content ideas and one sample pin",
-            "draft only",
-            "content ideas",
-            "content plan",
-            "prepare content",
-        ))
-        if draft_only and not approval_gated:
-            return False
-
-        negated = any(phrase in normalized for phrase in (
-            "do not publish",
-            "don't publish",
-            "dont publish",
-            "without publishing",
-            "not publish anything",
-        ))
-        if negated and not approval_gated:
-            return False
-
-        return "publish" in normalized or ("create" in normalized and "pin" in normalized)
-
     def run(
         self,
         goal: str,
@@ -248,28 +216,17 @@ class EmployeeVerticalSlice:
         mission_result = self._resolve_mission(mission_id, goal)
         if not mission_result.get("success"):
             return {"success": False, "status": "FAIL", "error": mission_result.get("error", "Mission unavailable")}
-        mission_id = mission_result["mission"]["id"]
+        mission = mission_result["mission"]
+        mission_id = mission["id"]
         objective = ObjectiveParser().parse(goal, metadata)
-        # The parsed objective is immutable and may summarize away the explicit
-        # Pinterest Pin intent/approval wording. Preserve the original request
-        # for this narrow routing case without mutating the frozen dataclass.
-        raw_goal = goal.lower()
+        intent = interpret_studio_goal(goal, objective.content_inputs, objective.locale)
+        stored_goal = (mission.get("description") or "").strip()
         if (
-            "pinterest" in raw_goal
-            and ("pin" in raw_goal or "publish" in raw_goal)
-            and any(phrase in raw_goal for phrase in (
-                "do not publish automatically",
-                "don't publish automatically",
-                "wait for my explicit approval before publishing",
-                "wait for approval before publishing",
-            ))
+            stored_goal and stored_goal != goal.strip()
+            and (intent or interpret_studio_goal(stored_goal, {}, objective.locale))
         ):
-            objective = replace(objective, goal=goal)
+            return {"success": False, "status": "FAIL", "error": "Objective differs from the saved mission."}
         discovered = self.discover_capabilities()
-        plan = self._build_plan(objective, discovered)
-        # Force a deterministic two-step plan for approval-gated Pin requests
-        # when required publish inputs are absent. Do not inherit a generic
-        # content-planning plan that can complete successfully without a draft.
         raw_goal = " ".join(goal.lower().split())
         gated_pin = (
             "pinterest" in raw_goal
@@ -282,39 +239,23 @@ class EmployeeVerticalSlice:
                 "wait for approval before publishing",
             ))
         )
-        if gated_pin and not self._has_complete_pinterest_pin_inputs(metadata):
-            plan = [
-                {
-                    "step_name": "check_connection_status",
-                    "tool_name": "pinterest.get_account_status",
-                    "input": {"platform": "pinterest"},
-                    "action_type": "pinterest.get_account_status",
-                    "action_payload": {"platform": "pinterest"},
-                    "metadata": None,
-                },
-                {
-                    "step_name": "prepare_pinterest_pin_draft",
-                    "tool_name": "prepare_affiliate_content",
-                    "input": {
-                        "goal": goal,
-                        "niche": "AI tools and digital marketing",
-                        "markets": "USA, UK, Canada, Australia",
-                        "platform": "Pinterest",
-                    },
-                    "action_type": "prepare_affiliate_content",
-                    "action_payload": {"goal": goal},
-                    "metadata": None,
-                },
-            ]
+        if intent:
+            plan = studio_plan(goal, intent) if intent.get("topic") else []
+        else:
+            plan = self._build_plan(objective, discovered)
+            # Keep the existing draft-first handling of approval-gated Pin requests.
+            if gated_pin and not self._has_complete_pinterest_pin_inputs(metadata):
+                plan = self._pinterest_draft_plan(goal)
         validation = self._validator.validate(
             plan,
             owner_id=self.owner_id,
             discovered=discovered,
         )
         report: dict[str, Any] = {
+            "mission_id": mission_id,
             "user_goal": goal,
             "original_user_goal": goal,
-            "understood_objective": objective.to_dict(),
+            "understood_objective": {**objective.to_dict(), **(intent or {})},
             "discovered_capabilities": discovered,
             "plan": plan,
             "selected_tools": [step.get("tool_name") for step in plan],
@@ -327,6 +268,20 @@ class EmployeeVerticalSlice:
             "required_user_action": None,
             "resume_information": None,
         }
+        if intent and intent["intent"] == "studio_compound":
+            return self._failed_report(report, "The combined request requires a workflow that is currently unavailable.")
+        if intent and not intent.get("topic"):
+            report.update({
+                "final_status": "WAIT_FOR_HUMAN_INPUT",
+                "missing_inputs": ["topic"],
+                "required_user_action": (
+                    "Maudhui yawe kuhusu nini?" if intent["language"] == "Swahili"
+                    else "What should the draft be about?"
+                ),
+            })
+            return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
+        if not plan:
+            return self._failed_report(report, "No available employee workflow matches this objective.")
         if not validation.get("success"):
             report.update({"final_status": "FAIL", "failures_retries": validation["errors"]})
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
@@ -350,6 +305,8 @@ class EmployeeVerticalSlice:
         execution = claim["execution"]
         execution_id = execution["execution_id"]
         report["execution_id"] = execution_id
+        if not claim.get("created"):
+            return self._resume_execution(mission_id, execution, report, validated_plan)
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution start persistence failed"))
@@ -363,12 +320,14 @@ class EmployeeVerticalSlice:
         report: dict[str, Any],
         metadata: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        completed_steps: set[str] = set()
-        persisted_steps = self._execution.load_steps_for_execution(execution_id, self.owner_id)
-        for step in persisted_steps:
-            status = step.get("status")
-            if status == "completed":
-                completed_steps.add(step.get("step_name") or "")
+        completed_steps = {}
+        for persisted_step in self._execution.load_steps_for_execution(execution_id, self.owner_id):
+            if persisted_step.get("status") != "completed":
+                continue
+            saved = persisted_step.get("result") or {}
+            completed_steps[persisted_step.get("step_name") or ""] = saved.get("result") or {}
+            if saved.get("execution_evidence"):
+                report.setdefault("execution_evidence", []).append(saved["execution_evidence"])
 
         observation_index = 0
         index = 0
@@ -378,7 +337,14 @@ class EmployeeVerticalSlice:
             if step_name in completed_steps:
                 index += 1
                 continue
+            dependencies = step.get("depends_on", [])
+            if any(name not in completed_steps for name in dependencies):
+                return self._failed_report(report, "A required execution checkpoint is unavailable")
             attempt_index = self._next_attempt_index(execution_id, step_name)
+            lease = (
+                {"lease_seconds": STUDIO_GENERATION_LEASE_SECONDS}
+                if step["tool_name"] == "studio.generate_draft" else {}
+            )
             operation_key = self._operation_key(mission_id, execution_id, step_name)
             claim = self._execution.claim_step(
                 execution_id,
@@ -389,12 +355,16 @@ class EmployeeVerticalSlice:
                 step_name=step_name,
                 operation_key=operation_key,
                 claim_token=self._claim_token,
+                **lease,
             )
             if not claim.get("success"):
                 return self._failed_report(report, claim.get("error", "Step claim failed"))
             claimed_step = claim["step"]
             if not claim.get("claimed") and claimed_step.get("status") == "completed":
-                completed_steps.add(step_name)
+                saved = claimed_step.get("result") or {}
+                completed_steps[step_name] = saved.get("result") or {}
+                if saved.get("execution_evidence"):
+                    report.setdefault("execution_evidence", []).append(saved["execution_evidence"])
                 index += 1
                 continue
             if not claim.get("claimed"):
@@ -414,11 +384,16 @@ class EmployeeVerticalSlice:
             )
             if not claimed_step_name.get("success"):
                 return self._failed_report(report, claimed_step_name.get("error", "Step claim state update failed"))
-            result = self._execute_tool(step, mission_id, execution_id, operation_key)
+            execution_step = {
+                **step,
+                "dependency_results": {name: completed_steps[name] for name in dependencies},
+            } if dependencies else step
+            result = self._execute_tool(execution_step, mission_id, execution_id, operation_key)
+            public_result = {key: value for key, value in result.items() if key != "draft"}
 
             observation = Observation(
                 action=step["tool_name"],
-                result=result,
+                result=public_result,
                 success=bool(result.get("success")),
                 state_change="completed" if result.get("success") else "paused_or_failed",
                 new_information=[str(result.get("status"))] if result.get("status") else [],
@@ -444,7 +419,7 @@ class EmployeeVerticalSlice:
             }
             report.setdefault("execution_evidence", []).append(sanitize_payload(evidence_entry))
             report["executed_actions"].append(sanitize_payload(step))
-            report["results"].append(sanitize_payload(result))
+            report["results"].append(sanitize_payload(public_result))
             report["approvals"] = self._approval_summary(result)
             report["observations"].append(observation.to_dict())
             if "observation" not in report:
@@ -506,6 +481,7 @@ class EmployeeVerticalSlice:
             if (
                 result.get("success")
                 and approval_gated_pin_request
+                and not step["tool_name"].startswith("studio.")
                 and (
                     bool(result.get("sample_pin"))
                     or "prepare_affiliate_content" in str(step.get("tool_name", ""))
@@ -563,12 +539,10 @@ class EmployeeVerticalSlice:
             if not state_update.get("success"):
                 return self._failed_report(report, state_update.get("error", "Execution state update failed"))
 
+            if step_status == "completed":
+                completed_steps[step_name] = result
             if decision == "COMPLETE":
-                completion = self._execution.mark_completed(execution_id, self.owner_id, {"report": sanitize_payload(report)})
-                if not completion.get("success"):
-                    return self._failed_report(report, completion.get("error", "Execution completion failed"))
-                report["final_status"] = "COMPLETE"
-                return {"success": True, "status": "COMPLETE", "report": sanitize_payload(report)}
+                return self._complete_execution(execution_id, report, completed_steps)
             if decision == "WAIT_FOR_APPROVAL":
                 approval_state = dict(state_update.get("execution", {}).get("result") or {})
                 approval_state["approval_request_id"] = result.get("approval_request_id")
@@ -607,23 +581,44 @@ class EmployeeVerticalSlice:
                 continue
             if decision == "RETRY":
                 retry_decision = classify_failure(result.get("error", "execution failure"))
-                if retry_decision.retryable and attempt_index < self._max_decisions:
+                if result.get("retryable", retry_decision.retryable) and attempt_index < self._max_decisions:
                     retry_update = self._execution.update_execution_state(execution_id, self.owner_id, status="RETRYING", retry_count=attempt_index + 1, result=sanitize_payload({"decision": decision, "next_step": step_name, "result": result}))
                     if not retry_update.get("success"):
                         return self._failed_report(report, retry_update.get("error", "Retry state persistence failed"))
                     report["final_status"] = "RETRY"
                     return {"success": False, "status": "RETRY", "report": sanitize_payload(report)}
-            failure = self._execution.mark_failed(execution_id, self.owner_id, result=sanitize_payload(result), error=result.get("error", "Mission failed"))
+            report["final_status"] = "FAIL"
+            report["failures_retries"].append(result.get("error") or "Mission failed")
+            if completed_steps.get("generate_studio_draft"):
+                report["outcome"] = "PARTIAL"
+                if completed_steps.get("save_studio_draft"):
+                    report["deliverable"] = completed_steps["save_studio_draft"]
+            failure = self._execution.mark_failed(
+                execution_id, self.owner_id,
+                result={"report": sanitize_payload(report)},
+                error=result.get("error", "Mission failed"),
+            )
             if not failure.get("success"):
                 return self._failed_report(report, failure.get("error", "Execution failure persistence failed"))
-            report["final_status"] = "FAIL"
             return {"success": False, "status": "FAIL", "report": sanitize_payload(report)}
 
-        completion = self._execution.mark_completed(execution_id, self.owner_id, {"report": sanitize_payload(report)})
+        return self._complete_execution(execution_id, report, completed_steps)
+
+    def _complete_execution(
+        self, execution_id: str, report: dict[str, Any], completed_steps: dict[str, Any],
+    ) -> dict[str, Any]:
+        if report["understood_objective"].get("intent") == "create_studio_draft":
+            deliverable = completed_steps.get("verify_studio_draft")
+            if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_STUDIO_READBACK":
+                return self._failed_report(report, "Studio draft verification evidence is missing")
+            report["outcome"] = "VERIFIED"
+            report["deliverable"] = deliverable
+        report["final_status"] = "COMPLETE"
+        safe_report = sanitize_payload(report)
+        completion = self._execution.mark_completed(execution_id, self.owner_id, {"report": safe_report})
         if not completion.get("success"):
             return self._failed_report(report, completion.get("error", "Execution completion failed"))
-        report["final_status"] = "COMPLETE"
-        return {"success": True, "status": "COMPLETE", "report": sanitize_payload(report)}
+        return {"success": True, "status": "COMPLETE", "report": safe_report}
 
     def _resume_execution(
         self,
@@ -635,25 +630,26 @@ class EmployeeVerticalSlice:
         execution_id = execution["execution_id"]
         report["execution_id"] = execution_id
         durable_result = execution.get("result") or {}
-        completed = {
-            step.get("step_name")
-            for step in self._execution.load_steps_for_execution(execution_id, self.owner_id)
-            if step.get("status") == "completed"
-        }
-        durable_next = durable_result.get("next_step")
-        if durable_next and durable_next not in completed:
-            plan = [step for step in plan if step.get("step_name") == durable_next or step.get("step_name") not in completed]
-        remaining = [step for step in plan if step.get("step_name") not in completed]
-        if not remaining:
-            completion = self._execution.mark_completed(execution_id, self.owner_id, {"report": sanitize_payload(report)})
-            if not completion.get("success"):
-                return self._failed_report(report, completion.get("error", "Execution completion failed"))
-            report["final_status"] = "COMPLETE"
-            return {"success": True, "status": "COMPLETE", "report": sanitize_payload(report)}
+        status = execution.get("status")
+        if status == "SUCCEEDED":
+            saved_report = durable_result.get("report") or {**report, "final_status": "COMPLETE"}
+            return {"success": True, "status": "COMPLETE", "report": sanitize_payload(saved_report)}
+        if status in {"FAILED", "CANCELLED"}:
+            saved_report = durable_result.get("report")
+            if saved_report:
+                return {"success": False, "status": "FAIL", "report": sanitize_payload(saved_report)}
+            return self._failed_report(report, f"Execution is already {status.lower()}")
+        if status == "WAITING_APPROVAL" and durable_result.get("approval_request_id"):
+            report["resume_information"] = {
+                "approval_request_id": durable_result["approval_request_id"],
+                "execution_id": execution_id,
+            }
+            report["final_status"] = "WAIT_FOR_APPROVAL"
+            return {"success": False, "status": "WAIT_FOR_APPROVAL", "report": sanitize_payload(report)}
         running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution resume persistence failed"))
-        return self._execute_plan(mission_id, execution_id, remaining, report, None)
+        return self._execute_plan(mission_id, execution_id, plan, report, None)
 
     def _approval_worker_is_owned(self, worker_id: Any) -> bool:
         """Verify that an approval's worker belongs to this authenticated owner.
@@ -1021,7 +1017,7 @@ class EmployeeVerticalSlice:
                         "action_payload": {"goal": objective.goal, **required_payload},
                         "metadata": affiliate_meta or None,
                     })
-        if not steps:
+        if not steps and goal.startswith("log "):
             steps.append({
                 "step_name": "record_goal",
                 "tool_name": "log",
@@ -1031,6 +1027,32 @@ class EmployeeVerticalSlice:
                 "metadata": required_payload if required_payload else None,
             })
         return steps
+
+    @staticmethod
+    def _pinterest_draft_plan(goal: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "step_name": "check_connection_status",
+                "tool_name": "pinterest.get_account_status",
+                "input": {"platform": "pinterest"},
+                "action_type": "pinterest.get_account_status",
+                "action_payload": {"platform": "pinterest"},
+                "metadata": None,
+            },
+            {
+                "step_name": "prepare_pinterest_pin_draft",
+                "tool_name": "prepare_affiliate_content",
+                "input": {
+                    "goal": goal,
+                    "niche": "AI tools and digital marketing",
+                    "markets": "USA, UK, Canada, Australia",
+                    "platform": "Pinterest",
+                },
+                "action_type": "prepare_affiliate_content",
+                "action_payload": {"goal": goal},
+                "metadata": None,
+            },
+        ]
 
     @staticmethod
     def _build_dynamic_onboarding_step(
@@ -1066,6 +1088,11 @@ class EmployeeVerticalSlice:
             prepared = self._tool_validator.validate_and_prepare(tool_name, payload)
         except ToolSafetyError as exc:
             return {"success": False, "error": str(exc), "reason": exc.reason}
+        if tool_name.startswith("studio."):
+            return execute_studio_step(
+                tool_name, prepared["payload"], step.get("dependency_results", {}),
+                owner_id=self.owner_id, client=self._client, operation_key=operation_key,
+            )
         if tool_name == "prepare_affiliate_content":
             niche = str(payload.get("niche") or "AI tools and digital marketing")
             markets = str(payload.get("markets") or "USA, UK, Canada, and Australia")
@@ -1148,6 +1175,12 @@ class EmployeeVerticalSlice:
         *,
         goal: str = "",
     ) -> str:
+        current_step = plan[index] if 0 <= index < len(plan) else {}
+        current_tool = str(current_step.get("tool_name", ""))
+        if current_tool.startswith("studio."):
+            if result.get("success"):
+                return "FOLLOW_UP" if index + 1 < len(plan) else "COMPLETE"
+            return "RETRY" if result.get("retryable") and self._max_decisions > 0 else "FAIL"
         if result.get("pending_approval"):
             return "WAIT_FOR_APPROVAL"
         if result.get("awaiting_human_intervention") or result.get("waiting_input"):
@@ -1168,8 +1201,6 @@ class EmployeeVerticalSlice:
         # mission: collect the missing board/link/image details before approval.
         # The plan step can be named prepare_pinterest_pin_draft while its tool
         # is prepare_affiliate_content, so check both to preserve the approval gate.
-        current_step = plan[index] if 0 <= index < len(plan) else {}
-        current_tool = str(current_step.get("tool_name", ""))
         is_pin_draft_step = (
             step_name in {"prepare_affiliate_content", "prepare_pinterest_pin_draft"}
             or current_tool == "prepare_affiliate_content"
