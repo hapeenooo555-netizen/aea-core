@@ -347,6 +347,17 @@ def test_marketplace_browse_joins_approved_listing_product_and_public_vendor():
     assert items[0]["vendor"]["display_name"] == "Vendor"
 
 
+def test_marketplace_excludes_disabled_product_even_with_approved_listing():
+    db = Database({
+        "creator_marketplace_listings": [listing_row()],
+        "creator_products": [product_row(owner_id=OTHER, marketplace_enabled=False)],
+        "creator_profiles": [{"user_id": OTHER, "display_name": "Vendor", "is_public": True}],
+    })
+    response = client_for(db).get("/store/products/marketplace")
+    assert response.status_code == 200
+    assert response.json()["listings"] == []
+
+
 def test_repeated_distribution_draft_request_returns_existing_job():
     db = Database({"creator_products": [product_row()]})
     first = client_for(db).post(

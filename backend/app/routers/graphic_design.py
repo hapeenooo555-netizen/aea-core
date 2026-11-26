@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -57,6 +57,7 @@ def _storage_response_data(response: Any) -> dict[str, Any]:
 @router.get("/assets")
 def list_graphic_design_assets(
     limit: int = Query(default=30, ge=1, le=50),
+    job_id: UUID | None = None,
     owner_id: str = Depends(get_current_user_id),
     user_client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
@@ -68,18 +69,20 @@ def list_graphic_design_assets(
 
     stage = "job_query"
     try:
-        response = (
+        query = (
             user_client.table("graphic_design_jobs")
             .select("id,prompt,aspect_ratio,provider,model,status,asset_path,mime_type,width,height,created_at")
             .eq("owner_id", owner_id)
             .eq("status", "completed")
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
         )
+        if job_id is not None:
+            query = query.eq("id", str(job_id))
+        response = query.order("created_at", desc=True).limit(limit).execute()
         rows = getattr(response, "data", None) or []
         if not isinstance(rows, list):
             raise RuntimeError("Unexpected graphic-design asset listing response")
+        if not rows:
+            return {"success": True, "assets": [], "count": 0}
 
         assets = []
         stage = "worker_client_configuration"
