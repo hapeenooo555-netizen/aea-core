@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.database import get_supabase_product_file_client
+from app.services.readable_chapters import has_substantive_content, readable_chapters
 
 router = APIRouter(prefix="/store/products", tags=["creator-store"])
 orders_router = APIRouter(prefix="/store/orders", tags=["creator-orders"])
@@ -94,10 +95,17 @@ def list_my_products(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
-    result = db.table("creator_products").select(
-        "id,asset_id,title,slug,description,product_type,price_amount,currency,status,completion_status,created_at,updated_at"
-    ).eq("owner_id", owner_id).order("created_at", desc=True).limit(100).execute()
-    return {"success": True, "products": _rows(result)}
+    products = _rows(db.table("creator_products").select(
+        "id,asset_id,title,slug,description,product_type,price_amount,currency,status,completion_status,"
+        "visibility,is_sensitive,age_rating,marketplace_enabled,created_at,updated_at"
+    ).eq("owner_id", owner_id).order("created_at", desc=True).limit(100).execute())
+    if products:
+        listings = _rows(db.table("creator_marketplace_listings").select("id,product_id,status")
+                         .eq("owner_id", owner_id).in_("product_id", [row["id"] for row in products]).execute())
+        by_product = {listing["product_id"]: listing for listing in listings}
+        for product in products:
+            product["marketplace_listing"] = by_product.get(product["id"])
+    return {"success": True, "products": products}
 
 
 @router.get("")
@@ -132,6 +140,16 @@ def create_product_listing(
     if asset.get("status") not in {"draft", "approved"}:
         raise HTTPException(status_code=409, detail="This content asset is not eligible for product listing.")
 
+    def existing_product() -> list[dict[str, Any]]:
+        return _rows(db.table("creator_products").select("*")
+                     .eq("owner_id", owner_id).eq("asset_id", str(body.asset_id))
+                     .in_("status", ["draft", "listed"]).order("created_at").limit(1).execute())
+
+    rows = existing_product()
+    if rows:
+        return {"success": True, "product": rows[0], "duplicate": True,
+                "checkout_enabled": False, "delivery_enabled": False}
+
     slug = _slug(body.title) + "-" + uuid4().hex[:8]
     payload = {
         "owner_id": owner_id,
@@ -145,39 +163,24 @@ def create_product_listing(
         "status": "draft",
     }
     try:
-        saved = db.table("creator_products").insert(payload).execute()
+        rows = _rows(db.table("creator_products").insert(payload).execute())
     except Exception as exc:
-        raise HTTPException(status_code=409, detail="Product listing could not be saved.") from exc
-    rows = _rows(saved)
+        rows = existing_product()
+        if not rows:
+            raise HTTPException(status_code=409, detail="Product listing could not be saved.") from exc
+        return {"success": True, "product": rows[0], "duplicate": True,
+                "checkout_enabled": False, "delivery_enabled": False}
     if not rows:
         raise HTTPException(status_code=502, detail="Database did not confirm product listing creation.")
     return {"success": True, "product": rows[0], "checkout_enabled": False, "delivery_enabled": False}
 
 
-def _asset_has_finished_content(product_type: str, asset: dict[str, Any]) -> bool:
+def _asset_has_finished_content(asset: dict[str, Any]) -> bool:
     """Require approved, substantive content before a product can be finished."""
     if asset.get("status") != "approved":
         return False
     content = asset.get("content")
-    if not isinstance(content, dict):
-        return False
-    core = content.get("core_content")
-    if isinstance(core, str) and len(core.strip()) >= 300:
-        return True
-    # A nested core_content object may hold the structured chapter list.
-    nested_chapters = core.get("chapters") or core.get("chapter_content") if isinstance(core, dict) else None
-    chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules") or nested_chapters
-    if isinstance(chapters, list) and chapters:
-        readable = [
-            item for item in chapters
-            if isinstance(item, dict)
-            and len(str(item.get("body") or item.get("content") or item.get("text") or "").strip()) >= 200
-        ]
-        return len(readable) == len(chapters)
-    # Single-body digital guides are allowed only when the actual text is present.
-    if product_type in {"ebook", "guide", "workbook"} and isinstance(core, str):
-        return len(core.strip()) >= 300
-    return False
+    return isinstance(content, dict) and has_substantive_content(content)
 
 
 @router.post("/{product_id}/purchase-intent", status_code=status.HTTP_201_CREATED)
@@ -453,25 +456,7 @@ def read_product_preview(
     content = assets[0].get("content")
     if not isinstance(content, dict):
         raise HTTPException(status_code=409, detail="This asset does not contain readable structured content.")
-    core = content.get("core_content")
-    chapters = content.get("chapters") or content.get("chapter_content") or content.get("modules")
-    if not chapters and isinstance(core, dict):
-        chapters = core.get("chapters") or core.get("chapter_content") or core.get("modules")
-    if not chapters and isinstance(core, str):
-        chapters = [{"title": product.get("title") or assets[0].get("title"), "body": core}]
-    if not isinstance(chapters, list) or not chapters:
-        raise HTTPException(status_code=409, detail="No readable chapter content is saved for this product yet.")
-    readable = []
-    for index, chapter in enumerate(chapters, start=1):
-        if isinstance(chapter, str):
-            title, body = f"Chapter {index}", chapter
-        elif isinstance(chapter, dict):
-            title = str(chapter.get("title") or f"Chapter {index}")
-            body = chapter.get("body") or chapter.get("content") or chapter.get("text") or ""
-        else:
-            continue
-        if isinstance(body, str) and body.strip():
-            readable.append({"number": index, "title": title, "body": body})
+    readable = readable_chapters(content, product.get("title") or assets[0].get("title") or "")
     if not readable:
         raise HTTPException(status_code=409, detail="No readable chapter text is available.")
     return {
@@ -504,7 +489,7 @@ def finish_product(
         "version", desc=True
     ).limit(1).execute()
     assets = _rows(asset_response)
-    has_structured_content = bool(assets and _asset_has_finished_content(str(product.get("product_type") or ""), assets[0]))
+    has_structured_content = bool(assets and _asset_has_finished_content(assets[0]))
     ready_files = _rows(db.table("creator_product_files").select(
         "id,status"
     ).eq("product_id", str(product_id)).eq("owner_id", owner_id).eq("status", "ready").limit(1).execute())

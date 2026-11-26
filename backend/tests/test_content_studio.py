@@ -292,6 +292,35 @@ def test_revise_asset_requires_expected_current_version():
     assert response.status_code == 409
 
 
+def test_approve_product_content_preserves_reviewed_version_and_rejects_outline():
+    db = FakeDatabase()
+    app.dependency_overrides[get_user_scoped_client] = lambda: db
+    api = TestClient(app)
+    source = {
+        "title": "A Business Guide",
+        "content_type": "ebook",
+        "niche": "Business",
+        "prompt": "Write a full guide for small businesses.",
+        "content": {"core_content": {"chapter_outline": ["Introduction"]}},
+        "idempotency_key": "ebook-original-12345",
+    }
+    saved = api.post("/content/studio/assets", json=source).json()["asset"]
+    path = f"/content/studio/assets/{saved['asset_id']}"
+    approval = {**source, "idempotency_key": "ebook-approval-12345", "expected_version": 1,
+                "approve_for_product": True}
+    assert api.patch(path, json=approval).status_code == 409
+
+    complete = {**source, "idempotency_key": "ebook-chapters-12345", "expected_version": 1,
+                "content": {"core_content": {"modules": [{"chapter_content": "Practical advice. " * 20}]}}}
+    assert api.patch(path, json=complete).json()["asset"]["status"] == "draft"
+    approved = api.patch(path, json={**complete, "expected_version": 2, "approve_for_product": True,
+                                    "idempotency_key": "ebook-approval-12345"})
+    assert approved.status_code == 200
+    assert approved.json()["asset"]["status"] == "approved"
+    assert approved.json()["asset"]["version"] == 3
+    assert [row["status"] for row in db.rows] == ["draft", "draft", "approved"]
+
+
 def test_studio_accepts_structured_research_sources_and_labels_them_unverified(monkeypatch):
     monkeypatch.setattr(content_studio, "get_llm_provider", lambda: FakeProvider())
     client = TestClient(app)

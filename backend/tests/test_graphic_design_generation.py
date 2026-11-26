@@ -245,6 +245,18 @@ def test_graphic_design_assets_requires_authentication():
     assert response.status_code == 401
 
 
+def test_graphic_design_saved_pin_image_is_looked_up_by_owner_and_job_id(monkeypatch):
+    job_id = "11111111-1111-4111-8111-111111111111"
+    client = GalleryClient([{"id": job_id, "asset_path": f"owner-123/{job_id}/original.png"}])
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: client)
+    app.dependency_overrides[get_current_user_id] = lambda: "owner-123"
+    app.dependency_overrides[get_user_scoped_client] = lambda: client
+    response = TestClient(app).get(f"/graphic-design/assets?job_id={job_id}&limit=1")
+    assert response.status_code == 200
+    assert response.json()["assets"][0]["job_id"] == job_id
+    assert client.query.filters == [("owner_id", "owner-123"), ("status", "completed"), ("id", job_id)]
+
+
 def test_graphic_design_assets_rejects_invalid_limit():
     response = TestClient(app).get("/graphic-design/assets?limit=1000")
     assert response.status_code == 422

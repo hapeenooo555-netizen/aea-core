@@ -106,12 +106,10 @@ def list_my_distribution_jobs(
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     db = _db(client)
-    # Keep this query compatible with the pre-existing Hub table schema.
-    # New lifecycle columns are added by a separate ordered DB migration;
-    # history must remain readable before that migration is applied.
     jobs = _rows(db.table("creator_distribution_jobs").select(
         "id,product_id,destination,status,error,created_at,scheduled_at,"
-        "approval_required,approved_at,external_id,external_url"
+        "approval_required,approved_at,external_id,external_url,updated_at,"
+        "approval_request_id,provider_reference,provider_url,published_at"
     ).eq("owner_id", owner_id).order("created_at", desc=True).limit(200).execute())
     published_pins = _rows(db.table("published_pins").select(
         "id,approval_request_id,board_name,pin_id,status,created_at,content"
@@ -264,6 +262,8 @@ def submit_marketplace_listing(
         return {"success": True, "listing": existing, "notice": "Listing is already awaiting review."}
     if existing and existing.get("status") == "approved":
         return {"success": True, "listing": existing, "notice": "Listing is already approved."}
+    if existing:
+        raise HTTPException(status_code=409, detail="The existing Marketplace listing was rejected.")
     try:
         rows = _rows(db.table("creator_marketplace_listings").insert({
             "product_id": str(product_id),
@@ -293,7 +293,8 @@ def browse_marketplace(
     product_ids = list({row["product_id"] for row in listings})
     products = _rows(db.table("creator_products").select(
         "id,slug,title,description,product_type,price_amount,currency,age_rating,owner_id"
-    ).in_("id", product_ids).execute())
+    ).in_("id", product_ids).eq("status", "listed").eq("completion_status", "finished")
+     .eq("marketplace_enabled", True).execute())
     owner_ids = list({row["owner_id"] for row in listings})
     profiles = _rows(db.table("creator_profiles").select(
         "user_id,display_name"
@@ -304,7 +305,7 @@ def browse_marketplace(
     for listing in listings:
         product = product_map.get(str(listing["product_id"]))
         vendor = profile_map.get(str(listing["owner_id"]))
-        if product and vendor:
+        if product and vendor and product["owner_id"] == listing["owner_id"]:
             items.append({"listing": listing, "product": product, "vendor": vendor})
     return {"success": True, "listings": items}
 

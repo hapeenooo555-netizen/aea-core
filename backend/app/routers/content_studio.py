@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 from app.dependencies import get_current_user_id, get_user_scoped_client
 from app.services.llm_provider import get_llm_provider
 from app.services.prompt_intelligence import build_intelligence_context
+from app.services.readable_chapters import has_substantive_content, readable_chapters
 from app.services.content_intelligence import enrich_content_intelligence as _enrich_content_intelligence
 from app.services.market_research_sources import list_market_research_sources
 from app.services.world_bank_research import fetch_world_bank_indicators
@@ -81,6 +82,7 @@ class StudioAssetCreateRequest(BaseModel):
 
 class StudioAssetRevisionRequest(StudioAssetCreateRequest):
     expected_version: int = Field(ge=1)
+    approve_for_product: bool = False
 
 
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -119,22 +121,8 @@ def _ebook_has_readable_body(draft: dict[str, Any]) -> bool:
     core = draft.get("core_content")
     if isinstance(core, str):
         return len(core.strip()) >= 1500
-    if not isinstance(core, dict):
-        return False
-    chapters = core.get("chapters") or core.get("modules") or core.get("chapter_content")
-    if not isinstance(chapters, list) or len(chapters) < 3:
-        return False
-    bodies: list[str] = []
-    for chapter in chapters:
-        if isinstance(chapter, str):
-            body = chapter
-        elif isinstance(chapter, dict):
-            body = chapter.get("body") or chapter.get("content") or chapter.get("text") or chapter.get("chapter_content")
-        else:
-            body = None
-        if isinstance(body, str) and len(body.strip()) >= 250:
-            bodies.append(body.strip())
-    return len(bodies) == len(chapters) and sum(len(body) for body in bodies) >= 1500
+    chapters = readable_chapters(draft, minimum_length=250, minimum_core_length=1500)
+    return len(chapters) >= 3 and sum(len(chapter["body"]) for chapter in chapters) >= 1500
 
 
 def _system_prompt() -> str:
@@ -514,6 +502,18 @@ def revise_studio_asset(
     if latest.get("version") != body.expected_version:
         raise HTTPException(status_code=409, detail="This draft has changed. Reload the latest version before saving.")
 
+    if body.approve_for_product:
+        if latest.get("content_type") not in {"ebook", "course", "workbook"}:
+            raise HTTPException(status_code=422, detail="Only ebook, course and workbook text uses product content approval.")
+        if latest.get("status") not in {"draft", "in_review", "approved"}:
+            raise HTTPException(status_code=409, detail="This saved version cannot be approved.")
+        if any(latest.get(field) != getattr(body, field) for field in ("title", "content_type", "niche", "prompt", "content")):
+            raise HTTPException(status_code=409, detail="Save any edits and review the new version before approving it.")
+        if not has_substantive_content(body.content):
+            raise HTTPException(status_code=409, detail="Review complete chapter text before approving it for a product.")
+        if latest.get("status") == "approved":
+            return {"success": True, "asset": latest, "replayed": True}
+
     payload = {
         "asset_id": str(asset_id),
         "owner_id": owner_id,
@@ -524,7 +524,7 @@ def revise_studio_asset(
         "niche": body.niche,
         "prompt": body.prompt,
         "content": body.content,
-        "status": "draft",
+        "status": "approved" if body.approve_for_product else "draft",
     }
     try:
         saved = db.table("content_asset_versions").insert(payload).execute()

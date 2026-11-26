@@ -14,6 +14,7 @@ class Table:
     def __init__(self, db, name):
         self.db, self.name = db, name
         self.filters = {}
+        self.in_filters = {}
         self.payload = None
         self.action = "select"
 
@@ -24,6 +25,10 @@ class Table:
 
     def eq(self, key, value):
         self.filters[key] = value
+        return self
+
+    def in_(self, key, values):
+        self.in_filters[key] = values
         return self
 
     def order(self, *_args, **_kwargs):
@@ -42,7 +47,11 @@ class Table:
 
     def execute(self):
         rows = self.db.tables.setdefault(self.name, [])
-        matches = [r for r in rows if all(r.get(k) == v for k, v in self.filters.items())]
+        matches = [
+            r for r in rows
+            if all(r.get(k) == v for k, v in self.filters.items())
+            and all(r.get(k) in values for k, values in self.in_filters.items())
+        ]
         if self.action == "insert":
             row = dict(self.payload)
             row["id"] = "22222222-2222-4222-8222-222222222222"
@@ -94,6 +103,40 @@ def test_create_product_requires_an_owned_saved_asset():
     assert response.json()["product"]["owner_id"] == "owner-123"
     assert response.json()["product"]["status"] == "draft"
     assert response.json()["checkout_enabled"] is False
+
+
+def test_create_product_reuses_active_product_for_retried_asset():
+    db = Database()
+    api = client(db)
+    payload = {
+        "asset_id": "11111111-1111-4111-8111-111111111111",
+        "title": "AEA AI Starter Guide",
+        "description": "A practical starter guide to using AI for everyday small business tasks.",
+        "product_type": "guide",
+        "price_amount": 15000,
+    }
+    first = api.post("/store/products", json=payload)
+    repeat = api.post("/store/products", json={**payload, "price_amount": 20000})
+    assert first.status_code == repeat.status_code == 201
+    assert repeat.json()["duplicate"] is True
+    assert repeat.json()["product"]["id"] == first.json()["product"]["id"]
+    assert repeat.json()["product"]["price_amount"] == 15000
+    assert len(db.tables["creator_products"]) == 1
+
+
+def test_my_products_returns_saved_marketplace_and_listing_state():
+    db = Database()
+    db.tables["creator_products"] = [
+        {"id": "product-1", "owner_id": "owner-123", "marketplace_enabled": True, "status": "listed"}
+    ]
+    db.tables["creator_marketplace_listings"] = [
+        {"id": "listing-1", "product_id": "product-1", "owner_id": "owner-123", "status": "approved"}
+    ]
+    result = client(db).get("/store/products/mine")
+    assert result.status_code == 200
+    product = result.json()["products"][0]
+    assert product["marketplace_enabled"] is True
+    assert product["marketplace_listing"]["status"] == "approved"
 
 
 def test_create_product_rejects_asset_owned_by_another_user():
@@ -178,7 +221,9 @@ def test_owner_can_read_approved_ebook_in_private_reader():
     db = Database()
     db.tables["content_asset_versions"][0].update({
         "status": "approved",
-        "content": {"chapters": [{"title": "Utangulizi", "body": "Maudhui ya kitabu."}]},
+        "content": {"chapters": [], "core_content": {"modules": [
+            {"title": "Utangulizi", "chapter_content": "Maudhui ya kitabu."},
+        ]}},
     })
     db.tables["creator_products"].append({
         "id": "22222222-2222-4222-8222-222222222222",
