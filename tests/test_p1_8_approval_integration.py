@@ -115,3 +115,47 @@ def test_expired_approval_cancels_waiting_p1_8_mission():
     assert updated["status"] == "cancelled"
     assert updated["result"]["status"] == "approval_expired"
     assert updated["result"]["approval_request_id"] == "expired-approval"
+
+def test_meta_publish_resume_completes_only_with_verified_provider_id():
+    owner_id = "approval-owner-meta"
+    mission = _waiting_approval_mission(owner_id)
+
+    _update_p1_8_mission_state(
+        {"mission_id": mission["id"]},
+        {
+            "status": "resumed",
+            "platform": "meta",
+            "provider_id": "123456789_987654321",
+            "post_id": "123456789_987654321",
+            "result": {
+                "success": True,
+                "status": "published",
+                "post_id": "123456789_987654321",
+            },
+        },
+        owner_id,
+        None,
+    )
+
+    updated = MissionOrchestrationService(owner_id).get_mission(mission["id"])
+    assert updated["status"] == "completed"
+    assert updated["result"]["provider_id"] == "123456789_987654321"
+
+
+def test_meta_publish_without_provider_id_does_not_complete_mission():
+    owner_id = "approval-owner-meta-no-id"
+    mission = _waiting_approval_mission(owner_id)
+
+    _update_p1_8_mission_state(
+        {"mission_id": mission["id"]},
+        {
+            "status": "resumed",
+            "platform": "meta",
+            "result": {"success": True, "status": "published"},
+        },
+        owner_id,
+        None,
+    )
+
+    assert MissionOrchestrationService(owner_id).get_mission(mission["id"])["status"] == "waiting_approval"
+
