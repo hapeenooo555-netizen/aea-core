@@ -125,6 +125,8 @@ def test_facebook_image_publish_uses_page_photos_endpoint(monkeypatch) -> None:
 
     assert result["success"] is True
     assert result["status"] == "published"
+    assert result["post_id"] == "page-photo-123"
+    assert result["provider_reference"] == "page-photo-123"
     assert calls[0]["url"].endswith("/page-1/photos")
     assert calls[0]["data"] == {"url": "https://cdn.example/image.jpg", "caption": "Habari"}
 
@@ -149,3 +151,41 @@ def test_facebook_image_publish_rejects_non_https_media(monkeypatch) -> None:
         assert "HTTPS" in str(exc)
     else:
         raise AssertionError("Expected unsafe image URL to be rejected.")
+
+def test_instagram_image_publish_creates_and_publishes_media_container(monkeypatch) -> None:
+    calls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def post(self, url, *, headers, data):
+            calls.append({"url": url, "headers": headers, "data": data})
+            if url.endswith("/media"):
+                return Response({"id": "container-123"})
+            return Response({"id": "ig-media-456"})
+
+    connector = MetaMarketingConnector(config=MetaConfig())
+    monkeypatch.setattr(connector, "_page_access_token", lambda client, token, page_id: "page-token")
+    result = connector._publish_page_channel(
+        Client(),
+        "user-token",
+        {"instagram_accounts": [{"id": "ig-1", "page_id": "page-1"}]},
+        "instagram",
+        {"instagram_account_id": "ig-1", "message": "Habari", "image_url": "https://cdn.example/image.jpg"},
+    )
+
+    assert result["success"] is True
+    assert result["post_id"] == "ig-media-456"
+    assert calls[0]["url"].endswith("/ig-1/media")
+    assert calls[0]["data"] == {"image_url": "https://cdn.example/image.jpg", "caption": "Habari"}
+    assert calls[1]["url"].endswith("/ig-1/media_publish")
+    assert calls[1]["data"] == {"creation_id": "container-123"}
+
