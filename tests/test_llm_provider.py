@@ -327,3 +327,43 @@ def test_groq_uses_strict_json_schema_only_for_supported_models(monkeypatch):
         {"type": "json_schema", "json_schema": {"name": "studio_book", "strict": True, "schema": schema}},
         {"type": "json_object"},
     ]
+
+
+def test_groq_fails_over_only_on_explicit_json_validation_error(monkeypatch, caplog):
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_FALLBACK_MODELS", "openai/gpt-oss-20b")
+    calls = []
+
+    class BadRequest(Exception):
+        status_code = 400
+        response = types.SimpleNamespace(headers={"x-request-id": "req_unit_test"})
+        body = {"error": {"code": "json_validate_failed", "failed_generation": "private draft content"}}
+
+    def create(**request):
+        calls.append(request["model"])
+        if request["model"] == "openai/gpt-oss-120b":
+            raise BadRequest()
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content='{"title": "Example"}'))],
+            usage=None,
+        )
+
+    fake_client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    monkeypatch.setitem(sys.modules, "groq", types.SimpleNamespace(Groq=lambda **kwargs: fake_client))
+    provider = GroqLLMProvider()
+
+    assert provider.generate("Write a book", response_schema={"type": "object"})["success"] is True
+    assert calls == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    assert "req_unit_test" in caplog.text
+    assert "private draft content" not in caplog.text
+
+    calls.clear()
+    BadRequest.body = {"error": {"code": "content_filter", "message": "private provider detail"}}
+    blocked = provider.generate("Write a book", response_schema={"type": "object"})
+    assert blocked["success"] is False
+    assert blocked["provider_policy_block"] is True
+    assert calls == ["openai/gpt-oss-120b"]
+    assert "private provider detail" not in caplog.text

@@ -1,14 +1,16 @@
 """LLM provider abstractions for AEA Core.
 
 Groq requests can fail when an individual model reaches its organization-level
-rate limit. The provider therefore supports model failover for HTTP 429 while
-keeping credentials and raw provider errors out of returned diagnostics.
+rate limit. Model failover supports HTTP 429 and explicit JSON output
+validation errors, keeping provider payloads and credentials out of diagnostics.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from typing import Any
 
 from app.config import settings
@@ -90,6 +92,26 @@ class GroqLLMProvider(BaseLLMProvider):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _error_code(exc: Exception) -> str:
+        body = getattr(exc, "body", None)
+        error = body.get("error", body) if isinstance(body, dict) else {}
+        code = error.get("code") if isinstance(error, dict) else None
+        if isinstance(code, str) and code in {
+            "json_validate_failed", "context_length_exceeded", "model_not_found",
+            "model_decommissioned", "unsupported_response_format", "content_filter",
+            "content_policy_violation",
+            "rate_limit_exceeded",
+        }:
+            return code
+        return "unclassified"
+
+    @staticmethod
+    def _request_id(exc: Exception) -> str:
+        headers = getattr(getattr(exc, "response", None), "headers", {})
+        value = headers.get("x-request-id") if hasattr(headers, "get") else None
+        return value if isinstance(value, str) and re.fullmatch(r"req_[a-zA-Z0-9_-]{1,80}", value) else "unavailable"
+
     def generate(
         self, prompt: str, system_prompt: str | None = None,
         *, response_schema: dict[str, Any] | None = None,
@@ -115,6 +137,7 @@ class GroqLLMProvider(BaseLLMProvider):
 
         models = (self.model, *self.fallback_models)
         last_rate_limited_model: str | None = None
+        last_invalid_json_model: str | None = None
         for model in models:
             response_format: dict[str, Any] = {"type": "json_object"}
             if response_schema is not None and model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
@@ -137,12 +160,27 @@ class GroqLLMProvider(BaseLLMProvider):
                         model,
                     )
                     continue
+                error_code = self._error_code(exc)
+                request_id = self._request_id(exc)
+                if response_schema is not None and status_code == 400 and error_code == "json_validate_failed":
+                    last_invalid_json_model = model
+                    logger.warning(
+                        "Groq rejected structured output (model=%s code=%s request_id=%s)",
+                        model, error_code, request_id,
+                    )
+                    continue
                 logger.error(
-                    "Groq generation failed (model=%s status=%s error_type=%s)",
-                    model,
-                    status_code or "unknown",
-                    type(exc).__name__,
+                    "Groq generation failed (model=%s status=%s error_type=%s code=%s request_id=%s "
+                    "format=%s prompt_chars=%d schema_chars=%d)",
+                    model, status_code or "unknown", type(exc).__name__, error_code, request_id,
+                    response_format["type"], len(prompt) + len(system_prompt or ""),
+                    len(json.dumps(response_schema)) if response_schema is not None else 0,
                 )
+                if error_code in {"content_filter", "content_policy_violation"}:
+                    return {
+                        **self._error_response("Groq declined the requested content.", model=model),
+                        "provider_policy_block": True,
+                    }
                 return self._error_response(
                     "Groq request failed. Check provider availability and model configuration.",
                     model=model,
@@ -191,6 +229,8 @@ class GroqLLMProvider(BaseLLMProvider):
                 "usage": usage,
             }
 
+        if last_invalid_json_model:
+            return self._error_response("Groq rejected the generated JSON structure.", model=last_invalid_json_model)
         if last_rate_limited_model:
             logger.error(
                 "Groq rate limits exhausted for primary and fallback models (last_model=%s)",
