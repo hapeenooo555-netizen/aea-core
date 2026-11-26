@@ -330,3 +330,33 @@ def test_graphic_design_rejected_background_returns_actionable_quality_error(mon
     assert response.status_code == 422
     assert "text-free visual quality check" in response.json()["detail"]
     assert "No image was saved" in response.json()["detail"]
+
+
+def test_text_rejection_retries_with_a_fresh_abstract_scene(monkeypatch):
+    prompts = []
+
+    class RecordingProvider(FakeProvider):
+        async def generate(self, *, prompt, aspect_ratio, model):
+            prompts.append(prompt)
+            return await super().generate(prompt=prompt, aspect_ratio=aspect_ratio, model=model)
+
+    outcomes = iter((
+        SimpleNamespace(accepted=False, reason="unwanted_text_detected", quality_metrics={}),
+        SimpleNamespace(accepted=True, reason="passed", quality_metrics={}),
+    ))
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", FakeClient)
+    monkeypatch.setattr(graphic_design, "get_image_generation_provider", RecordingProvider)
+    monkeypatch.setattr(graphic_design, "inspect_generated_background", lambda _: next(outcomes))
+
+    response = TestClient(app).post("/graphic-design/generate", json={
+        "prompt": "Create a portrait Pinterest background for an AI business automation product.",
+        "aspect_ratio": "2:3",
+    })
+
+    assert response.status_code == 201
+    assert response.json()["published"] is False
+    assert len(prompts) == 2
+    assert "business technology background" in prompts[0]
+    assert "abstract background" in prompts[1]
+    assert "business technology background" not in prompts[1]
