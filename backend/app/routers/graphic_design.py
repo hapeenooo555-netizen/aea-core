@@ -200,26 +200,27 @@ async def generate_graphic_design_image(
     stage = "provider_configuration"
     try:
         provider = get_image_generation_provider()
-        # A text-bearing background is a common image-model failure. Retry only
-        # that rejection with a stronger background-only instruction; keep OCR
-        # strict so accidental text is never silently accepted.
+        # When OCR rejects the art, change the scene instead of repeating the
+        # brief that may contain text-bearing objects. The same foreground copy
+        # and strict inspection still apply to every fresh provider result.
         inspection = None
         generated = None
         max_generation_attempts = 3
         for attempt in range(1, max_generation_attempts + 1):
             stage = "provider_generation"
-            retry_instruction = (
-                ""
+            attempt_prompt = (
+                provider_prompt
                 if attempt == 1
                 else (
-                    "\n\nCreate a fresh variation. BACKGROUND ART ONLY: absolutely no "
-                    "letters, words, numbers, typography, logos, watermarks, labels, "
-                    "signage, signatures, or pseudo-text anywhere in the image. "
-                    "Leave all copy areas as clean visual space."
+                    "Create an abstract background from large curved forms with smooth, "
+                    "unmarked surfaces, soft dimensional lighting, and a dark navy palette "
+                    "with restrained teal accents. Place the focal form in the upper half. "
+                    "Keep the lower half dark, even, and open for a separate overlay. "
+                    "Use only abstract forms and gradients with no glyphs or lettering."
                 )
             )
             generated = await provider.generate(
-                prompt=provider_prompt + retry_instruction,
+                prompt=attempt_prompt,
                 aspect_ratio=body.aspect_ratio,
                 model=body.model,
             )
