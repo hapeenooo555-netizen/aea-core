@@ -294,3 +294,36 @@ def test_unknown_explicit_provider_fails_closed() -> None:
     provider = get_llm_provider("unsupported-provider")
 
     assert provider.generate("hello")["success"] is False
+
+
+def test_groq_uses_strict_json_schema_only_for_supported_models(monkeypatch):
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test")
+    monkeypatch.setenv("GROQ_FALLBACK_MODELS", "llama-3.3-70b-versatile")
+    attempted = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    def create(**request):
+        attempted.append(request["response_format"])
+        if request["model"] == "openai/gpt-oss-120b":
+            raise RateLimitError()
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content='{"title": "Example"}'))],
+            usage=None,
+        )
+
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    fake_client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    monkeypatch.setitem(sys.modules, "groq", types.SimpleNamespace(Groq=lambda **kwargs: fake_client))
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"], "additionalProperties": False}
+
+    result = GroqLLMProvider().generate("Write a book", "Return JSON", response_schema=schema)
+
+    assert result["success"] is True
+    assert attempted == [
+        {"type": "json_schema", "json_schema": {"name": "studio_book", "strict": True, "schema": schema}},
+        {"type": "json_object"},
+    ]

@@ -314,3 +314,20 @@ def test_forward_dependencies_are_rejected():
     ], owner_id="creator", discovered=employee.discover_capabilities())
     assert result["success"] is False
     assert "dependencies must name earlier steps" in result["errors"][0]
+
+
+def test_exhausted_orchestration_retry_finishes_as_a_failed_execution(studio):
+    database, provider = studio
+    provider.fail_first = True
+    worker = make_employee("creator", database)
+    orchestration = MissionOrchestrationService("creator", employee=worker, max_mission_attempts=1)
+    mission = orchestration.create_mission("Write an e-book about business")["mission"]
+
+    result = orchestration.run_mission(mission["id"])
+    assert result["mission"]["status"] == "failed"
+    assert result["mission"]["next_retry_at"] is None
+    assert result["execution"]["status"] == "FAIL"
+    execution_id = result["execution"]["report"]["execution_id"]
+    assert worker._execution.get_execution(execution_id, owner_id="creator")["status"] == "FAILED"
+    assert len(provider.prompts) == 1
+    assert not database.rows

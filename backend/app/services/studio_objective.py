@@ -169,7 +169,7 @@ def execute_studio_step(
                 niche=payload["topic"][:160],
                 content_type=payload["content_type"],
                 language=payload["language"],
-            ), owner_id, recover_format=recover_format)
+            ), owner_id, recover_format=recover_format, constrain_book_schema=True)
             draft = sanitize_payload(result["draft"])
             title = draft.get("title")
             if not isinstance(title, str) or not title.strip() or not draft.get("core_content"):
