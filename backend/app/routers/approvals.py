@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from app.dependencies import get_current_user_id, get_user_scoped_client, verify_ownership
 from app import database as database_module
 from app.services.approval_gateway import ApprovalGateway
+from app.services import meta_user_connection as meta_vault
 from app.services.approval_resume_service import ApprovalResumeService
 from app.services.employee_vertical_slice import EmployeeVerticalSlice
 from app.services.connectors.pinterest_connector import PinterestConnector
@@ -38,6 +40,19 @@ def _build_resume_service(current_user_id: str | None = None) -> ApprovalResumeS
 
 
 resume_service = _build_resume_service()
+
+
+class MetaPublishApprovalRequest(BaseModel):
+    """Owner-scoped Facebook/Instagram publishing request from My Store."""
+    worker_id: str
+    channel: str
+    message: str
+    image_url: str | None = None
+    image_asset_id: str | None = None
+    page_id: str | None = None
+    instagram_account_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ApprovalApproveRequest(BaseModel):
@@ -155,15 +170,147 @@ def _update_p1_8_mission_state(
         "resume_failed": "failed",
         "publish_uncertain": "waiting_human",
     }.get(status_text)
-    # A first publish resumes with "resumed"; it is only complete once the
-    # connector confirms a real Pin ID.
+    # A publish is complete only after the provider returns a stable external
+    # identifier. Pinterest uses pin_id; Meta returns post_id/provider_reference
+    # (and its raw Graph API response is retained for audit).
     result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
-    if status_text == "resumed" and (outcome.get("pin_id") or result.get("pin_id")):
+    remote = result.get("remote") if isinstance(result.get("remote"), dict) else {}
+    provider_id = (
+        outcome.get("provider_id")
+        or outcome.get("post_id")
+        or outcome.get("pin_id")
+        or result.get("pin_id")
+        or result.get("post_id")
+        or result.get("provider_reference")
+        or remote.get("id")
+        or remote.get("post_id")
+    )
+    if status_text == "resumed" and provider_id:
         target = "completed"
-    if result.get("status") == "publish_uncertain":
+    if result.get("status") in {"publish_uncertain", "publish_in_progress"}:
         target = "waiting_human"
     if target:
         orchestration.transition(mission_id, target, result=outcome)
+
+
+@router.post("/meta-publish-request", status_code=status.HTTP_201_CREATED)
+async def create_meta_publish_request(
+    request: MetaPublishApprovalRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    """Create an owner-scoped, approval-gated Meta publish request; never publish here."""
+    channel = request.channel.strip().lower()
+    if channel not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=422, detail="Meta channel must be facebook or instagram.")
+    message = request.message.strip()
+    if not message or len(message) > 5000:
+        raise HTTPException(status_code=422, detail="A message of 1–5000 characters is required.")
+    if request.image_url:
+        raise HTTPException(status_code=422, detail="Temporary image URLs are not accepted. Send the saved image_asset_id.")
+    if channel in {"facebook", "instagram"} and not request.image_asset_id:
+        raise HTTPException(status_code=422, detail="Select a saved AEA image asset.")
+    if channel == "facebook" and not request.page_id:
+        raise HTTPException(status_code=422, detail="Select a connected Facebook Page.")
+    if channel == "instagram" and not request.instagram_account_id:
+        raise HTTPException(status_code=422, detail="Select a connected Instagram professional account.")
+    if client is None:
+        raise HTTPException(status_code=503, detail="User-scoped database connection is unavailable.")
+
+    worker_rows = client.table("workers").select("id,status").eq("id", request.worker_id).eq("owner_id", current_user_id).limit(1).execute().data or []
+    if not worker_rows or str(worker_rows[0].get("status") or "").lower() != "active":
+        raise HTTPException(status_code=404, detail="Selected active AEA worker was not found for this account.")
+
+    connection = meta_vault.connection_status(current_user_id)
+    assets = connection.get("assets") if isinstance(connection, dict) else {}
+    assets = assets if isinstance(assets, dict) else {}
+    if channel == "facebook":
+        pages = assets.get("facebook_pages") if isinstance(assets.get("facebook_pages"), list) else []
+        if not any(isinstance(item, dict) and str(item.get("id")) == request.page_id for item in pages):
+            raise HTTPException(status_code=422, detail="Selected Facebook Page is not connected to this account.")
+    else:
+        accounts = assets.get("instagram_accounts") if isinstance(assets.get("instagram_accounts"), list) else []
+        if not any(isinstance(item, dict) and str(item.get("id")) == request.instagram_account_id for item in accounts):
+            raise HTTPException(status_code=422, detail="Selected Instagram account is not connected to this account.")
+
+    # Validate the private image asset at request time as well as at publish
+    # time. The connector will re-check ownership and mint a fresh URL only
+    # after explicit owner approval.
+    if request.image_asset_id:
+        image_client = database_module.get_supabase_image_budget_client()
+        if image_client is None:
+            raise HTTPException(status_code=503, detail="Private image asset storage is unavailable.")
+        image_rows = (
+            image_client.table("graphic_design_jobs")
+            .select("id,status,asset_path")
+            .eq("id", request.image_asset_id)
+            .eq("owner_id", current_user_id)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        if not image_rows or image_rows[0].get("status") != "completed":
+            raise HTTPException(status_code=404, detail="Selected completed image asset was not found for this account.")
+        asset_path = image_rows[0].get("asset_path")
+        if not isinstance(asset_path, str) or not asset_path.startswith(f"{current_user_id}/"):
+            raise HTTPException(status_code=404, detail="Selected image asset is not available to this account.")
+
+    import hashlib
+    fingerprint = hashlib.sha256("|".join([
+        current_user_id, channel, request.worker_id, request.page_id or "",
+        request.instagram_account_id or "", request.image_asset_id or "", message,
+    ]).encode("utf-8")).hexdigest()[:32]
+    orchestration = MissionOrchestrationService(current_user_id, client=client)
+    mission_result = orchestration.create_mission(
+        objective=f"Review and approve {channel.title()} post from My Store",
+        title=f"{channel.title()} publishing approval",
+        metadata={"source": "my_store_distribution", "platform": "meta", "channel": channel},
+        idempotency_key=f"meta-my-store-publish:{fingerprint}",
+    )
+    mission = mission_result.get("mission") if mission_result.get("success") else None
+    mission_id = mission.get("id") if isinstance(mission, dict) else None
+    if not mission_id:
+        raise HTTPException(status_code=503, detail="Could not create a durable Meta publishing mission.")
+    assigned = client.table("missions").update({"assigned_worker": request.worker_id}).eq("id", mission_id).eq("owner_id", current_user_id).execute().data or []
+    if not assigned or str(assigned[0].get("assigned_worker") or "") != request.worker_id:
+        raise HTTPException(status_code=503, detail="Could not verify the Meta approval worker assignment.")
+
+    gateway = ApprovalGateway(client=client)
+    existing = gateway.list_requests(mission_id=mission_id, status="pending", limit=10, client=client)
+    for approval in existing:
+        payload = approval.get("payload") if isinstance(approval.get("payload"), dict) else {}
+        if approval.get("owner_id") == current_user_id and approval.get("action_type") == "publish_content" and payload.get("platform") == "meta":
+            return {"success": True, "approval": approval, "approval_request_id": approval.get("id"), "mission_id": mission_id, "published": False, "idempotent": True}
+
+    created = gateway.create_request(
+        mission_id=mission_id,
+        action_type="publish_content",
+        risk_level="WRITE_EXTERNAL",
+        owner_id=current_user_id,
+        client=client,
+        payload={
+            "platform": "meta",
+            "worker_id": request.worker_id,
+            "content": {
+                "channel": channel,
+                "message": message,
+                **({"image_asset_id": request.image_asset_id} if request.image_asset_id else {}),
+                **({"page_id": request.page_id} if request.page_id else {}),
+                **({"instagram_account_id": request.instagram_account_id} if request.instagram_account_id else {}),
+            },
+        },
+    )
+    if not created.get("success") or not created.get("request"):
+        raise HTTPException(status_code=503, detail="Could not persist the Meta approval request.")
+    return {
+        "success": True,
+        "approval": created["request"],
+        "approval_request_id": created["request"].get("id"),
+        "mission_id": mission_id,
+        "published": False,
+        "requires_explicit_approval": True,
+        "message": "Meta publishing request saved. Nothing will publish until you explicitly approve it.",
+    }
 
 
 @router.get("/{approval_id}")
