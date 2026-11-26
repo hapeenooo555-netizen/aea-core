@@ -169,12 +169,22 @@ def _update_p1_8_mission_state(
         "resume_failed": "failed",
         "publish_uncertain": "waiting_human",
     }.get(status_text)
-    # A first publish resumes with "resumed"; it is only complete once the
-    # connector confirms a real Pin ID.
+    # A publish is complete only after the provider returns a stable external
+    # identifier. Pinterest uses pin_id; Meta returns post_id/provider_reference
+    # (and its raw Graph API response is retained for audit).
     result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
-    if status_text == "resumed" and (outcome.get("pin_id") or result.get("pin_id")):
+    remote = result.get("remote") if isinstance(result.get("remote"), dict) else {}
+    provider_id = (
+        outcome.get("pin_id")
+        or result.get("pin_id")
+        or result.get("post_id")
+        or result.get("provider_reference")
+        or remote.get("id")
+        or remote.get("post_id")
+    )
+    if status_text == "resumed" and provider_id:
         target = "completed"
-    if result.get("status") == "publish_uncertain":
+    if result.get("status") in {"publish_uncertain", "publish_in_progress"}:
         target = "waiting_human"
     if target:
         orchestration.transition(mission_id, target, result=outcome)
