@@ -388,6 +388,8 @@ class EmployeeVerticalSlice:
                 **step,
                 "dependency_results": {name: completed_steps[name] for name in dependencies},
             } if dependencies else step
+            if step["tool_name"] == "studio.generate_draft" and attempt_index > 0:
+                execution_step = {**execution_step, "recover_format": True}
             result = self._execute_tool(execution_step, mission_id, execution_id, operation_key)
             public_result = {key: value for key, value in result.items() if key != "draft"}
 
@@ -586,6 +588,7 @@ class EmployeeVerticalSlice:
                     if not retry_update.get("success"):
                         return self._failed_report(report, retry_update.get("error", "Retry state persistence failed"))
                     report["final_status"] = "RETRY"
+                    report["failures_retries"].append(result.get("error") or "Mission step will be retried")
                     return {"success": False, "status": "RETRY", "report": sanitize_payload(report)}
             report["final_status"] = "FAIL"
             report["failures_retries"].append(result.get("error") or "Mission failed")
@@ -1092,6 +1095,7 @@ class EmployeeVerticalSlice:
             return execute_studio_step(
                 tool_name, prepared["payload"], step.get("dependency_results", {}),
                 owner_id=self.owner_id, client=self._client, operation_key=operation_key,
+                recover_format=step.get("recover_format", False),
             )
         if tool_name == "prepare_affiliate_content":
             niche = str(payload.get("niche") or "AI tools and digital marketing")

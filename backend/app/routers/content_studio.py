@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -26,6 +27,7 @@ from app.services.swahili_language_quality import apply_swahili_language_quality
 from app.services.swahili_research import list_swahili_research_sources, search_swahili_rss
 
 router = APIRouter(prefix="/content/studio", tags=["content-studio"])
+logger = logging.getLogger(__name__)
 
 ContentType = Literal[
     "short_video", "long_video", "article", "blog", "seo", "social_post",
@@ -327,6 +329,13 @@ def generate_studio_draft(
     owner_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """Generate a structured, editable content draft for the authenticated user."""
+    return generate_studio_content(body, owner_id)
+
+
+def generate_studio_content(
+    body: StudioGenerateRequest, owner_id: str, *, recover_format: bool = False,
+) -> dict[str, Any]:
+    """Use the same draft validation for direct and mission-based generation."""
     if not owner_id:
         raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -371,10 +380,36 @@ def generate_studio_draft(
             "Users can save generated content drafts in their authenticated AEA workspace.",
         ],
     }
+    system_prompt = _system_prompt()
+    provider_brief = brief
+    if recover_format:
+        # Retry with a narrower brief and a concrete contract. Prior output
+        # might contain truncated or incorrectly nested content. Generate anew.
+        provider_brief = {key: value for key, value in brief.items() if key != "prompt_intelligence"}
+        schema = {
+            "title": "The requested title",
+            "content_type": body.content_type,
+            "core_content": (
+                {"table_of_contents": ["Chapter title"], "chapters": [{"title": "Chapter title", "body": "Complete original chapter prose"}]}
+                if body.content_type in {"ebook", "course", "workbook"} else "Complete requested draft"
+            ),
+            "hooks": ["Relevant hook"],
+            "caption": "Relevant caption",
+            "cta": "Relevant call to action",
+            "hashtags": ["#RelevantTag"],
+        }
+        system_prompt += (
+            "\nFORMAT RECOVERY: Generate a fresh complete draft. Use the exact top-level JSON keys "
+            "in the following response example. Do not translate the property names, wrap the object, "
+            "or copy example strings. Complete the full requested content before adding optional metadata. "
+            "For a book or course, provide at least three substantive chapters with full body prose "
+            "satisfying the requested publication brief. "
+            + json.dumps(schema, ensure_ascii=False)
+        )
     try:
         response = provider.generate(
-            prompt=json.dumps(brief, ensure_ascii=False),
-            system_prompt=_system_prompt(),
+            prompt=json.dumps(provider_brief, ensure_ascii=False),
+            system_prompt=system_prompt,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Configured AI provider failed to generate the draft.") from exc
@@ -392,7 +427,12 @@ def generate_studio_draft(
         )
 
     required = ("title", "core_content", "hooks", "caption", "cta", "hashtags")
-    if any(key not in draft for key in required):
+    missing = [key for key in required if key not in draft]
+    if missing:
+        logger.warning(
+            "Studio draft rejected for missing fields: content_type=%s format_recovery=%s fields=%s",
+            body.content_type, recover_format, ", ".join(missing),
+        )
         raise HTTPException(status_code=502, detail="AI provider draft is missing required content fields.")
     if body.content_type in {"ebook", "course", "workbook"} and not _ebook_has_readable_body(draft):
         raise HTTPException(
