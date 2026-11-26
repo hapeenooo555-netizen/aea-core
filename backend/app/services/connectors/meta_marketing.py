@@ -214,11 +214,21 @@ class MetaMarketingConnector(BaseConnector):
             if not isinstance(message, str) or not message.strip():
                 raise ValueError("Facebook publishing requires message text.")
             page_token = self._page_access_token(client, user_token, page_id)
-            response = client.post(
-                f"{self.config.base_url}/{page_id}/feed",
-                headers={"Authorization": f"Bearer {page_token}"},
-                data={"message": message},
-            )
+            image_url = content.get("image_url") or content.get("media_url")
+            if image_url is not None and (not isinstance(image_url, str) or not image_url.startswith("https://")):
+                raise ValueError("Facebook image publishing requires an HTTPS image_url.")
+            if image_url:
+                response = client.post(
+                    f"{self.config.base_url}/{page_id}/photos",
+                    headers={"Authorization": f"Bearer {page_token}"},
+                    data={"url": image_url, "caption": message},
+                )
+            else:
+                response = client.post(
+                    f"{self.config.base_url}/{page_id}/feed",
+                    headers={"Authorization": f"Bearer {page_token}"},
+                    data={"message": message},
+                )
             response.raise_for_status()
             result = response.json()
             return {"success": True, "status": "published", "channel": channel, "page_id": page_id, "remote": result}
