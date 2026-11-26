@@ -151,7 +151,7 @@ def test_ebook_generation_rejects_outline_without_readable_chapters(monkeypatch)
 
 def test_ebook_readable_body_accepts_full_chapters_and_rejects_outline():
     full = {"core_content": {"chapters": [
-        {"title": f"Chapter {i}", "body": "A useful complete chapter. " * 15}
+        {"title": f"Chapter {i}", "body": "A useful complete chapter. " * 20}
         for i in range(3)
     ]}}
     outline = {"core_content": {"table_of_contents": ["Introduction"], "chapter_outline": {"Chapter 1": "Topic"}}}
