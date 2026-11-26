@@ -48,6 +48,7 @@ class MetaPublishApprovalRequest(BaseModel):
     channel: str
     message: str
     image_url: str | None = None
+    image_asset_id: str | None = None
     page_id: str | None = None
     instagram_account_id: str | None = None
 
@@ -205,10 +206,10 @@ async def create_meta_publish_request(
     message = request.message.strip()
     if not message or len(message) > 5000:
         raise HTTPException(status_code=422, detail="A message of 1–5000 characters is required.")
-    if request.image_url and (not request.image_url.startswith("https://") or len(request.image_url) > 4096):
-        raise HTTPException(status_code=422, detail="Selected media must use a valid HTTPS URL.")
-    if channel == "instagram" and not request.image_url:
-        raise HTTPException(status_code=422, detail="Instagram publishing requires a selected image asset.")
+    if request.image_url:
+        raise HTTPException(status_code=422, detail="Temporary image URLs are not accepted. Send the saved image_asset_id.")
+    if channel in {"facebook", "instagram"} and not request.image_asset_id:
+        raise HTTPException(status_code=422, detail="Select a saved AEA image asset.")
     if channel == "facebook" and not request.page_id:
         raise HTTPException(status_code=422, detail="Select a connected Facebook Page.")
     if channel == "instagram" and not request.instagram_account_id:
@@ -232,10 +233,32 @@ async def create_meta_publish_request(
         if not any(isinstance(item, dict) and str(item.get("id")) == request.instagram_account_id for item in accounts):
             raise HTTPException(status_code=422, detail="Selected Instagram account is not connected to this account.")
 
+    # Validate the private image asset at request time as well as at publish
+    # time. The connector will re-check ownership and mint a fresh URL only
+    # after explicit owner approval.
+    if request.image_asset_id:
+        image_client = database_module.get_supabase_image_budget_client()
+        if image_client is None:
+            raise HTTPException(status_code=503, detail="Private image asset storage is unavailable.")
+        image_rows = (
+            image_client.table("graphic_design_jobs")
+            .select("id,status,asset_path")
+            .eq("id", request.image_asset_id)
+            .eq("owner_id", current_user_id)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        if not image_rows or image_rows[0].get("status") != "completed":
+            raise HTTPException(status_code=404, detail="Selected completed image asset was not found for this account.")
+        asset_path = image_rows[0].get("asset_path")
+        if not isinstance(asset_path, str) or not asset_path.startswith(f"{current_user_id}/"):
+            raise HTTPException(status_code=404, detail="Selected image asset is not available to this account.")
+
     import hashlib
     fingerprint = hashlib.sha256("|".join([
         current_user_id, channel, request.worker_id, request.page_id or "",
-        request.instagram_account_id or "", request.image_url or "", message,
+        request.instagram_account_id or "", request.image_asset_id or "", message,
     ]).encode("utf-8")).hexdigest()[:32]
     orchestration = MissionOrchestrationService(current_user_id, client=client)
     mission_result = orchestration.create_mission(
@@ -271,7 +294,7 @@ async def create_meta_publish_request(
             "content": {
                 "channel": channel,
                 "message": message,
-                **({"image_url": request.image_url} if request.image_url else {}),
+                **({"image_asset_id": request.image_asset_id} if request.image_asset_id else {}),
                 **({"page_id": request.page_id} if request.page_id else {}),
                 **({"instagram_account_id": request.instagram_account_id} if request.instagram_account_id else {}),
             },
