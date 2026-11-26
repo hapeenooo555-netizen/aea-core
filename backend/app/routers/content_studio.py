@@ -114,6 +114,29 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _ebook_has_readable_body(draft: dict[str, Any]) -> bool:
+    """Require actual prose chapters; a TOC or outline alone is not a readable ebook."""
+    core = draft.get("core_content")
+    if isinstance(core, str):
+        return len(core.strip()) >= 1500
+    if not isinstance(core, dict):
+        return False
+    chapters = core.get("chapters") or core.get("modules") or core.get("chapter_content")
+    if not isinstance(chapters, list) or len(chapters) < 3:
+        return False
+    bodies: list[str] = []
+    for chapter in chapters:
+        if isinstance(chapter, str):
+            body = chapter
+        elif isinstance(chapter, dict):
+            body = chapter.get("body") or chapter.get("content") or chapter.get("text") or chapter.get("chapter_content")
+        else:
+            body = None
+        if isinstance(body, str) and len(body.strip()) >= 250:
+            bodies.append(body.strip())
+    return len(bodies) == len(chapters) and sum(len(body) for body in bodies) >= 1500
+
+
 def _system_prompt() -> str:
     return (
         "You are AEA Content Studio, a senior marketing strategist and professional Swahili copywriter for East African and international markets. "
@@ -152,7 +175,10 @@ def _system_prompt() -> str:
         "In hashtag_strategy include rationale, groups (niche, audience, brand, location), trend_status and data_limitations. "
         "Each platform variant should include format, caption and CTA when a platform is requested. "
         "For video, include script, scene_plan, voiceover and subtitle_text inside core_content. "
-        "For ebooks/courses, include a table_of_contents and chapter_or_module_outline in core_content. "
+        "For ebooks/courses, generate the COMPLETE readable publication, not merely a plan. Include table_of_contents, chapter_or_module_outline, AND chapters (an array of objects with title and full body prose) inside core_content. " +
+        "Write at least 5 substantive chapters, each with at least 250 words of original explanatory prose, examples and actionable steps. " +
+        "Include a complete introduction and conclusion. Never substitute headings, bullet outlines, summaries or chapter descriptions for chapter body text. " +
+        "Do not claim an ebook is complete unless every chapter contains its actual readable body. "
         "For Pinterest, include pin_title, pin_description, image_concept and destination_placeholder. "
         "EMOJI POLICY: Emojis are optional, not a requirement. Use zero or one emoji in a text block only when it improves meaning. "
         "Choose from the actual sentence and platform context; do not reuse the same emoji pattern across hooks, caption and CTA. "
@@ -376,6 +402,11 @@ def generate_studio_draft(
     required = ("title", "core_content", "hooks", "caption", "cta", "hashtags")
     if any(key not in draft for key in required):
         raise HTTPException(status_code=502, detail="AI provider draft is missing required content fields.")
+    if body.content_type in {"ebook", "course", "workbook"} and not _ebook_has_readable_body(draft):
+        raise HTTPException(
+            status_code=502,
+            detail="AI provider returned only an outline. A readable ebook requires at least three full chapters with complete body text. Please regenerate.",
+        )
     return {
         "success": True,
         "status": "draft",
