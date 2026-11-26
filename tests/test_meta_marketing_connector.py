@@ -95,3 +95,57 @@ def test_meta_whatsapp_transport_uses_embedded_signup_credential_scope() -> None
     )
     assert result["success"] is True
     assert captured["credential_purpose"] == "whatsapp_embedded_signup"
+
+
+
+def test_facebook_image_publish_uses_page_photos_endpoint(monkeypatch) -> None:
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "page-photo-123"}
+
+    class Client:
+        def post(self, url, *, headers, data):
+            calls.append({"url": url, "headers": headers, "data": data})
+            return Response()
+
+    connector = MetaMarketingConnector(config=MetaConfig())
+    monkeypatch.setattr(connector, "_page_access_token", lambda client, token, page_id: "page-token")
+    result = connector._publish_page_channel(
+        Client(),
+        "user-token",
+        {"facebook_pages": [{"id": "page-1"}]},
+        "facebook",
+        {"page_id": "page-1", "message": "Habari", "image_url": "https://cdn.example/image.jpg"},
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "published"
+    assert calls[0]["url"].endswith("/page-1/photos")
+    assert calls[0]["data"] == {"url": "https://cdn.example/image.jpg", "caption": "Habari"}
+
+
+def test_facebook_image_publish_rejects_non_https_media(monkeypatch) -> None:
+    connector = MetaMarketingConnector(config=MetaConfig())
+
+    class Client:
+        def post(self, *args, **kwargs):
+            raise AssertionError("No provider request should be made for an unsafe media URL.")
+
+    monkeypatch.setattr(connector, "_page_access_token", lambda client, token, page_id: "page-token")
+    try:
+        connector._publish_page_channel(
+            Client(),
+            "user-token",
+            {"facebook_pages": [{"id": "page-1"}]},
+            "facebook",
+            {"page_id": "page-1", "message": "Habari", "image_url": "http://unsafe.example/image.jpg"},
+        )
+    except ValueError as exc:
+        assert "HTTPS" in str(exc)
+    else:
+        raise AssertionError("Expected unsafe image URL to be rejected.")
