@@ -246,7 +246,7 @@ class EmployeeVerticalSlice:
                 goal, intent,
                 source_mission_id=source_mission_id if isinstance(source_mission_id, str) else "",
             ) if intent.get("topic") or intent.get("price_tzs") or intent["intent"] in {
-                "open_saved_book", "revise_saved_book",
+                "open_saved_book", "revise_saved_book", "promote_saved_book",
             } else []
         else:
             plan = self._build_plan(objective, discovered)
@@ -638,7 +638,7 @@ class EmployeeVerticalSlice:
                 return self._failed_report(report, "Private product draft verification evidence is missing")
             report["outcome"] = "VERIFIED"
             report["deliverable"] = deliverable
-        elif intent in {"create_studio_draft", "open_saved_book", "revise_saved_book"}:
+        elif intent in {"create_studio_draft", "open_saved_book", "revise_saved_book", "promote_saved_book"}:
             step = "open_saved_book" if intent == "open_saved_book" else "verify_studio_draft"
             deliverable = completed_steps.get(step)
             if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_STUDIO_READBACK":

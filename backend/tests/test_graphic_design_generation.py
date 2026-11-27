@@ -360,3 +360,91 @@ def test_text_rejection_retries_with_a_fresh_abstract_scene(monkeypatch):
     assert "business technology background" in prompts[0]
     assert "abstract background" in prompts[1]
     assert "business technology background" not in prompts[1]
+
+
+def test_private_generation_reuses_durable_job_across_overlapping_calls(monkeypatch):
+    import asyncio
+    from fastapi import HTTPException
+
+    records = {}
+
+    class JobQuery:
+        def __init__(self):
+            self.filters = {}
+            self.new = None
+            self.changes = None
+
+        def select(self, _columns):
+            return self
+
+        def limit(self, _count):
+            return self
+
+        def eq(self, column, value):
+            self.filters[column] = value
+            return self
+
+        def insert(self, record):
+            self.new = record
+            return self
+
+        def update(self, changes):
+            self.changes = changes
+            return self
+
+        def execute(self):
+            if self.new is not None:
+                if self.new["id"] in records:
+                    raise RuntimeError("duplicate resource")
+                records[self.new["id"]] = self.new
+                return SimpleNamespace(data=[self.new])
+            result = [row for row in records.values()
+                      if all(row.get(key) == value for key, value in self.filters.items())]
+            if self.changes is not None:
+                for row in result:
+                    row.update(self.changes)
+            return SimpleNamespace(data=result)
+
+    client = SimpleNamespace(table=lambda _table: JobQuery(), storage=Storage())
+    monkeypatch.setattr(graphic_design, "compose_graphic_design", _fake_creative)
+    monkeypatch.setattr(graphic_design, "get_supabase_image_budget_client", lambda: client)
+    monkeypatch.setattr(graphic_design, "inspect_generated_background",
+                        lambda data: SimpleNamespace(accepted=True, reason="passed", quality_metrics=None))
+    calls = []
+
+    async def exercise():
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        class DelayedProvider(FakeProvider):
+            async def generate(self, **kwargs):
+                calls.append(kwargs)
+                started.set()
+                await finish.wait()
+                return await super().generate(**kwargs)
+
+        monkeypatch.setattr(graphic_design, "get_image_generation_provider", DelayedProvider)
+
+        def generate():
+            return graphic_design.generate_private_design(
+                graphic_design.ImageGenerateRequest(prompt="Create a portrait for a bookkeeping guide"),
+                "owner-123", client, operation_key="stable-engine-operation",
+            )
+
+        first = asyncio.create_task(generate())
+        await started.wait()
+        try:
+            await generate()
+        except HTTPException as exc:
+            assert exc.status_code == 503
+        else:
+            raise AssertionError("Pending job was not reported")
+        finally:
+            finish.set()
+        created = await first
+        replayed = await generate()
+        assert replayed["job_id"] == created["job_id"]
+        assert "signed_url" not in created and "signed_url" not in replayed
+
+    asyncio.run(exercise())
+    assert len(calls) == len(records) == 1

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -142,36 +142,41 @@ async def generate_graphic_design_image(
     owner_id: str = Depends(get_current_user_id),
     user_client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
+    return await generate_private_design(body, owner_id, user_client)
+
+
+async def generate_private_design(
+    body: ImageGenerateRequest, owner_id: str, user_client: Any, *, operation_key: str | None = None,
+) -> dict[str, Any]:
     """Generate one unpublished image and store it in the private owner folder."""
     if not owner_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     if user_client is None:
         raise HTTPException(status_code=503, detail="User-scoped database access is unavailable")
 
-    job_id = str(uuid4())
-    try:
-        creative = compose_graphic_design(
-            prompt=body.prompt,
-            aspect_ratio=body.aspect_ratio,
-            brand_mode=body.brand_mode,
-        )
-    except Exception as exc:
-        logger.error("Graphic design copy intelligence failed error_type=%s", type(exc).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="Could not prepare professional graphic-design content. Please retry.",
-        ) from exc
-    final_overlay = body.text_overlay or DesignTextOverlay(**creative["text_overlay"])
-    # Generate clean background art only. The exact copy is composited locally
-    # after inspection; asking the image model to render typography conflicts
-    # with the OCR gate and causes costly, multi-minute retry loops.
-    provider_prompt = (
-        creative["visual_prompt"]
-        + "\\n\\nBACKGROUND ART ONLY. Do not render any text, letters, words, "
-        "numbers, typography, logos, watermarks, labels, signage, signatures, "
-        "or pseudo-text. Leave clean negative space for the exact copy to be "
-        "composited by AEA after image inspection."
-    )
+    job_id = str(uuid5(NAMESPACE_URL, f"aea:graphic:{owner_id}:{operation_key}") if operation_key else uuid4())
+
+    def read_existing() -> dict[str, Any] | None:
+        row = _row(user_client.table("graphic_design_jobs").select(
+            "id,status,provider,model,mime_type,width,height"
+        ).eq("owner_id", owner_id).eq("id", job_id).limit(1).execute())
+        if not row:
+            return None
+        if row["status"] == "failed":
+            raise HTTPException(422, "This image attempt failed. Start a new draft to request a fresh image.")
+        if row["status"] != "completed":
+            raise HTTPException(503, "The original image attempt is still pending. No duplicate was started.")
+        return {**row, "success": True, "job_id": job_id}
+
+    if operation_key:
+        existing = read_existing()
+        if existing:
+            return existing
+
+    worker_client = get_supabase_image_budget_client()
+    if worker_client is None:
+        raise HTTPException(status_code=503, detail="Image storage worker is not configured")
+
     provider_name = "fal.ai"
     model_id = (
         "fal-ai/z-image/turbo"
@@ -191,14 +196,31 @@ async def generate_graphic_design_image(
         if not _row(inserted):
             raise RuntimeError("Could not create the owner-scoped generation job")
     except Exception as exc:
+        if operation_key:
+            existing = read_existing()
+            if existing:
+                return existing
         raise HTTPException(status_code=503, detail="Could not create image-generation job") from exc
 
-    worker_client = get_supabase_image_budget_client()
-    if worker_client is None:
-        raise HTTPException(status_code=503, detail="Image storage worker is not configured")
-
-    stage = "provider_configuration"
+    stage = "copy_intelligence"
     try:
+        creative = compose_graphic_design(
+            prompt=body.prompt,
+            aspect_ratio=body.aspect_ratio,
+            brand_mode=body.brand_mode,
+        )
+        final_overlay = body.text_overlay or DesignTextOverlay(**creative["text_overlay"])
+        # Generate clean background art only. The exact copy is composited locally
+        # after inspection; asking the image model to render typography conflicts
+        # with the OCR gate and causes costly, multi-minute retry loops.
+        provider_prompt = (
+            creative["visual_prompt"]
+            + "\\n\\nBACKGROUND ART ONLY. Do not render any text, letters, words, "
+            "numbers, typography, logos, watermarks, labels, signage, signatures, "
+            "or pseudo-text. Leave clean negative space for the exact copy to be "
+            "composited by AEA after image inspection."
+        )
+        stage = "provider_configuration"
         provider = get_image_generation_provider()
         # When OCR rejects the art, change the scene instead of repeating the
         # brief that may contain text-bearing objects. The same foreground copy
@@ -303,6 +325,11 @@ async def generate_graphic_design_image(
         if not _row(updated):
             raise RuntimeError("Could not finalize image-generation job")
 
+        if operation_key:
+            return {
+                "success": True, "job_id": job_id, "status": "completed", "provider": provider_name,
+                "model": model_id, "mime_type": final_mime_type, "width": final_width, "height": final_height,
+            }
         stage = "signed_url_creation"
         # Upload and signing use the server-side worker client. The path is
         # constructed from the authenticated owner and this newly-created job ID.
