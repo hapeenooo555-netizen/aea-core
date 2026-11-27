@@ -169,6 +169,13 @@ class StudioProvider:
             "Review the results at the end of the week and adjust the costs based on demand.",
         )
         brief = self.prompts[-1]
+        if brief["content_type"] == "pin":
+            return {"success": True, "content": json.dumps({
+                "title": "Warehouse checks that catch costly mistakes",
+                "core_content": {"description": "Use a routine to audit each shelf and check discrepancies."},
+                "hooks": [], "caption": "Catch stock discrepancies with a clear checklist for each shift.",
+                "cta": "Save this checklist", "hashtags": [],
+            })}
         subject = brief["niche"].split(" and use", 1)[0].split(". ", 1)[0]
         if brief["language"] == "Swahili":
             topics = (
@@ -765,3 +772,60 @@ def test_book_product_uses_real_owned_asset_and_reuses_the_same_private_draft(st
     assert products.rows[0]["marketplace_enabled"] is False
     assert len(db.rows) == 2
     assert not provider.prompts
+
+
+@pytest.mark.parametrize("goal, language", [
+    ("Find the most recent e-book in My Store, identify its title and target audience, and prepare a Pinterest promotional Pin for it. Generate a new promotional image, write a compelling caption, and save the Pin as a draft. Do not publish it.", ""),
+    ("Could you design a Pinterest Pin to promote my latest saved ebook? Keep it as a private draft.", ""),
+    ("Tengeneza Pin ya Pinterest kwa ajili ya kitabu changu cha mwisho. Hifadhi rasimu bila kuchapisha.", "Swahili"),
+])
+def test_owned_book_promotion_uses_the_private_plan(goal, language):
+    from app.services.studio_objective import studio_plan
+
+    intent = interpret_studio_goal(goal, {}, "en")
+    assert intent["intent"] == "promote_saved_book"
+    assert intent["selection"] == "latest"
+    assert intent["language"] == language
+    assert [step["tool_name"] for step in studio_plan(goal, intent)] == [
+        "studio.resolve_book_source", "studio.recall_promotion_preferences", "studio.draft_promotion",
+        "studio.generate_promotion_image", "studio.save_draft", "studio.verify_draft",
+    ]
+
+
+def test_conflicting_publish_request_is_not_routed_to_pinterest_publishing():
+    goal = "Create a Pinterest Pin from my latest e-book and publish it."
+    assert interpret_studio_goal(goal, {}, "en")["intent"] == "studio_compound"
+
+
+def test_promotion_saves_new_owner_image_reference_and_verifies_it(studio, monkeypatch):
+    from app.routers import graphic_design
+
+    database, provider = studio
+    source = _book_source(database)
+    source["content"]["intelligence"] = {"audience_profile": {"segment_as_supplied": "Shop managers"}}
+    job_id = str(uuid4())
+    calls = []
+
+    async def generate_image(body, owner_id, client, *, operation_key):
+        assert body.aspect_ratio == "2:3" and body.text_overlay.title
+        assert source["title"] in body.prompt and owner_id == source["owner_id"]
+        calls.append(operation_key)
+        return {"success": True, "job_id": job_id, "provider": "fal.ai", "model": "test",
+                "mime_type": "image/png", "width": 1024, "height": 1536}
+
+    monkeypatch.delenv("AEA_HUB_PUBLIC_URL", raising=False)
+    monkeypatch.setattr(graphic_design, "generate_private_design", generate_image)
+    monkeypatch.setattr(graphic_design, "list_graphic_design_assets",
+                        lambda **kwargs: {"assets": [{"job_id": job_id, "signed_url": "https://signed.invalid/example"}]})
+    goal = 'Design a Pinterest Pin for my saved e-book called "Warehouse Checks".'
+    result = make_employee("book-owner", database).run(goal)
+    assert result["status"] == "COMPLETE", result
+    assert len(calls) == 1
+    assert provider.prompts[0]["audience"] == "Shop managers"
+    assert provider.prompts[0]["owned_reference"]["title"] == "Warehouse Checks"
+    assert "untrusted quoted source" in provider.system_prompts[0]
+    pin = database.rows[-1]
+    assert pin["content_type"] == "pin" and pin["status"] == "draft"
+    assert pin["content"]["pinterest_pin"]["image_job_id"] == job_id
+    assert pin["content"]["source"]["asset_id"] == source["asset_id"]
+    assert "destination_url" not in pin["content"] and "signed.invalid" not in str(result)

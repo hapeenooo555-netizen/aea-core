@@ -16,9 +16,10 @@ from .p1_7_contracts import ToolContract, sanitize_payload
 from .tool_registry import ToolRegistry
 from .studio_book_quality import book_quality_issues, requested_book_title
 from .studio_book_revision import revise_book_content
+from .studio_promotion import draft_promotion, generate_promotion_image, has_other_actions, pin_image_available, promotion_goal
 
 STUDIO_GENERATION_LEASE_SECONDS = 600
-STUDIO_GENERATION_TOOLS = frozenset({"studio.generate_draft", "studio.revise_book"})
+STUDIO_GENERATION_TOOLS = frozenset({"studio.generate_draft", "studio.revise_book", "studio.draft_promotion", "studio.generate_promotion_image"})
 
 _TYPES = {
     "ebook": r"e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?",
@@ -153,6 +154,22 @@ def _interpret_saved_book(goal: str) -> dict[str, Any] | None:
 
 def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dict[str, Any] | None:
     """Extract a supported deliverable and topic from a direct English or Swahili request."""
+    if promotion_goal(goal):
+        if has_other_actions(goal):
+            return {"intent": "studio_compound", "content_type": "ebook"}
+        title = _BOOK_TITLE.search(goal)
+        language = _REQUESTED_LANGUAGE.search(goal)
+        return {
+            "intent": "promote_saved_book", "content_type": "ebook",
+            "title": title.group(1).strip() if title else "",
+            "selection": "latest" if not title and _BOOK_RECENCY.search(goal) else "unique",
+            "language": (
+                "English" if language and re.search(r"english|kiingereza", language[0], re.I)
+                else "Swahili" if language or locale.lower().split("-")[0] == "sw"
+                or re.search(r"\b(?:tengeneza|andaa|tayarisha|niandalie|tafuta|unda)\b", goal, re.I)
+                else ""
+            ),
+        }
     book_action = _interpret_book_revision(goal)
     if book_action:
         return book_action
@@ -201,7 +218,7 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 
 
 def register_studio_tools(registry: ToolRegistry) -> None:
-    write_tools = {"studio.save_draft", "studio.prepare_book_product"}
+    write_tools = {"studio.save_draft", "studio.prepare_book_product", "studio.generate_promotion_image"}
     for name, description, properties in (
         ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
         ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection", "source_mission_id")),
@@ -209,6 +226,9 @@ def register_studio_tools(registry: ToolRegistry) -> None:
          ("operation", "language", "chapter")),
         ("studio.prepare_book_product", "Save a private product draft for the verified owner's e-book", ("price_tzs",)),
         ("studio.verify_book_product", "Read back the owner-scoped private product and its pricing", ()),
+        ("studio.draft_promotion", "Draft promotion copy grounded in a saved book and saved preferences", ("language",)),
+        ("studio.generate_promotion_image", "Generate a fresh private image for promotion copy", ()),
+        ("studio.recall_promotion_preferences", "Read optional owner-scoped creator preferences", ()),
         ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
         ("studio.generate_draft", "Generate and validate a new Studio draft", ("prompt", "content_type", "topic", "language")),
         ("studio.save_draft", "Save the generated draft as an owner-scoped asset", ()),
@@ -232,7 +252,7 @@ def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]
-    if intent["intent"] in {"revise_saved_book", "prepare_book_product"}:
+    if intent["intent"] in {"revise_saved_book", "prepare_book_product", "promote_saved_book"}:
         selection = intent["selection"]
         if selection == "unique" and not intent["title"] and source_mission_id:
             selection = "context"
@@ -240,6 +260,19 @@ def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "
             "step_name": "resolve_book_source", "tool_name": "studio.resolve_book_source",
             "input": {"title": intent["title"], "selection": selection, "source_mission_id": source_mission_id},
         }
+        if intent["intent"] == "promote_saved_book":
+            return [
+                resolve,
+                {"step_name": "recall_creator_preferences", "tool_name": "studio.recall_promotion_preferences", "input": {}},
+                {"step_name": "draft_promotion", "tool_name": "studio.draft_promotion",
+                 "input": {"language": intent["language"]}, "depends_on": ["resolve_book_source", "recall_creator_preferences"]},
+                {"step_name": "generate_studio_draft", "tool_name": "studio.generate_promotion_image",
+                 "input": {}, "depends_on": ["draft_promotion"]},
+                {"step_name": "save_studio_draft", "tool_name": "studio.save_draft", "input": {},
+                 "depends_on": ["generate_studio_draft"]},
+                {"step_name": "verify_studio_draft", "tool_name": "studio.verify_draft", "input": {},
+                 "depends_on": ["save_studio_draft"]},
+            ]
         if intent["intent"] == "prepare_book_product":
             return [
                 resolve,
@@ -314,16 +347,25 @@ def execute_studio_step(
         return {"success": False, "error": "Authenticated Studio storage is unavailable", "retryable": False}
     if tool in {"studio.open_saved_book", "studio.resolve_book_source"}:
         return _open_saved_book(client, owner_id, payload, include_source=tool == "studio.resolve_book_source")
-    if tool == "studio.recall_preferences":
+    if tool in {"studio.recall_preferences", "studio.recall_promotion_preferences"}:
         try:
             preferences = AtlasMemoryEngine(client, owner_id).get_creator_preferences()
         except Exception:
             return {"success": False, "error": "Atlas memory could not be read", "retryable": True}
-        if not preferences:
+        if not preferences and tool == "studio.recall_preferences":
             return {"success": False, "waiting_input": True, "message": "No creator preferences have been saved for this account."}
         return {"success": True, "status": "context_recalled", "preferences": preferences,
                 "verification": "OWNER_SCOPED_ATLAS_READBACK"}
     try:
+        if tool == "studio.draft_promotion":
+            return draft_promotion(
+                dependencies["resolve_book_source"]["draft"], dependencies["recall_creator_preferences"]["preferences"],
+                payload, owner_id, client,
+            )
+        if tool == "studio.generate_promotion_image":
+            if not operation_key:
+                return {"success": False, "error": "Image generation requires a durable operation key."}
+            return generate_promotion_image(dependencies["draft_promotion"], owner_id, client, operation_key)
         if tool == "studio.prepare_book_product":
             from .studio_book_commerce import prepare_book_product
 
@@ -411,6 +453,8 @@ def execute_studio_step(
                 and version.get("content_type") == saved["content_type"]
                 and _draft_digest(version.get("content")) == saved["content_digest"]
             ):
+                if saved["content_type"] == "pin" and not pin_image_available(version["content"], owner_id, client):
+                    return {"success": False, "error": "The saved Pin image could not be verified.", "retryable": True}
                 return {
                     "success": True,
                     "status": "saved_draft_verified",
@@ -424,7 +468,7 @@ def execute_studio_step(
         return {
             "success": False,
             "error": str(exc.detail),
-            "retryable": exc.status_code in {429, 500, 502, 504},
+            "retryable": exc.status_code in {429, 500, 502, 504} or (tool == "studio.generate_promotion_image" and exc.status_code == 503),
         }
     except (KeyError, ValueError):
         return {"success": False, "error": "Studio returned invalid draft data", "retryable": False}
