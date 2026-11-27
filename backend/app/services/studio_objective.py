@@ -70,7 +70,7 @@ _BOOK_RECENCY = re.compile(r"\b(?:last|previous|latest|most recent|cha mwisho|ki
 
 
 _BOOK_REFERENCE = (
-    r'(?:(?:my|the|latest|last|previous|most recent)\s+)*(?:e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?)'
+    r'(?:(?:my|the|latest|last|previous|most recent|existing|saved)\s+)*(?:e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?)'
     r'(?:\s+(?:changu(?: cha mwisho| kilichopita)?|yangu(?: cha mwisho| kilichopita)?))?'
     r'(?:\s+(?:called|named|kinachoitwa|chenye jina)\s+["“][^"”]+["”])?'
 )
@@ -87,6 +87,13 @@ _EDIT_CHAPTER = re.compile(
     r"kwanza|pili|tatu|nne|tano)(?:\s+(?:in|of|ya|katika)\s+(?P<book>" + _REVISION_REFERENCE + r"))?",
     re.IGNORECASE,
 )
+
+_PREPARE_PRODUCT = re.compile(
+    _REQUEST_PREFIX + r"(?:prepare|get|andaa|tayarisha)\s+(?P<book>" + _REVISION_REFERENCE
+    + r")\s+(?:ready\s+for sale|for sale|kwa ajili ya mauzo|kwa mauzo)"
+    r"(?:\s+(?:at|for|bei ya|kwa)\s+(?P<price>[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*(?:TZS|TSh))?",
+    re.IGNORECASE,
+)
 _CHAPTER_NUMBERS = dict(zip(
     ("one", "two", "three", "four", "five", "kwanza", "pili", "tatu", "nne", "tano"),
     (1, 2, 3, 4, 5, 1, 2, 3, 4, 5),
@@ -97,11 +104,12 @@ def _interpret_book_revision(goal: str) -> dict[str, Any] | None:
     request = goal.strip().rstrip(" .!?")
     translation = _TRANSLATE_BOOK.fullmatch(request)
     edit = _EDIT_CHAPTER.fullmatch(request)
-    if not (translation or edit):
-        if _TRANSLATE_BOOK.match(request) or _EDIT_CHAPTER.match(request):
+    product = _PREPARE_PRODUCT.fullmatch(request)
+    if not (translation or edit or product):
+        if _TRANSLATE_BOOK.match(request) or _EDIT_CHAPTER.match(request) or _PREPARE_PRODUCT.match(request):
             return {"intent": "studio_compound", "content_type": "ebook"}
         return None
-    reference = (translation or edit)["book"] or ""
+    reference = (translation or edit or product)["book"] or ""
     title = _BOOK_TITLE.search(reference)
     selection = "unique"
     if not title:
@@ -114,6 +122,10 @@ def _interpret_book_revision(goal: str) -> dict[str, Any] | None:
         "title": title.group(1).strip() if title else "",
         "selection": selection,
     }
+    if product:
+        price = (product["price"] or "").replace(",", "")
+        return {**intent, "intent": "prepare_book_product",
+                "price_tzs": price if len(price) <= 9 and 0 < int(price or 0) <= 100000000 else ""}
     if translation:
         language = "Swahili" if translation["language"].lower() in {"swahili", "kiswahili"} else "English"
         return {**intent, "operation": "translate", "language": language, "chapter": ""}
@@ -141,9 +153,12 @@ def _interpret_saved_book(goal: str) -> dict[str, Any] | None:
 
 def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dict[str, Any] | None:
     """Extract a supported deliverable and topic from a direct English or Swahili request."""
+    book_action = _interpret_book_revision(goal)
+    if book_action:
+        return book_action
     match = _CREATE.match(goal.strip())
     if not match:
-        return _interpret_book_revision(goal) or _interpret_saved_book(goal)
+        return _interpret_saved_book(goal)
     request = match["request"]
     content_type = _STUDIO_TYPE.match(request)
     if content_type is None:
@@ -186,11 +201,14 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 
 
 def register_studio_tools(registry: ToolRegistry) -> None:
+    write_tools = {"studio.save_draft", "studio.prepare_book_product"}
     for name, description, properties in (
         ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
         ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection", "source_mission_id")),
         ("studio.revise_book", "Translate an e-book or improve one chapter of its source version",
          ("operation", "language", "chapter")),
+        ("studio.prepare_book_product", "Save a private product draft for the verified owner's e-book", ("price_tzs",)),
+        ("studio.verify_book_product", "Read back the owner-scoped private product and its pricing", ()),
         ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
         ("studio.generate_draft", "Generate and validate a new Studio draft", ("prompt", "content_type", "topic", "language")),
         ("studio.save_draft", "Save the generated draft as an owner-scoped asset", ()),
@@ -205,8 +223,8 @@ def register_studio_tools(registry: ToolRegistry) -> None:
                 "required": [key for key in properties if key != "source_mission_id"],
                 "additionalProperties": False,
             },
-            risk_level="WRITE_INTERNAL" if name == "studio.save_draft" else "READ_ONLY",
-            idempotency_behavior="operation_key" if name == "studio.save_draft" else "not_applicable",
+            risk_level="WRITE_INTERNAL" if name in write_tools else "READ_ONLY",
+            idempotency_behavior="operation_key" if name in write_tools else "not_applicable",
         ))
 
 
@@ -214,13 +232,24 @@ def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]
-    if intent["intent"] == "revise_saved_book":
+    if intent["intent"] in {"revise_saved_book", "prepare_book_product"}:
         selection = intent["selection"]
         if selection == "unique" and not intent["title"] and source_mission_id:
             selection = "context"
+        resolve = {
+            "step_name": "resolve_book_source", "tool_name": "studio.resolve_book_source",
+            "input": {"title": intent["title"], "selection": selection, "source_mission_id": source_mission_id},
+        }
+        if intent["intent"] == "prepare_book_product":
+            return [
+                resolve,
+                {"step_name": "prepare_book_product", "tool_name": "studio.prepare_book_product",
+                 "input": {"price_tzs": intent["price_tzs"]}, "depends_on": ["resolve_book_source"]},
+                {"step_name": "verify_book_product", "tool_name": "studio.verify_book_product",
+                 "input": {}, "depends_on": ["prepare_book_product"]},
+            ]
         return [
-            {"step_name": "resolve_book_source", "tool_name": "studio.resolve_book_source",
-             "input": {"title": intent["title"], "selection": selection, "source_mission_id": source_mission_id}},
+            resolve,
             {"step_name": "generate_studio_draft", "tool_name": "studio.revise_book",
              "input": {key: intent[key] for key in ("operation", "language", "chapter")},
              "depends_on": ["resolve_book_source"]},
@@ -295,6 +324,14 @@ def execute_studio_step(
         return {"success": True, "status": "context_recalled", "preferences": preferences,
                 "verification": "OWNER_SCOPED_ATLAS_READBACK"}
     try:
+        if tool == "studio.prepare_book_product":
+            from .studio_book_commerce import prepare_book_product
+
+            return prepare_book_product(dependencies["resolve_book_source"]["draft"], payload, owner_id, client)
+        if tool == "studio.verify_book_product":
+            from .studio_book_commerce import verify_book_product
+
+            return verify_book_product(dependencies["prepare_book_product"], owner_id, client)
         if tool == "studio.revise_book":
             return revise_book_content(payload, dependencies["resolve_book_source"]["draft"], recover_format)
         if tool == "studio.generate_draft":

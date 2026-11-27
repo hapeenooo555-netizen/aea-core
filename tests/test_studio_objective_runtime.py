@@ -113,6 +113,7 @@ class DraftQuery:
     def __init__(self, database):
         self.database = database
         self.filters = {}
+        self.set_filters = {}
         self.new_row = None
 
     def select(self, _columns):
@@ -128,6 +129,10 @@ class DraftQuery:
         self.filters[key] = value
         return self
 
+    def in_(self, key, values):
+        self.set_filters[key] = values
+        return self
+
     def insert(self, payload):
         self.new_row = dict(payload)
         return self
@@ -137,7 +142,11 @@ class DraftQuery:
             self.database.rows.append(self.new_row)
             return SimpleNamespace(data=[self.new_row])
         assert "owner_id" in self.filters
-        rows = [dict(row) for row in self.database.rows if all(row[key] == val for key, val in self.filters.items())]
+        rows = [
+            dict(row) for row in self.database.rows
+            if all(row[key] == val for key, val in self.filters.items())
+            and all(row[key] in vals for key, vals in self.set_filters.items())
+        ]
         if self.database.corrupt_readback and "asset_id" in self.filters and rows:
             rows[0]["content"] = {"title": "Different draft"}
         return SimpleNamespace(data=rows)
@@ -269,7 +278,6 @@ def test_known_missing_topic_is_the_only_requested_input(studio):
 
 
 @pytest.mark.parametrize("goal", [
-    "Prepare my e-book for sale",
     "Create an ebook about businesses and publish it",
     "Endelea na video yangu",
     "Promote my existing product",
@@ -713,3 +721,47 @@ def test_translation_can_resolve_a_context_reference(goal):
     intent = interpret_studio_goal(goal, {}, "en")
     assert intent["operation"] == "translate"
     assert intent["selection"] == "context"
+
+
+@pytest.mark.parametrize("goal", ["Prepare my existing e-book for sale", "Andaa kitabu changu kwa ajili ya mauzo"])
+def test_book_product_without_a_price_requests_only_the_essential_input(studio, goal):
+    db, provider = studio
+    result = make_employee("book-owner", db).run(goal)
+    assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert result["report"]["missing_inputs"] == ["price_tzs"]
+    assert not result["report"]["executed_actions"]
+    assert not db.rows and not provider.prompts
+
+
+def test_book_product_uses_real_owned_asset_and_reuses_the_same_private_draft(studio, monkeypatch):
+    db, provider = studio
+    source = _book_source(db)
+    _book_source(db, owner="other-creator", title="Private to another account")
+    products = DraftDatabase()
+
+    class ProductQuery(DraftQuery):
+        def insert(self, payload):
+            return super().insert({
+                **payload, "id": str(uuid4()), "visibility": "private", "marketplace_enabled": False,
+            })
+
+    saved_table = db.table
+    monkeypatch.setattr(db, "table", lambda name: ProductQuery(products) if name == "creator_products" else saved_table(name))
+    employee = make_employee("book-owner", db)
+    first = employee.run('Prepare my e-book called "Warehouse Checks" for sale at 2,500 TZS.')
+    second = employee.run('Andaa kitabu changu kinachoitwa "Warehouse Checks" kwa mauzo bei ya 2500 TSh.')
+    wrong_price = employee.run('Prepare my e-book called "Warehouse Checks" for sale at 3,000 TZS.')
+    other_owner = employee.run('Prepare my e-book called "Private to another account" for sale at 2,500 TZS.')
+    assert first["status"] == second["status"] == "COMPLETE", (first, second)
+    assert len(products.rows) == 1
+    first_result = first["report"]["deliverable"]
+    second_result = second["report"]["deliverable"]
+    assert first_result["product_id"] == second_result["product_id"]
+    assert first_result["asset_id"] == source["asset_id"]
+    assert first_result["status"] == "private_product_draft_verified"
+    assert first_result["price_tzs"] == 2500
+    assert second_result["reused"]
+    assert wrong_price["status"] == other_owner["status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert products.rows[0]["marketplace_enabled"] is False
+    assert len(db.rows) == 2
+    assert not provider.prompts
