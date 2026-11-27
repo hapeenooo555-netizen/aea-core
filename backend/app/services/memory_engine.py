@@ -9,6 +9,7 @@ reasoning logic.
 from __future__ import annotations
 
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 try:
     from ..database import supabase_client
@@ -54,6 +55,30 @@ class AtlasMemoryEngine:
             return {"success": True, "memory": record}
         except Exception as exc:  # pragma: no cover - defensive runtime handling
             return {"success": False, "error": str(exc)}
+
+    def get_creator_preferences(self) -> dict[str, Any]:
+        client, owner_id, entry_id = self._creator_preferences_key()
+        rows = (
+            client.table("agent_memory_entries").select("content").eq("owner_id", owner_id)
+            .eq("memory_type", "creator_preferences").eq("id", entry_id).limit(1).execute().data
+        )
+        return normalize_creator_preferences(rows[0].get("content") if rows else None)
+
+    def save_creator_preferences(self, preferences: dict[str, Any]) -> dict[str, Any]:
+        client, owner_id, entry_id = self._creator_preferences_key()
+        values = normalize_creator_preferences(preferences)
+        record = self._to_storage_record(None, "creator_preferences", values, owner_id)
+        client.table("agent_memory_entries").upsert({**record, "id": entry_id}, on_conflict="id").execute()
+        saved = self.get_creator_preferences()
+        if saved != values:
+            raise RuntimeError("Atlas did not confirm the requested preferences")
+        return saved
+
+    def _creator_preferences_key(self) -> tuple[Any, str, str]:
+        if self._client is None or not self._owner_id:
+            raise RuntimeError("An authenticated Atlas client is required")
+        entry_id = str(uuid5(NAMESPACE_URL, f"aea-atlas:creator-preferences:{self._owner_id}"))
+        return self._client, self._owner_id, entry_id
 
     def get_recent_memories(self, worker_id: str, limit: int = 10, client: Any | None = None, owner_id: str | None = None) -> list[dict[str, Any]]:
         """Retrieve recent memories scoped to the authenticated owner and worker."""
@@ -129,7 +154,7 @@ class AtlasMemoryEngine:
 
     def _to_storage_record(
         self,
-        worker_id: str,
+        worker_id: str | None,
         memory_type: str,
         content: dict[str, Any] | None,
         owner_id: str | None = None,
@@ -191,4 +216,23 @@ class AtlasMemoryEngine:
         }
 
 
-__all__ = ["AtlasMemoryEngine"]
+CREATOR_OBJECTIVES = frozenset({"reach", "engagement", "traffic", "leads", "sales", "education", "authority"})
+
+
+def normalize_creator_preferences(content: Any) -> dict[str, str]:
+    if not isinstance(content, dict):
+        return {}
+    preferences = {}
+    language = content.get("language")
+    if isinstance(language, str) and language in {"English", "Swahili"}:
+        preferences["language"] = language
+    audience = content.get("audience")
+    if isinstance(audience, str) and audience.strip():
+        preferences["audience"] = audience.strip()[:500]
+    objective = content.get("objective")
+    if isinstance(objective, str) and objective in CREATOR_OBJECTIVES:
+        preferences["objective"] = objective
+    return preferences
+
+
+__all__ = ["AtlasMemoryEngine", "normalize_creator_preferences"]
