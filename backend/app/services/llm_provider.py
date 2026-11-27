@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_REGISTRY: dict[str, type["BaseLLMProvider"]] = {}
 DEFAULT_GROQ_FALLBACK_MODELS = ("openai/gpt-oss-20b", "qwen/qwen3.8-27b")
+# Groq documents strict JSON Schema support for these configured models.
+# https://console.groq.com/docs/structured-outputs#supported-models
+GROQ_STRICT_SCHEMA_MODELS = frozenset({
+    "openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "meta-models/muse-spark-open",
+})
 
 
 class BaseLLMProvider:
@@ -140,7 +145,7 @@ class GroqLLMProvider(BaseLLMProvider):
         last_invalid_json_model: str | None = None
         for model in models:
             response_format: dict[str, Any] = {"type": "json_object"}
-            if response_schema is not None and model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
+            if response_schema is not None and model in GROQ_STRICT_SCHEMA_MODELS:
                 response_format = {
                     "type": "json_schema",
                     "json_schema": {"name": "studio_book", "strict": True, "schema": response_schema},

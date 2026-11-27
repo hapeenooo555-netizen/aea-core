@@ -56,3 +56,13 @@ Next action is to run one fresh, private QA e-book through the same Hub workspac
 The matched Swahili goal correctly resolved to the book tool and Swahili. Groq returned HTTP 400 on GPT-OSS 120B. Mission `2592e1af-1fbf-48e2-86b1-c59eb5ae1653` recorded a failed attempt with no saved draft. This evidence does not establish language as the cause.
 
 The diagnostic change records allowlisted provider error codes, provider request identifiers and request shape sizes. It retries with a configured model only on structured-output validation errors or the existing rate-limit path. Explicit provider policy blocks terminate the generation. No raw provider payload or user content is logged. Next action is to retry the exact Swahili objective on the deployed diagnostic adapter and inspect the provider code before changing the generation request.
+
+### Phase 1 continuation · Structured fallback and Pinterest regressions
+
+[Core #292](https://github.com/hapeenooo555-netizen/aea-core/pull/292) at `d3405792309e4430a7be553dcb0e37bc44f0a29c` reproduced the Swahili failure on the authenticated retry. Render logged `json_validate_failed` on GPT-OSS 120B and 20B. The final JSON Object Mode fallback returned an object missing all six required book fields. No asset was saved. The evidence identifies structure validation failures. The reason both GPT-OSS models rejected the particular output is unknown.
+
+The configured Qwen fallback now receives the same strict schema as the GPT-OSS models, matching [Groq's documented capabilities](https://console.groq.com/docs/structured-outputs#supported-models). A focused test reproduces both initial 400 responses and checks the exact Qwen request. No provider or service was added.
+
+The two Pinterest baseline failures were reproduced. The retry fixture injected a field into metadata that never reached the registered connector. It now injects a connector timeout and verifies bounded retries and a single operation key. The race fixture synchronized the one-worker approval step and waited for a second worker that would never arrive. It now synchronizes the contested status step and verifies one status read and one pending approval. Both suites run in CI. No external publishing was performed.
+
+Next action is to reopen the Swahili QA task after the fallback release, check the actual provider response, then generate fresh Swahili and English drafts from Hub and reopen both in My Store.
