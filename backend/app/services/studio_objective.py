@@ -15,8 +15,10 @@ from .readable_chapters import has_substantive_content
 from .p1_7_contracts import ToolContract, sanitize_payload
 from .tool_registry import ToolRegistry
 from .studio_book_quality import book_quality_issues, requested_book_title
+from .studio_book_revision import revise_book_content
 
 STUDIO_GENERATION_LEASE_SECONDS = 600
+STUDIO_GENERATION_TOOLS = frozenset({"studio.generate_draft", "studio.revise_book"})
 
 _TYPES = {
     "ebook": r"e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?",
@@ -67,6 +69,50 @@ _BOOK_TITLE = re.compile(r'''(?:called|named|kinachoitwa|chenye jina)\s+["“]([
 _BOOK_RECENCY = re.compile(r"\b(?:last|previous|latest|most recent|cha mwisho|kilichopita)\b", re.IGNORECASE)
 
 
+_BOOK_REFERENCE = (
+    r'(?:(?:my|the|latest|last|previous|most recent)\s+)*(?:e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?)'
+    r'(?:\s+(?:changu(?: cha mwisho| kilichopita)?|yangu(?: cha mwisho| kilichopita)?))?'
+    r'(?:\s+(?:called|named|kinachoitwa|chenye jina)\s+["“][^"”]+["”])?'
+)
+_REQUEST_PREFIX = r"(?:(?:please|tafadhali)\s+|(?:can|could|would) you\s+)*"
+_TRANSLATE_BOOK = re.compile(
+    _REQUEST_PREFIX + r"(?:translate|tafsiri)\s+(?P<book>" + _BOOK_REFERENCE
+    + r")\s+(?:into|to|in|kwa)\s+(?P<language>english|kiingereza|swahili|kiswahili)", re.IGNORECASE,
+)
+_EDIT_CHAPTER = re.compile(
+    _REQUEST_PREFIX + r"(?:improve|edit|polish|revise|boresha|hariri|rekebisha)\s+"
+    r"(?:the\s+)?(?:chapter|sura(?:\s+ya)?)\s+(?P<number>[1-9][0-9]?|one|two|three|four|five|"
+    r"kwanza|pili|tatu|nne|tano)(?:\s+(?:in|of|ya|katika)\s+(?P<book>" + _BOOK_REFERENCE + r"))?",
+    re.IGNORECASE,
+)
+_CHAPTER_NUMBERS = dict(zip(
+    ("one", "two", "three", "four", "five", "kwanza", "pili", "tatu", "nne", "tano"),
+    (1, 2, 3, 4, 5, 1, 2, 3, 4, 5),
+))
+
+
+def _interpret_book_revision(goal: str) -> dict[str, Any] | None:
+    request = goal.strip().rstrip(" .!?")
+    translation = _TRANSLATE_BOOK.fullmatch(request)
+    edit = _EDIT_CHAPTER.fullmatch(request)
+    if not (translation or edit):
+        if _TRANSLATE_BOOK.match(request) or _EDIT_CHAPTER.match(request):
+            return {"intent": "studio_compound", "content_type": "ebook"}
+        return None
+    reference = (translation or edit)["book"] or ""
+    title = _BOOK_TITLE.search(reference)
+    intent = {
+        "intent": "revise_saved_book", "content_type": "ebook",
+        "title": title.group(1).strip() if title else "",
+        "selection": "latest" if not title and _BOOK_RECENCY.search(reference) else "unique",
+    }
+    if translation:
+        language = "Swahili" if translation["language"].lower() in {"swahili", "kiswahili"} else "English"
+        return {**intent, "operation": "translate", "language": language, "chapter": ""}
+    number = edit["number"].lower()
+    return {**intent, "operation": "edit_chapter", "language": "", "chapter": str(_CHAPTER_NUMBERS.get(number, number))}
+
+
 def _interpret_saved_book(goal: str) -> dict[str, Any] | None:
     match = _OPEN_BOOK.match(goal.strip())
     if not match:
@@ -89,7 +135,7 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
     """Extract a supported deliverable and topic from a direct English or Swahili request."""
     match = _CREATE.match(goal.strip())
     if not match:
-        return _interpret_saved_book(goal)
+        return _interpret_book_revision(goal) or _interpret_saved_book(goal)
     request = match["request"]
     content_type = _STUDIO_TYPE.match(request)
     if content_type is None:
@@ -134,6 +180,9 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 def register_studio_tools(registry: ToolRegistry) -> None:
     for name, description, properties in (
         ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
+        ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection")),
+        ("studio.revise_book", "Translate an e-book or improve one chapter of its source version",
+         ("operation", "language", "chapter")),
         ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
         ("studio.generate_draft", "Generate and validate a new Studio draft", ("prompt", "content_type", "topic", "language")),
         ("studio.save_draft", "Save the generated draft as an owner-scoped asset", ()),
@@ -157,6 +206,18 @@ def studio_plan(goal: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]
+    if intent["intent"] == "revise_saved_book":
+        return [
+            {"step_name": "resolve_book_source", "tool_name": "studio.resolve_book_source",
+             "input": {"title": intent["title"], "selection": intent["selection"]}},
+            {"step_name": "generate_studio_draft", "tool_name": "studio.revise_book",
+             "input": {key: intent[key] for key in ("operation", "language", "chapter")},
+             "depends_on": ["resolve_book_source"]},
+            {"step_name": "save_studio_draft", "tool_name": "studio.save_draft", "input": {},
+             "depends_on": ["generate_studio_draft"]},
+            {"step_name": "verify_studio_draft", "tool_name": "studio.verify_draft", "input": {},
+             "depends_on": ["save_studio_draft"]},
+        ]
     plan = [
         {
             "step_name": "generate_studio_draft",
@@ -201,16 +262,18 @@ def execute_studio_step(
     # user-scoped client arguments. Reuse their provider and storage validation.
     from app.routers.content_studio import (
         StudioAssetCreateRequest,
+        StudioAssetRevisionRequest,
         StudioGenerateRequest,
         create_studio_asset,
         generate_studio_content,
         list_studio_asset_versions,
+        revise_studio_asset,
     )
 
     if client is None:
         return {"success": False, "error": "Authenticated Studio storage is unavailable", "retryable": False}
-    if tool == "studio.open_saved_book":
-        return _open_saved_book(client, owner_id, payload)
+    if tool in {"studio.open_saved_book", "studio.resolve_book_source"}:
+        return _open_saved_book(client, owner_id, payload, include_source=tool == "studio.resolve_book_source")
     if tool == "studio.recall_preferences":
         try:
             preferences = AtlasMemoryEngine(client, owner_id).get_creator_preferences()
@@ -221,6 +284,8 @@ def execute_studio_step(
         return {"success": True, "status": "context_recalled", "preferences": preferences,
                 "verification": "OWNER_SCOPED_ATLAS_READBACK"}
     try:
+        if tool == "studio.revise_book":
+            return revise_book_content(payload, dependencies["resolve_book_source"]["draft"], recover_format)
         if tool == "studio.generate_draft":
             preferences = dependencies.get("recall_creator_preferences", {}).get("preferences", {})
             language = payload["language"]
@@ -261,14 +326,24 @@ def execute_studio_step(
             title = draft["title"]
             if not operation_key:
                 return {"success": False, "error": "Draft persistence requires an operation key", "retryable": False}
-            saved = create_studio_asset(StudioAssetCreateRequest(
+            values = dict(
                 idempotency_key=operation_key,
                 title=title.strip()[:300],
                 content_type=generated["content_type"],
                 niche=generated["topic"],
                 prompt=generated["prompt"],
                 content=draft,
-            ), owner_id, client)["asset"]
+            )
+            if generated.get("source_asset_id"):
+                saved = revise_studio_asset(
+                    UUID(generated["source_asset_id"]),
+                    StudioAssetRevisionRequest(**values, expected_version=generated["source_version"]),
+                    owner_id, client,
+                )["asset"]
+                if saved["version"] != generated["source_version"] + 1:
+                    return {"success": False, "error": "Studio did not confirm the requested version", "retryable": False}
+            else:
+                saved = create_studio_asset(StudioAssetCreateRequest(**values), owner_id, client)["asset"]
             return {
                 "success": True,
                 "status": "saved",
@@ -310,9 +385,11 @@ def execute_studio_step(
         return {"success": False, "error": "Studio operation failed unexpectedly", "retryable": False}
 
 
-def _open_saved_book(client: Any, owner_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _open_saved_book(
+    client: Any, owner_id: str, payload: dict[str, Any], *, include_source: bool = False,
+) -> dict[str, Any]:
     try:
-        query = client.table("content_assets_latest").select("asset_id,owner_id,version,title,content_type,content")
+        query = client.table("content_assets_latest").select("asset_id,owner_id,version,title,content_type,niche,content")
         query = query.eq("owner_id", owner_id).eq("content_type", "ebook")
         if payload["title"]:
             query = query.eq("title", payload["title"])
@@ -326,7 +403,7 @@ def _open_saved_book(client: Any, owner_id: str, payload: dict[str, Any]) -> dic
     if len(books) > 1 and payload["selection"] != "latest":
         titles = " or ".join(str(row.get("title")) for row in books)
         return {"success": False, "waiting_input": True,
-                "message": f"Which e-book should I open? Say “open my e-book called …” with the title in quotes. I found {titles}."}
+                "message": f"Which e-book should I use? Include its title in quotes. I found {titles}."}
     book = books[0]
     if not isinstance(book.get("content"), dict) or not has_substantive_content(book["content"]):
         return {"success": False, "waiting_input": True,
@@ -335,6 +412,7 @@ def _open_saved_book(client: Any, owner_id: str, payload: dict[str, Any]) -> dic
         "success": True, "status": "saved_draft_openable", "title": book["title"],
         "asset_id": book["asset_id"], "version": book["version"], "content_type": "ebook",
         "verification": "OWNER_SCOPED_STUDIO_READBACK",
+        **({"draft": book} if include_source else {}),
     }
 
 

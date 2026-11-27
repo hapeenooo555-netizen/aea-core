@@ -106,3 +106,36 @@ Next actions are to deploy the Atlas and quality changes, run fresh e-book verif
 - Production RLS returned one creator profile row under the owner identity and zero under another account identity.
 
 The next supported follow-up locates a readable e-book already saved to the authenticated user's My Store. It accepts a recent-book reference or an exact title, asks how to disambiguate multiple matches, and does not call the generation provider. Local tests cover English and Swahili paraphrases, account isolation, ambiguity and non-duplication. Translation, chapter revision, Pin preparation and commerce follow-ups are still open. The next release check is to submit a search for the exact verified Swahili title through Hub and confirm the same asset ID and version are returned.
+
+### Verified production checkpoint · 27 November 2026
+
+[Core #295](https://github.com/hapeenooo555-netizen/aea-core/pull/295) at `3bfd93233ddcbc015d58cdf95e318de5ecc232eb` and [Hub #196](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/pull/196) at `ea234c2c0a03aa7767ccb4aeb0fb772ca50aa8f8` are live. Backend, web app, SBOM and license checks passed on both merged commits. [Core CI](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45950785133) · [Hub CI](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/actions/runs/45951016908)
+
+Authenticated Hub lookup mission `a7250082-6ab5-47a9-a9b0-c9fa1d3b3567` selected only `studio.open_saved_book`. It returned the existing Swahili e-book `2a37bc3d-753e-4b32-9e0f-f41ac5f3c929`, version 1. SQL confirmed one asset version. Hub displayed the exact title as found and the owner reopened its three chapters. No generation call or new version was part of this lookup.
+
+Atlas article mission `1e21f218-1c22-4544-8328-90786bc65b00` saved private asset `e0496cd7-ed58-49ed-a29b-56f74e0dd996` on the first attempt. The output recorded the recalled English preference, QA audience, and education objective. The account's initial effective preferences were restored. The Atlas e-book control terminated after three quality rejections in execution `3201b4dd-e6e3-46f4-92f6-422dc340c9f5` without saving an asset.
+
+| Remaining Phase 1 gate | State |
+|---|---|
+| English and Swahili natural-language understanding | Pass for verified generation and saved-book lookup intents. Broader paraphrase testing pending. |
+| English and Swahili content generation | Pass for fresh private e-books reopened in Hub. Swahili retest matched the requested title and topic. Atlas article also passed. |
+| Context-aware follow-up instructions | Pass for read-only saved-book lookup. Translation, chapter edits, unfinished-task reference, Pin and commerce follow-ups remain open. |
+| Atlas recall influencing execution | Pass for a production article and for a persisted retry checkpoint. Broader business and execution-history recall remains open. |
+| Structured planning | Pass for implemented create, recall and lookup plans. |
+| Intelligent tool selection | Pass for supported workflows and strict-schema provider fallback. Broader and multi-step objectives remain open. |
+| Controlled failure recovery | Pass for structured-output failover and bounded retries on the same mission. Full failure-mode coverage remains open. |
+| Quality evaluation | Pass for the focused Swahili retest and for withholding failed drafts. Broader editorial and audience coverage remains open. |
+| Interrupted task resumption | Pass for failure-and-retry continuity. Controlled interruption during an active production task remains open. |
+| Duplicate execution prevention | Pass for captured mission replay and same-asset lookup. Commerce and external-action cases remain open. |
+| Owner-scoped memory and execution isolation | Pass for authenticated-role database checks. Two independent signed-in browser sessions remain open. |
+| Verified production functionality | Pass for the released slices above. Phase 1 as a whole remains open. |
+
+The next implementation milestone is resolve-and-resume for unfinished work plus translation and chapter edits using validated owner-scoped source revisions. Pinterest and Meta external publishing remain paused. Supabase full backup and restore verification remains an external blocker.
+
+### Existing book revisions · 27 November 2026
+
+Phase 1 implementation adds owner-scoped source lookup, translation and chapter-only revision through the existing Studio tool registry and durable plan. The flow checkpoints the exact source version, validates the result, writes a new private immutable version, and verifies the saved content digest. Chapter edits send only the selected source chapter to the provider. Combined requests still require further planning support. This release adds no dependency or database migration.
+
+Local focused regressions: 168 passed. The tests cover translation to Swahili, constrained edit scope, malformed output recovery, ambiguous references, owner isolation, source prompt injection, and idempotent replay after an insert race. Live authenticated translation/edit and original-version reopen are pending at this checkpoint. If an active task is interrupted, verify under the existing owner identity before marking it recovered.
+
+Next action: run Core PR CI and supply-chain checks, verify the Core API and worker deploy the same commit, then translate a private QA book and edit one chapter through the production Hub. Compare database versions and confirm the latest and original versions remain readable. Persistent conversational references, unfinished-work discovery, private promotional Pin and commercial follow-ups, compound execution and mobile UX remain open.
