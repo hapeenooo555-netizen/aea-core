@@ -71,7 +71,7 @@ class DraftDatabase:
     def table(self, name):
         if name == "agent_memory_entries":
             return MemoryQuery(self)
-        assert name == "content_asset_versions"
+        assert name in {"content_asset_versions", "content_assets_latest"}
         return DraftQuery(self)
 
 
@@ -121,7 +121,7 @@ class DraftQuery:
     def limit(self, _limit):
         return self
 
-    def order(self, _key, *, desc):
+    def order(self, _key, *, desc=False):
         return self
 
     def eq(self, key, value):
@@ -473,3 +473,43 @@ def test_atlas_preferences_endpoint_is_scoped_to_the_signed_in_owner(studio):
     assert client.get(path).json() == {"preferences": {}}
     assert client.put(path, json={**preferences, "owner_id": "owner-a"}).status_code == 422
     assert len(db.memories) == 1
+
+
+@pytest.mark.parametrize("goal", [
+    "Could you find my previous e-book?",
+    "Show me my latest ebook.",
+    "Tafadhali fungua kitabu changu kilichopita.",
+    'Open my e-book called "The Stockroom Guide".',
+])
+def test_saved_book_context_resolves_without_generation(studio, goal):
+    db, provider = studio
+    db.rows.extend([
+        {"asset_id": str(uuid4()), "owner_id": "book-owner", "version": 2,
+         "title": "The Stockroom Guide", "content_type": "ebook",
+         "content": {"core_content": "The stockroom guide explains inventory checks. " * 12}},
+        {"asset_id": str(uuid4()), "owner_id": "other-owner", "version": 1,
+         "title": "Another owner's book", "content_type": "ebook", "content": {}},
+    ])
+    result = make_employee("book-owner", db).run(goal)
+    assert result["status"] == "COMPLETE"
+    report = result["report"]
+    assert report["selected_tools"] == ["studio.open_saved_book"]
+    assert report["deliverable"]["asset_id"] == db.rows[0]["asset_id"]
+    assert report["deliverable"]["version"] == 2
+    assert report["deliverable"]["status"] == "saved_draft_openable"
+    assert not provider.prompts
+    assert len(db.rows) == 2
+
+
+def test_saved_book_context_asks_when_multiple_matches_are_valid(studio):
+    db, provider = studio
+    db.rows.extend(
+        {"asset_id": str(uuid4()), "owner_id": "book-owner", "version": 1,
+         "title": title, "content_type": "ebook",
+         "content": {"core_content": "A substantive chapter about inventory. " * 20}}
+        for title in ("Stockroom Guide", "Buying Guide")
+    )
+    result = make_employee("book-owner", db).run("Open my ebook")
+    assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert "Which e-book" in result["report"]["required_user_action"]
+    assert not provider.prompts

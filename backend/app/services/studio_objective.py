@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from .memory_engine import AtlasMemoryEngine
+from .readable_chapters import has_substantive_content
 from .p1_7_contracts import ToolContract, sanitize_payload
 from .tool_registry import ToolRegistry
 from .studio_book_quality import book_quality_issues, requested_book_title
@@ -55,12 +56,40 @@ _SAVED_CREATOR_PREFERENCES = re.compile(
 )
 _REQUESTED_LANGUAGE = re.compile(r"\b(?:in english|kwa kiingereza|in swahili|in kiswahili|kwa kiswahili)\b", re.IGNORECASE)
 
+_OPEN_BOOK = re.compile(
+    r"^(?:(?:please|tafadhali)\s+|(?:can|could|would) you\s+)*"
+    r"(?:open|show(?: me)?|find|read|fungua|nionyeshe|tafuta|soma)\s+"
+    r"(?:(?:me|my|the|last|most recent|previous|latest|saved)\s+)*"
+    r"(?:e[\s-]?books?|kitabu(?: cha (?:kielektroniki|kidijitali))?)\b(?P<tail>.*)",
+    re.IGNORECASE,
+)
+_BOOK_TITLE = re.compile(r'''(?:called|named|kinachoitwa|chenye jina)\s+["“]([^"”]+)["”]''', re.IGNORECASE)
+_BOOK_RECENCY = re.compile(r"\b(?:last|previous|latest|most recent|cha mwisho|kilichopita)\b", re.IGNORECASE)
+
+
+def _interpret_saved_book(goal: str) -> dict[str, Any] | None:
+    match = _OPEN_BOOK.match(goal.strip())
+    if not match:
+        return None
+    remainder = match["tail"].strip(" .?!")
+    title = _BOOK_TITLE.fullmatch(remainder)
+    if not title and remainder and not re.fullmatch(
+        r"(?:changu(?: cha mwisho| kilichopita| nilichohifadhi)?|yangu(?: cha mwisho| kilichopita| nilichohifadhi)?|I saved|from My Store)",
+        remainder, re.IGNORECASE,
+    ):
+        return None
+    return {
+        "intent": "open_saved_book", "content_type": "ebook",
+        "title": title.group(1).strip() if title else "",
+        "selection": "latest" if _BOOK_RECENCY.search(goal if not title else "") else "unique",
+    }
+
 
 def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dict[str, Any] | None:
     """Extract a supported deliverable and topic from a direct English or Swahili request."""
     match = _CREATE.match(goal.strip())
     if not match:
-        return None
+        return _interpret_saved_book(goal)
     request = match["request"]
     content_type = _STUDIO_TYPE.match(request)
     if content_type is None:
@@ -104,6 +133,7 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 
 def register_studio_tools(registry: ToolRegistry) -> None:
     for name, description, properties in (
+        ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
         ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
         ("studio.generate_draft", "Generate and validate a new Studio draft", ("prompt", "content_type", "topic", "language")),
         ("studio.save_draft", "Save the generated draft as an owner-scoped asset", ()),
@@ -124,6 +154,9 @@ def register_studio_tools(registry: ToolRegistry) -> None:
 
 
 def studio_plan(goal: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
+    if intent["intent"] == "open_saved_book":
+        return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
+                 "input": {"selection": intent["selection"], "title": intent["title"]}}]
     plan = [
         {
             "step_name": "generate_studio_draft",
@@ -176,6 +209,8 @@ def execute_studio_step(
 
     if client is None:
         return {"success": False, "error": "Authenticated Studio storage is unavailable", "retryable": False}
+    if tool == "studio.open_saved_book":
+        return _open_saved_book(client, owner_id, payload)
     if tool == "studio.recall_preferences":
         try:
             preferences = AtlasMemoryEngine(client, owner_id).get_creator_preferences()
@@ -273,6 +308,34 @@ def execute_studio_step(
     except Exception:
         # Provider/database exception details may contain private data.
         return {"success": False, "error": "Studio operation failed unexpectedly", "retryable": False}
+
+
+def _open_saved_book(client: Any, owner_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        query = client.table("content_assets_latest").select("asset_id,owner_id,version,title,content_type,content")
+        query = query.eq("owner_id", owner_id).eq("content_type", "ebook")
+        if payload["title"]:
+            query = query.eq("title", payload["title"])
+        rows = query.order("updated_at", desc=True).order("asset_id").limit(2).execute().data or []
+    except Exception:
+        return {"success": False, "error": "Studio could not retrieve saved e-books", "retryable": True}
+
+    books = [row for row in rows if row.get("owner_id") == owner_id and row.get("content_type") == "ebook"]
+    if not books:
+        return {"success": False, "waiting_input": True, "message": "I could not find a matching e-book in your My Store."}
+    if len(books) > 1 and payload["selection"] != "latest":
+        titles = " or ".join(str(row.get("title")) for row in books)
+        return {"success": False, "waiting_input": True,
+                "message": f"Which e-book should I open? Say “open my e-book called …” with the title in quotes. I found {titles}."}
+    book = books[0]
+    if not isinstance(book.get("content"), dict) or not has_substantive_content(book["content"]):
+        return {"success": False, "waiting_input": True,
+                "message": "The matching e-book does not have readable chapter content yet."}
+    return {
+        "success": True, "status": "saved_draft_openable", "title": book["title"],
+        "asset_id": book["asset_id"], "version": book["version"], "content_type": "ebook",
+        "verification": "OWNER_SCOPED_STUDIO_READBACK",
+    }
 
 
 def _draft_digest(draft: Any) -> str:
