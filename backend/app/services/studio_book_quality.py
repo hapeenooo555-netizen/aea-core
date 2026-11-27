@@ -30,6 +30,12 @@ def _anchors(text: str) -> set[str]:
     return {word for word in _words(text) if len(word) >= 4} - _ENGLISH - _SWAHILI - _BRIEF_WORDS
 
 
+def matches_book_language(text: str, language: str) -> bool:
+    expected, alternate = (_SWAHILI, _ENGLISH) if language == "Swahili" else (_ENGLISH, _SWAHILI)
+    words = _words(text)
+    return len(words & expected) >= 2 and len(words & alternate) <= len(words & expected) + 1
+
+
 def book_quality_issues(draft: dict[str, Any], topic: str, language: str) -> list[str]:
     chapters = readable_chapters(draft, minimum_length=250)
     if len(chapters) < 3:
@@ -41,10 +47,8 @@ def book_quality_issues(draft: dict[str, Any], topic: str, language: str) -> lis
     if len(normalized_bodies) != len(bodies):
         issues.append("repeated chapter bodies")
 
-    expected, alternate = (_SWAHILI, _ENGLISH) if language == "Swahili" else (_ENGLISH, _SWAHILI)
     for position, body in enumerate(bodies, start=1):
-        words = _words(body)
-        if len(words & expected) < 2 or len(words & alternate) > len(words & expected) + 1:
+        if not matches_book_language(body, language):
             issues.append(f"chapter {position} did not match the requested language")
 
     # The first clause is the subject. Later instructions may supply a title,

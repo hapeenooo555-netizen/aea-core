@@ -574,10 +574,23 @@ def revise_studio_asset(
 ) -> dict[str, Any]:
     """Save an edit as a new immutable version; never overwrite prior content."""
     db = _require_user_client(client)
-    replay = db.table("content_asset_versions").select("*").eq(
-        "owner_id", owner_id
-    ).eq("idempotency_key", body.idempotency_key).limit(1).execute()
-    replay_row = _response_row(replay)
+    def read_replay() -> dict[str, Any] | None:
+        response = db.table("content_asset_versions").select("*").eq(
+            "owner_id", owner_id
+        ).eq("idempotency_key", body.idempotency_key).limit(1).execute()
+        row = _response_row(response)
+        if row and (
+            str(row.get("asset_id")) != str(asset_id)
+            or row.get("version") != body.expected_version + 1
+            or row.get("status") != ("approved" if body.approve_for_product else "draft")
+            or any(row.get(field) != getattr(body, field) for field in (
+                "title", "content_type", "niche", "prompt", "content",
+            ))
+        ):
+            raise HTTPException(status_code=409, detail="This operation key was used for a different draft revision.")
+        return row
+
+    replay_row = read_replay()
     if replay_row:
         return {"success": True, "asset": replay_row, "replayed": True}
 
@@ -588,6 +601,9 @@ def revise_studio_asset(
     if not latest:
         raise HTTPException(status_code=404, detail="Content asset not found.")
     if latest.get("version") != body.expected_version:
+        replay_row = read_replay()
+        if replay_row:
+            return {"success": True, "asset": replay_row, "replayed": True}
         raise HTTPException(status_code=409, detail="This draft has changed. Reload the latest version before saving.")
 
     if body.approve_for_product:
@@ -617,6 +633,9 @@ def revise_studio_asset(
     try:
         saved = db.table("content_asset_versions").insert(payload).execute()
     except Exception as exc:
+        replay_row = read_replay()
+        if replay_row:
+            return {"success": True, "asset": replay_row, "replayed": True}
         raise HTTPException(status_code=409, detail="This draft was updated by another request. Reload its latest version.") from exc
     row = _response_row(saved)
     if not row:

@@ -32,6 +32,7 @@ from .stores.onboarding_workflow_store import OnboardingWorkflowStore
 from .stores.pin_publish_store import PinPublishStore
 from .studio_objective import (
     STUDIO_GENERATION_LEASE_SECONDS,
+    STUDIO_GENERATION_TOOLS,
     execute_studio_step,
     interpret_studio_goal,
     register_studio_tools,
@@ -240,7 +241,7 @@ class EmployeeVerticalSlice:
             ))
         )
         if intent:
-            plan = studio_plan(goal, intent) if intent.get("topic") or intent["intent"] == "open_saved_book" else []
+            plan = studio_plan(goal, intent) if intent.get("topic") or intent["intent"] in {"open_saved_book", "revise_saved_book"} else []
         else:
             plan = self._build_plan(objective, discovered)
             # Keep the existing draft-first handling of approval-gated Pin requests.
@@ -343,7 +344,7 @@ class EmployeeVerticalSlice:
             attempt_index = self._next_attempt_index(execution_id, step_name)
             lease = (
                 {"lease_seconds": STUDIO_GENERATION_LEASE_SECONDS}
-                if step["tool_name"] == "studio.generate_draft" else {}
+                if step["tool_name"] in STUDIO_GENERATION_TOOLS else {}
             )
             operation_key = self._operation_key(mission_id, execution_id, step_name)
             claim = self._execution.claim_step(
@@ -388,7 +389,7 @@ class EmployeeVerticalSlice:
                 **step,
                 "dependency_results": {name: completed_steps[name] for name in dependencies},
             } if dependencies else step
-            if step["tool_name"] == "studio.generate_draft" and attempt_index > 0:
+            if step["tool_name"] in STUDIO_GENERATION_TOOLS and attempt_index > 0:
                 execution_step = {**execution_step, "recover_format": True}
             result = self._execute_tool(execution_step, mission_id, execution_id, operation_key)
             public_result = {key: value for key, value in result.items() if key != "draft"}
@@ -615,7 +616,7 @@ class EmployeeVerticalSlice:
         self, execution_id: str, report: dict[str, Any], completed_steps: dict[str, Any],
     ) -> dict[str, Any]:
         intent = report["understood_objective"].get("intent")
-        if intent in {"create_studio_draft", "open_saved_book"}:
+        if intent in {"create_studio_draft", "open_saved_book", "revise_saved_book"}:
             step = "open_saved_book" if intent == "open_saved_book" else "verify_studio_draft"
             deliverable = completed_steps.get(step)
             if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_STUDIO_READBACK":
