@@ -163,3 +163,7 @@ Next engineering slice after #198: bind follow-up instructions to a verified tas
 #### Context-bound book follow-ups
 
 A selected task can now supply its prior verified book as the context for a short English or Swahili follow-up. Core accepts the reference only from a completed mission for the authenticated owner, checks that the referenced version remains current, and asks for a title if the reference cannot safely be resolved. Explicit titles take precedence. Local selected regressions: 175 passed, including an ambiguous collection, cross-owner context, a stale source, and a partial result. Pending: Hub follow-up action and authenticated production test.
+
+#### Private commercial preparation
+
+The existing Studio plan can resolve a saved, owned e-book, request a missing whole-number TZS price, create or reuse a private draft through Creator Store, and read the persisted draft back. Existing mismatched pricing or visibility requires the owner to review the product. The flow does not list, charge, approve content, or publish. Core local focused regression and existing commerce tests: 237 passed. Hub local objective workspace tests: eight passed. Pending: release CI and authenticated production proof, including duplicate prevention for the same QA asset.

@@ -30,6 +30,7 @@ class ProductCreateRequest(BaseModel):
     product_type: Literal["ebook", "video", "course", "template", "workbook", "guide", "digital_pack"] = "guide"
     price_amount: int = Field(gt=0, le=100000000)
     currency: Literal["TZS"] = "TZS"
+    expected_asset_version: int | None = Field(default=None, ge=1)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -137,6 +138,8 @@ def create_product_listing(
     if not assets:
         raise HTTPException(status_code=404, detail="Saved content asset not found.")
     asset = assets[0]
+    if body.expected_asset_version is not None and asset.get("version") != body.expected_asset_version:
+        raise HTTPException(status_code=409, detail="The e-book changed. Select its current version before preparing a product.")
     if asset.get("status") not in {"draft", "approved"}:
         raise HTTPException(status_code=409, detail="This content asset is not eligible for product listing.")
 

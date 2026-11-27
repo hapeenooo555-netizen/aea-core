@@ -245,7 +245,9 @@ class EmployeeVerticalSlice:
             plan = studio_plan(
                 goal, intent,
                 source_mission_id=source_mission_id if isinstance(source_mission_id, str) else "",
-            ) if intent.get("topic") or intent["intent"] in {"open_saved_book", "revise_saved_book"} else []
+            ) if intent.get("topic") or intent.get("price_tzs") or intent["intent"] in {
+                "open_saved_book", "revise_saved_book",
+            } else []
         else:
             plan = self._build_plan(objective, discovered)
             # Keep the existing draft-first handling of approval-gated Pin requests.
@@ -283,6 +285,13 @@ class EmployeeVerticalSlice:
                     "Maudhui yawe kuhusu nini?" if intent["language"] == "Swahili"
                     else "What should the draft be about?"
                 ),
+            })
+            return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
+        if intent and intent["intent"] == "prepare_book_product" and not intent["price_tzs"]:
+            report.update({
+                "final_status": "WAIT_FOR_HUMAN_INPUT",
+                "missing_inputs": ["price_tzs"],
+                "required_user_action": "What price should the product draft use? Add a whole amount in TZS.",
             })
             return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
         if not plan:
@@ -601,7 +610,10 @@ class EmployeeVerticalSlice:
                     return {"success": False, "status": "RETRY", "report": sanitize_payload(report)}
             report["final_status"] = "FAIL"
             report["failures_retries"].append(result.get("error") or "Mission failed")
-            if completed_steps.get("generate_studio_draft"):
+            if completed_steps.get("prepare_book_product"):
+                report["outcome"] = "PARTIAL"
+                report["deliverable"] = completed_steps["prepare_book_product"]
+            elif completed_steps.get("generate_studio_draft"):
                 report["outcome"] = "PARTIAL"
                 if completed_steps.get("save_studio_draft"):
                     report["deliverable"] = completed_steps["save_studio_draft"]
@@ -620,7 +632,13 @@ class EmployeeVerticalSlice:
         self, execution_id: str, report: dict[str, Any], completed_steps: dict[str, Any],
     ) -> dict[str, Any]:
         intent = report["understood_objective"].get("intent")
-        if intent in {"create_studio_draft", "open_saved_book", "revise_saved_book"}:
+        if intent == "prepare_book_product":
+            deliverable = completed_steps.get("verify_book_product")
+            if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_PRODUCT_READBACK":
+                return self._failed_report(report, "Private product draft verification evidence is missing")
+            report["outcome"] = "VERIFIED"
+            report["deliverable"] = deliverable
+        elif intent in {"create_studio_draft", "open_saved_book", "revise_saved_book"}:
             step = "open_saved_book" if intent == "open_saved_book" else "verify_studio_draft"
             deliverable = completed_steps.get(step)
             if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_STUDIO_READBACK":
