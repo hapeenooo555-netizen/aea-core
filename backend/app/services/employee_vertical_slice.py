@@ -240,7 +240,7 @@ class EmployeeVerticalSlice:
             ))
         )
         if intent:
-            plan = studio_plan(goal, intent) if intent.get("topic") else []
+            plan = studio_plan(goal, intent) if intent.get("topic") or intent["intent"] == "open_saved_book" else []
         else:
             plan = self._build_plan(objective, discovered)
             # Keep the existing draft-first handling of approval-gated Pin requests.
@@ -270,7 +270,7 @@ class EmployeeVerticalSlice:
         }
         if intent and intent["intent"] == "studio_compound":
             return self._failed_report(report, "The combined request requires a workflow that is currently unavailable.")
-        if intent and not intent.get("topic"):
+        if intent and intent["intent"] == "create_studio_draft" and not intent.get("topic"):
             report.update({
                 "final_status": "WAIT_FOR_HUMAN_INPUT",
                 "missing_inputs": ["topic"],
@@ -614,8 +614,10 @@ class EmployeeVerticalSlice:
     def _complete_execution(
         self, execution_id: str, report: dict[str, Any], completed_steps: dict[str, Any],
     ) -> dict[str, Any]:
-        if report["understood_objective"].get("intent") == "create_studio_draft":
-            deliverable = completed_steps.get("verify_studio_draft")
+        intent = report["understood_objective"].get("intent")
+        if intent in {"create_studio_draft", "open_saved_book"}:
+            step = "open_saved_book" if intent == "open_saved_book" else "verify_studio_draft"
+            deliverable = completed_steps.get(step)
             if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_STUDIO_READBACK":
                 return self._failed_report(report, "Studio draft verification evidence is missing")
             report["outcome"] = "VERIFIED"

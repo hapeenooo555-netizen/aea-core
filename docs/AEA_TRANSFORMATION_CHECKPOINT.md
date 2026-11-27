@@ -96,3 +96,13 @@ Book missions reject obvious language mismatch, repeated chapter bodies and subs
 | Production functionality | Bilingual book generation and reopen verified on #293. Remaining Phase 1 acceptance criteria are open |
 
 Next actions are to deploy the Atlas and quality changes, run fresh e-book verification, wire saved preferences into Hub, and resolve follow-up goals against the owner's saved assets and unfinished tasks. Pinterest and Meta external publishing remain paused. Supabase full backup and restore verification remains blocked externally.
+
+### Production verification of Atlas and the quality gate
+
+[Core #294](https://github.com/hapeenooo555-netizen/aea-core/pull/294) at `cb20836d5d4e19a5e14fbfc9f09e4cb84f698b5c` and [Hub #195](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/pull/195) at `277d2a6f433b00c8f6470f20a62fb6c178386459` are live. [Core CI](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45949698230) and [Hub CI](https://github.com/hapeenooo555-netizen/aea-affiliate-hub/actions/runs/45949965227) passed on the merged commits.
+
+- Swahili mission `4db7209d-7b64-4da8-a45b-ff4e8843d333` passed the new checks and saved the exact requested title as private asset `2a37bc3d-753e-4b32-9e0f-f41ac5f3c929`. The authenticated reader reopened three readable, on-topic Swahili chapters covering inventory records, counting, and correcting discrepancies.
+- Hub saved a temporary profile for Atlas mission `b3f0d2ca-5f97-4859-9551-53b9b58b8ef4`. Its persisted recall step recorded English, the QA audience, and the education objective. The original settings were restored. Retrying resumed the same execution with its stored recall step. The two generation attempts failed topical-heading and chapter-completeness checks respectively, before saving any asset. This verifies recall and checkpoint continuity. It does not verify a successfully generated book using those preferences.
+- Production RLS returned one creator profile row under the owner identity and zero under another account identity.
+
+The next supported follow-up locates a readable e-book already saved to the authenticated user's My Store. It accepts a recent-book reference or an exact title, asks how to disambiguate multiple matches, and does not call the generation provider. Local tests cover English and Swahili paraphrases, account isolation, ambiguity and non-duplication. Translation, chapter revision, Pin preparation and commerce follow-ups are still open. The next release check is to submit a search for the exact verified Swahili title through Hub and confirm the same asset ID and version are returned.
