@@ -64,6 +64,8 @@ jobs:
           tests/test_meta_marketing_connector.py
           tests/test_p1_1_approval_resume.py
           tests/test_p1_7b_employee_slice.py
+          tests/test_p1_7c_dynamic_runtime.py
+          tests/test_p1_7d_execution_safety.py
           tests/test_p1_8_approval_integration.py
           tests/test_p1_8_orchestration.py
       - name: Run bilingual Studio objective and execution tests

@@ -63,15 +63,22 @@ def test_completed_step_is_not_re_executed_on_resume():
     assert second["report"]["execution_id"] == execution_id
 
 
-def test_retry_limit_is_bounded_for_transient_failures():
+def test_retry_limit_is_bounded_for_transient_failures(monkeypatch):
     employee = _slice()
-    result = employee.run(
-        "Check my Pinterest connection but fail transiently",
-        metadata={"requested_actions": ["pinterest.get_account_status"], "content_inputs": {"force_error": "transient"}},
-        mission_id="mission-dynamic-4",
-    )
-    assert result["report"]["final_status"] in {"FAIL", "RETRY"}
-    assert employee._max_decisions >= 1
+    connector = employee._connectors.get("pinterest")
+    monkeypatch.setattr(connector, "get_account_status", lambda *_: {
+        "success": False, "error": "connection timed out",
+    })
+    results = [
+        employee.run("Check my Pinterest connection", mission_id="mission-dynamic-4")
+        for _ in range(5)
+    ]
+    assert [result["status"] for result in results] == ["RETRY", "RETRY", "RETRY", "FAIL", "FAIL"]
+    execution_id = results[0]["report"]["execution_id"]
+    steps = employee._execution.load_steps_for_execution(execution_id, "user-a")
+    assert [step["attempt_index"] for step in steps] == [0, 1, 2, 3]
+    assert len({step["operation_key"] for step in steps}) == 1
+    assert not employee._approvals.list_requests()
 
 
 def test_missing_input_pauses_without_guessing():

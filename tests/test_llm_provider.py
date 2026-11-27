@@ -367,3 +367,45 @@ def test_groq_fails_over_only_on_explicit_json_validation_error(monkeypatch, cap
     assert blocked["provider_policy_block"] is True
     assert calls == ["openai/gpt-oss-120b"]
     assert "private provider detail" not in caplog.text
+
+
+def test_groq_structured_failover_preserves_contract_on_qwen(monkeypatch):
+    import types
+
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.delenv("GROQ_FALLBACK_MODELS", raising=False)
+    requests = []
+
+    class RejectedOutput(Exception):
+        status_code = 400
+        body = {"error": {"code": "json_validate_failed"}}
+
+    def create(**request):
+        requests.append(request)
+        if request["model"] != "qwen/qwen3.8-27b":
+            raise RejectedOutput()
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content='{"title": "Ukaguzi wa bidhaa"}'))],
+            usage=None,
+        )
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    monkeypatch.setitem(sys.modules, "groq", types.SimpleNamespace(Groq=lambda **_: client))
+    schema = {
+        "type": "object", "properties": {"title": {"type": "string"}},
+        "required": ["title"], "additionalProperties": False,
+    }
+
+    response = GroqLLMProvider().generate("Andika kitabu kwa Kiswahili", response_schema=schema)
+
+    assert response["success"] and response["model"] == "qwen/qwen3.8-27b"
+    assert [request["model"] for request in requests] == [
+        "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b",
+    ]
+    assert all(
+        request["response_format"] == {
+            "type": "json_schema", "json_schema": {"name": "studio_book", "strict": True, "schema": schema},
+        }
+        for request in requests
+    )

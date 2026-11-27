@@ -98,7 +98,8 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
     barrier = threading.Barrier(2)
 
     def racing_claim(*args, **kwargs):
-        barrier.wait(timeout=2)
+        if kwargs.get("step_name") == "check_connection_status":
+            barrier.wait(timeout=2)
         return original(*args, **kwargs)
 
     execution.claim_step = racing_claim
@@ -118,11 +119,16 @@ def test_full_runtime_two_worker_race_has_one_side_effect():
 
     assert len(results) == 2
     assert connector.calls == 1
-    assert {result["status"] for result in results} <= {"COMPLETE", "RETRY"}
+    assert {result["status"] for result in results} <= {"COMPLETE", "RETRY", "WAIT_FOR_APPROVAL"}
+    assert any(result["status"] == "WAIT_FOR_APPROVAL" for result in results)
     execution_id = next(result["report"]["execution_id"] for result in results if result.get("report"))
     steps = execution.load_steps_for_execution(execution_id, "owner")
-    assert len(steps) == 1
+    assert [step["step_name"] for step in steps] == ["check_connection_status", "start_onboarding"]
     assert steps[0]["status"] == "completed"
+    requests = approvals.list_requests()
+    assert len(requests) == 1
+    assert requests[0]["action_type"] == "start_platform_onboarding"
+    assert requests[0]["status"] == "pending"
 
 
 def test_runtime_retry_keeps_logical_operation_identity():
