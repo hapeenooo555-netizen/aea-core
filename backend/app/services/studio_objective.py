@@ -74,15 +74,17 @@ _BOOK_REFERENCE = (
     r'(?:\s+(?:changu(?: cha mwisho| kilichopita)?|yangu(?: cha mwisho| kilichopita)?))?'
     r'(?:\s+(?:called|named|kinachoitwa|chenye jina)\s+["“][^"”]+["”])?'
 )
+_CONTEXT_REFERENCE = r"(?:it|this (?:e[\s-]?book|book)|that (?:e[\s-]?book|book)|(?:hiki|kile) kitabu|kitabu (?:hiki|kile))"
+_REVISION_REFERENCE = f"(?:{_BOOK_REFERENCE}|{_CONTEXT_REFERENCE})"
 _REQUEST_PREFIX = r"(?:(?:please|tafadhali)\s+|(?:can|could|would) you\s+)*"
 _TRANSLATE_BOOK = re.compile(
-    _REQUEST_PREFIX + r"(?:translate|tafsiri)\s+(?P<book>" + _BOOK_REFERENCE
+    _REQUEST_PREFIX + r"(?:translate|tafsiri)\s+(?P<book>" + _REVISION_REFERENCE
     + r")\s+(?:into|to|in|kwa)\s+(?P<language>english|kiingereza|swahili|kiswahili)", re.IGNORECASE,
 )
 _EDIT_CHAPTER = re.compile(
     _REQUEST_PREFIX + r"(?:improve|edit|polish|revise|boresha|hariri|rekebisha)\s+"
     r"(?:the\s+)?(?:chapter|sura(?:\s+ya)?)\s+(?P<number>[1-9][0-9]?|one|two|three|four|five|"
-    r"kwanza|pili|tatu|nne|tano)(?:\s+(?:in|of|ya|katika)\s+(?P<book>" + _BOOK_REFERENCE + r"))?",
+    r"kwanza|pili|tatu|nne|tano)(?:\s+(?:in|of|ya|katika)\s+(?P<book>" + _REVISION_REFERENCE + r"))?",
     re.IGNORECASE,
 )
 _CHAPTER_NUMBERS = dict(zip(
@@ -101,10 +103,16 @@ def _interpret_book_revision(goal: str) -> dict[str, Any] | None:
         return None
     reference = (translation or edit)["book"] or ""
     title = _BOOK_TITLE.search(reference)
+    selection = "unique"
+    if not title:
+        if _BOOK_RECENCY.search(reference):
+            selection = "latest"
+        elif re.fullmatch(_CONTEXT_REFERENCE, reference, re.IGNORECASE):
+            selection = "context"
     intent = {
         "intent": "revise_saved_book", "content_type": "ebook",
         "title": title.group(1).strip() if title else "",
-        "selection": "latest" if not title and _BOOK_RECENCY.search(reference) else "unique",
+        "selection": selection,
     }
     if translation:
         language = "Swahili" if translation["language"].lower() in {"swahili", "kiswahili"} else "English"
@@ -180,7 +188,7 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 def register_studio_tools(registry: ToolRegistry) -> None:
     for name, description, properties in (
         ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
-        ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection")),
+        ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection", "source_mission_id")),
         ("studio.revise_book", "Translate an e-book or improve one chapter of its source version",
          ("operation", "language", "chapter")),
         ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
@@ -194,7 +202,7 @@ def register_studio_tools(registry: ToolRegistry) -> None:
             input_schema={
                 "type": "object",
                 "properties": {key: {"type": "string"} for key in properties},
-                "required": list(properties),
+                "required": [key for key in properties if key != "source_mission_id"],
                 "additionalProperties": False,
             },
             risk_level="WRITE_INTERNAL" if name == "studio.save_draft" else "READ_ONLY",
@@ -202,14 +210,17 @@ def register_studio_tools(registry: ToolRegistry) -> None:
         ))
 
 
-def studio_plan(goal: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
+def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "") -> list[dict[str, Any]]:
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]
     if intent["intent"] == "revise_saved_book":
+        selection = intent["selection"]
+        if selection == "unique" and not intent["title"] and source_mission_id:
+            selection = "context"
         return [
             {"step_name": "resolve_book_source", "tool_name": "studio.resolve_book_source",
-             "input": {"title": intent["title"], "selection": intent["selection"]}},
+             "input": {"title": intent["title"], "selection": selection, "source_mission_id": source_mission_id}},
             {"step_name": "generate_studio_draft", "tool_name": "studio.revise_book",
              "input": {key: intent[key] for key in ("operation", "language", "chapter")},
              "depends_on": ["resolve_book_source"]},
@@ -389,9 +400,17 @@ def _open_saved_book(
     client: Any, owner_id: str, payload: dict[str, Any], *, include_source: bool = False,
 ) -> dict[str, Any]:
     try:
+        reference = None
+        if payload["selection"] == "context":
+            reference = _verified_book_reference(client, owner_id, payload.get("source_mission_id", ""))
+            if reference is None:
+                return {"success": False, "waiting_input": True,
+                        "message": "Select a verified e-book task or include the book title in quotes."}
         query = client.table("content_assets_latest").select("asset_id,owner_id,version,title,content_type,niche,content")
         query = query.eq("owner_id", owner_id).eq("content_type", "ebook")
-        if payload["title"]:
+        if reference:
+            query = query.eq("asset_id", reference["asset_id"])
+        elif payload["title"]:
             query = query.eq("title", payload["title"])
         rows = query.order("updated_at", desc=True).order("asset_id").limit(2).execute().data or []
     except Exception:
@@ -405,6 +424,9 @@ def _open_saved_book(
         return {"success": False, "waiting_input": True,
                 "message": f"Which e-book should I use? Include its title in quotes. I found {titles}."}
     book = books[0]
+    if reference and (book["asset_id"] != reference["asset_id"] or book["version"] != reference["version"]):
+        return {"success": False, "waiting_input": True,
+                "message": "This book has a newer version. Name the current book in quotes to use it."}
     if not isinstance(book.get("content"), dict) or not has_substantive_content(book["content"]):
         return {"success": False, "waiting_input": True,
                 "message": "The matching e-book does not have readable chapter content yet."}
@@ -414,6 +436,29 @@ def _open_saved_book(
         "verification": "OWNER_SCOPED_STUDIO_READBACK",
         **({"draft": book} if include_source else {}),
     }
+
+
+def _verified_book_reference(client: Any, owner_id: str, mission_id: str) -> dict[str, Any] | None:
+    try:
+        mission_id = str(UUID(mission_id))
+    except (TypeError, ValueError):
+        return None
+    rows = client.table("missions").select("id,owner_id,status,result").eq("id", mission_id).eq(
+        "owner_id", owner_id
+    ).eq("status", "completed").limit(1).execute().data or []
+    mission = next(
+        (row for row in rows if row.get("owner_id") == owner_id and row.get("id") == mission_id
+         and row.get("status") == "completed"),
+        {},
+    )
+    report = (mission.get("result") or {}).get("report") or {}
+    deliverable = report.get("deliverable") or {}
+    if (
+        report.get("outcome") == "VERIFIED" and deliverable.get("content_type") == "ebook"
+        and isinstance(deliverable.get("asset_id"), str) and type(deliverable.get("version")) is int
+    ):
+        return deliverable
+    return None
 
 
 def _draft_digest(draft: Any) -> str:

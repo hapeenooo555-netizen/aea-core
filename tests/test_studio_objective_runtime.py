@@ -661,3 +661,55 @@ def test_revision_recovers_after_competing_same_key_insert(studio, monkeypatch):
     )
     assert asset["replayed"] and len(db.rows) == 2
     assert asset["asset"]["version"] == 2
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("owned", "COMPLETE"), ("foreign", "WAIT_FOR_HUMAN_INPUT"), ("stale", "WAIT_FOR_HUMAN_INPUT"),
+    ("unverified", "WAIT_FOR_HUMAN_INPUT"), ("missing", "WAIT_FOR_HUMAN_INPUT"),
+])
+def test_followup_uses_an_owned_verified_version_or_asks(studio, monkeypatch, mode, expected):
+    from app.services import studio_book_revision
+
+    db, _ = studio
+    source = _book_source(db)
+    _book_source(db, title="Another matching book")
+    context_id = str(uuid4())
+    context = DraftDatabase()
+    context.rows.append({
+        "id": context_id, "owner_id": "other-owner" if mode == "foreign" else "book-owner", "status": "completed",
+        "result": {"report": {
+            "outcome": "PARTIAL" if mode == "unverified" else "VERIFIED", "deliverable": {
+                "asset_id": source["asset_id"], "content_type": "ebook", "version": 2 if mode == "stale" else 1,
+            },
+        }},
+    })
+    saved_table = db.table
+    monkeypatch.setattr(db, "table", lambda name: DraftQuery(context) if name == "missions" else saved_table(name))
+    provider_calls = []
+
+    def generate(*, prompt, system_prompt):
+        provider_calls.append(json.loads(prompt))
+        return {"success": True, "content": json.dumps({
+            "body": "For each damaged carton, write its register number and place the carton in a separate bay. " * 6,
+        })}
+
+    monkeypatch.setattr(studio_book_revision, "get_llm_provider", lambda: SimpleNamespace(generate=generate))
+    result = make_employee("book-owner", db).run(
+        "Could you polish chapter two in it?",
+        metadata={"source_mission_id": context_id} if mode != "missing" else {},
+    )
+    assert result["status"] == expected, result
+    if mode == "owned":
+        assert result["report"]["deliverable"]["asset_id"] == source["asset_id"]
+        assert provider_calls[0]["title"] == source["title"]
+        assert len(db.rows) == 3
+    else:
+        assert not provider_calls
+        assert len(db.rows) == 2
+
+
+@pytest.mark.parametrize("goal", ["Translate it into English.", "Tafsiri kitabu hiki kwa Kiswahili."])
+def test_translation_can_resolve_a_context_reference(goal):
+    intent = interpret_studio_goal(goal, {}, "en")
+    assert intent["operation"] == "translate"
+    assert intent["selection"] == "context"

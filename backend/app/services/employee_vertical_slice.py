@@ -241,7 +241,11 @@ class EmployeeVerticalSlice:
             ))
         )
         if intent:
-            plan = studio_plan(goal, intent) if intent.get("topic") or intent["intent"] in {"open_saved_book", "revise_saved_book"} else []
+            source_mission_id = (metadata or {}).get("source_mission_id")
+            plan = studio_plan(
+                goal, intent,
+                source_mission_id=source_mission_id if isinstance(source_mission_id, str) else "",
+            ) if intent.get("topic") or intent["intent"] in {"open_saved_book", "revise_saved_book"} else []
         else:
             plan = self._build_plan(objective, discovered)
             # Keep the existing draft-first handling of approval-gated Pin requests.
