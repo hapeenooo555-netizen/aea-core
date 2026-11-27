@@ -66,3 +66,33 @@ The configured Qwen fallback now receives the same strict schema as the GPT-OSS 
 The two Pinterest baseline failures were reproduced. The retry fixture injected a field into metadata that never reached the registered connector. It now injects a connector timeout and verifies bounded retries and a single operation key. The race fixture synchronized the one-worker approval step and waited for a second worker that would never arrive. It now synchronizes the contested status step and verifies one status read and one pending approval. Both suites run in CI. No external publishing was performed.
 
 Next action is to reopen the Swahili QA task after the fallback release, check the actual provider response, then generate fresh Swahili and English drafts from Hub and reopen both in My Store.
+
+### Production verification after structured fallback
+
+[Core #293](https://github.com/hapeenooo555-netizen/aea-core/pull/293), `dd922e43f0623d54d405bd355610dc0b04278412`, deployed to the [API](https://dashboard.render.com/web/srv-dbcde09srm7s738ei680/deploys/dep-dc4ho3g473hc739jshu0) and [worker](https://dashboard.render.com/worker/srv-dbuuihd9fdbs73b204e0/deploys/dep-dc4ho38473hc739jshr0). [CI](https://github.com/hapeenooo555-netizen/aea-core/actions/runs/45948793065) passed with the two previously failing Pinterest tests enabled.
+
+- Swahili mission `96c29006-73b9-4fd1-b8a2-2699a8ea833c` completed and persisted private version 1 at `d0a28161-9535-4d3a-9d26-2f223c23a1bc`. Hub reopened all three chapters. The user-specified title was changed and some chapter subjects drifted. Generation and reopen passed. Editorial quality failed.
+- English mission `80985977-dda6-472c-8cb2-2e978ac1f927` completed and persisted private version 1 at `5d9a5bf8-cfd4-492a-a62c-39a6e3a6a6d5`. Hub reopened all seven readable chapters. The exact title and stock-check topic were preserved.
+
+### Atlas profiles and e-book quality
+
+Creator preferences use existing `agent_memory_entries` owner-indexed storage. An authenticated endpoint replaces the current language, audience and business objective settings. A matching goal inserts an owner-scoped recall step before generation. The execution checkpoint preserves what was recalled across retries and explicit output language outranks the saved preference. Tests confirm the preference reaches the provider brief, survives resumption and remains isolated from another owner.
+
+Book missions reject obvious language mismatch, repeated chapter bodies and substantial topic drift before saving. If the title was given in a supported explicit form, it is preserved in the draft. These checks do not establish full editorial quality, completeness for every requested scope, or suitability for every audience.
+
+| Phase 1 criterion | State at #293 plus local Atlas and quality tests |
+|---|---|
+| Bilingual natural-language understanding | Pass for the implemented book intent, with English and Swahili production evidence |
+| Bilingual content generation | Pass for fresh private book draft persistence and reopen. The Swahili editorial result failed |
+| Context-aware follow-ups | Blocked on implementation of previous asset and unfinished-task resolution |
+| Atlas recall influencing execution | Pass locally for explicit preference recall. Authenticated production verification pending |
+| Structured planning | Pass for book save and verification. Atlas dependency plan passes locally |
+| Intelligent tool selection | Pass for supported book objective and provider capability selection. Paraphrases and compound follow-ups remain open |
+| Controlled recovery | Pass for diagnosed structured-output fallback in production. Further timeout and recovery scenarios remain open |
+| Quality evaluation | Fail on the first Swahili production sample. New checks pass locally. Production retest and broader quality verification pending |
+| Interrupted-task resumption | Durable resume observed for existing Swahili retries. Controlled active-task interruption beyond tests remains open |
+| Duplicate prevention | Pass for replay of the prior book mission and duplicate operation-key regression. Product and external-action scenarios remain open |
+| Owner-scoped isolation | Production SQL proved book and execution isolation. Atlas endpoint and execution isolation pass locally, with live account testing pending |
+| Production functionality | Bilingual book generation and reopen verified on #293. Remaining Phase 1 acceptance criteria are open |
+
+Next actions are to deploy the Atlas and quality changes, run fresh e-book verification, wire saved preferences into Hub, and resolve follow-up goals against the owner's saved assets and unfinished tasks. Pinterest and Meta external publishing remain paused. Supabase full backup and restore verification remains blocked externally.

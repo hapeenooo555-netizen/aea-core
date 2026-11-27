@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app import database as database_module
 from app.dependencies import get_current_user_id, get_user_scoped_client, verify_mission_ownership
 from app.services.mission_engine import MissionEngine
+from app.services.memory_engine import AtlasMemoryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,44 @@ router = APIRouter(
     tags=["atlas"],
     dependencies=[Depends(get_current_user_id)],
 )
+
+class CreatorPreferencesRequest(BaseModel):
+    language: Literal["English", "Swahili"] | None = None
+    audience: str | None = Field(default=None, max_length=500)
+    objective: Literal["reach", "engagement", "traffic", "leads", "sales", "education", "authority"] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.get("/memory/creator-preferences")
+def get_creator_preferences(
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    if client is None:
+        raise HTTPException(status_code=503, detail="Atlas memory is unavailable")
+    try:
+        return {"preferences": AtlasMemoryEngine(client, owner_id).get_creator_preferences()}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Atlas memory could not be read") from exc
+
+
+@router.put("/memory/creator-preferences")
+def replace_creator_preferences(
+    request: CreatorPreferencesRequest,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    if client is None:
+        raise HTTPException(status_code=503, detail="Atlas memory is unavailable")
+    try:
+        preferences = AtlasMemoryEngine(client, owner_id).save_creator_preferences(
+            request.model_dump(exclude_none=True),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Atlas memory could not be saved") from exc
+    return {"preferences": preferences}
+
 
 VALID_COMMAND_TYPES = (
     "CREATE_MISSION",

@@ -66,10 +66,47 @@ class DraftDatabase:
         self.corrupt_readback = False
         self.executions = {}
         self.steps = {}
+        self.memories = {}
 
     def table(self, name):
+        if name == "agent_memory_entries":
+            return MemoryQuery(self)
         assert name == "content_asset_versions"
         return DraftQuery(self)
+
+
+class MemoryQuery:
+    def __init__(self, database):
+        self.database = database
+        self.filters = {}
+        self.value = None
+
+    def select(self, columns):
+        assert columns == "content"
+        return self
+
+    def eq(self, key, value):
+        self.filters[key] = value
+        return self
+
+    def limit(self, size):
+        assert size == 1
+        return self
+
+    def upsert(self, value, *, on_conflict):
+        assert on_conflict == "id"
+        self.value = value
+        return self
+
+    def execute(self):
+        if self.value is not None:
+            self.database.memories[self.value["id"]] = self.value
+            return SimpleNamespace(data=[self.value])
+        assert set(self.filters) == {"owner_id", "memory_type", "id"}
+        return SimpleNamespace(data=[
+            row for row in self.database.memories.values()
+            if all(row.get(key) == value for key, value in self.filters.items())
+        ])
 
 
 class DraftQuery:
@@ -122,8 +159,16 @@ class StudioProvider:
             "Estimate operating expenses and track each expense in a written daily record.",
             "Review the results at the end of the week and adjust the costs based on demand.",
         )
+        brief = self.prompts[-1]
+        subject = brief["niche"].split(" and use", 1)[0].split(". ", 1)[0]
+        if brief["language"] == "Swahili":
+            topics = (
+                "Kwa kila hatua, zingatia mfumo wa biashara katika eneo la mteja.",
+                "Kabla ya kufungua duka, andaa vifaa vya kazi na makadirio ya gharama.",
+                "Baada ya kila wiki, linganisha mauzo ya siku na hesabu za bidhaa.",
+            )
         chapters = [
-            {"title": f"Chapter {index}", "body": (topic + " ") * 15}
+            {"title": f"{index}. {subject}", "body": ((subject + ". " + topic + " ") * 15).strip()}
             for index, topic in enumerate(topics, start=1)
         ]
         return {
@@ -331,3 +376,100 @@ def test_exhausted_orchestration_retry_finishes_as_a_failed_execution(studio):
     assert worker._execution.get_execution(execution_id, owner_id="creator")["status"] == "FAILED"
     assert len(provider.prompts) == 1
     assert not database.rows
+
+
+def test_saved_atlas_context_drives_execution_and_is_frozen_on_retry(studio):
+    from app.services.memory_engine import AtlasMemoryEngine
+
+    db, provider = studio
+    atlas = AtlasMemoryEngine(db, "memory-owner")
+    saved = {"language": "Swahili", "audience": "bookshop managers", "objective": "education"}
+    assert atlas.save_creator_preferences(saved) == saved
+    assert AtlasMemoryEngine(db, "other-owner").get_creator_preferences() == {}
+    runner = make_employee("memory-owner", db)
+    goal = "Write an ebook about inventory and use my saved creator preferences"
+    provider.fail_first = True
+
+    first = runner.run(goal, mission_id="memory-mission")
+    assert first["status"] == "RETRY"
+    assert first["report"]["selected_tools"] == [
+        "studio.recall_preferences", "studio.generate_draft", "studio.save_draft", "studio.verify_draft",
+    ]
+    assert provider.prompts[0]["language"] == "Swahili"
+    assert provider.prompts[0]["audience"] == "bookshop managers"
+    assert provider.prompts[0]["objective"] == "education"
+
+    atlas.save_creator_preferences({"language": "English", "audience": "new audience"})
+    resumed = make_employee("memory-owner", db).run(goal, mission_id="memory-mission")
+    assert resumed["status"] == "COMPLETE"
+    assert provider.prompts[1]["language"] == "Swahili"
+    assert provider.prompts[1]["audience"] == "bookshop managers"
+    assert len(db.memories) == len(db.rows) == 1
+
+    missing = make_employee("other-owner", db).run(goal, mission_id="other-mission")
+    assert missing["status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert "No creator preferences" in missing["report"]["required_user_action"]
+    assert len(provider.prompts) == 2
+
+
+def test_explicit_studio_language_wins_over_saved_preference(studio):
+    from app.services.memory_engine import AtlasMemoryEngine
+
+    db, provider = studio
+    AtlasMemoryEngine(db, "memory-owner").save_creator_preferences({"language": "Swahili"})
+    result = make_employee("memory-owner", db).run(
+        "Write an ebook about inventory in English. Use my saved content preferences."
+    )
+    assert result["status"] == "COMPLETE"
+    assert provider.prompts[0]["language"] == "English"
+
+
+def test_book_quality_gate_rejects_off_topic_prose_before_saving(studio, monkeypatch):
+    db, provider = studio
+    original = provider.generate
+
+    def unrelated_draft(**kwargs):
+        response = original(**kwargs)
+        draft = json.loads(response["content"])
+        for index, chapter in enumerate(draft["core_content"]["chapters"]):
+            chapter["title"] = f"Mountain hiking {index}"
+            chapter["body"] = ("The trail starts with the rocky path and ends at a lake. " * 14) + str(index)
+        return {**response, "content": json.dumps(draft)}
+
+    monkeypatch.setattr(provider, "generate", unrelated_draft)
+    result = make_employee("book-owner", db).run("Write an ebook about managing stationery stock")
+    assert result["status"] == "RETRY"
+    assert "requested topic" in str(result["report"]["failures_retries"])
+    assert db.rows == []
+
+
+def test_requested_exact_book_title_is_preserved(studio):
+    db, _ = studio
+    result = make_employee("book-owner", db).run(
+        'Write an ebook about managing stationery stock. Title it "Weekly Stock Checks".'
+    )
+    assert result["status"] == "COMPLETE"
+    assert db.rows[0]["title"] == "Weekly Stock Checks"
+
+
+def test_atlas_preferences_endpoint_is_scoped_to_the_signed_in_owner(studio):
+    from app.routers.atlas import router as atlas_router
+
+    db, _ = studio
+    api = FastAPI()
+    api.include_router(atlas_router)
+    owner = {"id": "owner-a"}
+    api.dependency_overrides[get_current_user_id] = lambda: owner["id"]
+    api.dependency_overrides[get_user_scoped_client] = lambda: db
+    client = TestClient(api)
+    path = "/atlas/memory/creator-preferences"
+    preferences = {"language": "Swahili", "audience": "booksellers", "objective": "education"}
+
+    write = client.put(path, json=preferences)
+    assert write.status_code == 200
+    assert write.json() == {"preferences": preferences}
+    assert client.get(path).json() == {"preferences": preferences}
+    owner["id"] = "owner-b"
+    assert client.get(path).json() == {"preferences": {}}
+    assert client.put(path, json={**preferences, "owner_id": "owner-a"}).status_code == 422
+    assert len(db.memories) == 1

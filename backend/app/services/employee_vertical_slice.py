@@ -1187,6 +1187,8 @@ class EmployeeVerticalSlice:
         current_step = plan[index] if 0 <= index < len(plan) else {}
         current_tool = str(current_step.get("tool_name", ""))
         if current_tool.startswith("studio."):
+            if result.get("waiting_input"):
+                return "WAIT_FOR_HUMAN_INPUT"
             if result.get("success"):
                 return "FOLLOW_UP" if index + 1 < len(plan) else "COMPLETE"
             return "RETRY" if result.get("retryable") and self._max_decisions > 0 else "FAIL"

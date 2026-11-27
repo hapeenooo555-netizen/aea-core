@@ -10,8 +10,10 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from .memory_engine import AtlasMemoryEngine
 from .p1_7_contracts import ToolContract, sanitize_payload
 from .tool_registry import ToolRegistry
+from .studio_book_quality import book_quality_issues, requested_book_title
 
 STUDIO_GENERATION_LEASE_SECONDS = 600
 
@@ -45,6 +47,13 @@ _FOLLOW_UP = re.compile(
     re.IGNORECASE,
 )
 _SW_VERBS = {"tengeneza", "nitengenezee", "andika", "niandikie", "unda", "niundie", "andaa", "niandalie"}
+
+_SAVED_CREATOR_PREFERENCES = re.compile(
+    r"\b(?:use|reuse|follow|tumia|zingatia)\s+(?:my\s+)?(?:saved\s+|usual\s+)?"
+    r"(?:creator preferences|content preferences|mapendeleo yangu ya maudhui)\b",
+    re.IGNORECASE,
+)
+_REQUESTED_LANGUAGE = re.compile(r"\b(?:in english|kwa kiingereza|in swahili|in kiswahili|kwa kiswahili)\b", re.IGNORECASE)
 
 
 def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dict[str, Any] | None:
@@ -95,6 +104,7 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 
 def register_studio_tools(registry: ToolRegistry) -> None:
     for name, description, properties in (
+        ("studio.recall_preferences", "Read the authenticated owner's saved creator preferences", ()),
         ("studio.generate_draft", "Generate and validate a new Studio draft", ("prompt", "content_type", "topic", "language")),
         ("studio.save_draft", "Save the generated draft as an owner-scoped asset", ()),
         ("studio.verify_draft", "Read the saved draft back for its owner", ()),
@@ -114,7 +124,7 @@ def register_studio_tools(registry: ToolRegistry) -> None:
 
 
 def studio_plan(goal: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
+    plan = [
         {
             "step_name": "generate_studio_draft",
             "tool_name": "studio.generate_draft",
@@ -138,6 +148,10 @@ def studio_plan(goal: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
             "depends_on": ["save_studio_draft"],
         },
     ]
+    if _SAVED_CREATOR_PREFERENCES.search(goal):
+        plan[0]["depends_on"] = ["recall_creator_preferences"]
+        plan.insert(0, {"step_name": "recall_creator_preferences", "tool_name": "studio.recall_preferences", "input": {}})
+    return plan
 
 
 def execute_studio_step(
@@ -162,15 +176,38 @@ def execute_studio_step(
 
     if client is None:
         return {"success": False, "error": "Authenticated Studio storage is unavailable", "retryable": False}
+    if tool == "studio.recall_preferences":
+        try:
+            preferences = AtlasMemoryEngine(client, owner_id).get_creator_preferences()
+        except Exception:
+            return {"success": False, "error": "Atlas memory could not be read", "retryable": True}
+        if not preferences:
+            return {"success": False, "waiting_input": True, "message": "No creator preferences have been saved for this account."}
+        return {"success": True, "status": "context_recalled", "preferences": preferences,
+                "verification": "OWNER_SCOPED_ATLAS_READBACK"}
     try:
         if tool == "studio.generate_draft":
+            preferences = dependencies.get("recall_creator_preferences", {}).get("preferences", {})
+            language = payload["language"]
+            if not _REQUESTED_LANGUAGE.search(payload["prompt"]):
+                language = preferences.get("language", language)
             result = generate_studio_content(StudioGenerateRequest(
                 prompt=payload["prompt"],
                 niche=payload["topic"][:160],
                 content_type=payload["content_type"],
-                language=payload["language"],
+                language=language,
+                audience=preferences.get("audience"),
+                objective=preferences.get("objective", "engagement"),
             ), owner_id, recover_format=recover_format, constrain_book_schema=True)
             draft = sanitize_payload(result["draft"])
+            if payload["content_type"] == "ebook":
+                issues = book_quality_issues(draft, payload["topic"], language)
+                if issues:
+                    return {"success": False, "error": "E-book quality check failed: " + "; ".join(issues),
+                            "retryable": True}
+                explicit_title = requested_book_title(payload["prompt"])
+                if explicit_title:
+                    draft["title"] = explicit_title
             title = draft.get("title")
             if not isinstance(title, str) or not title.strip() or not draft.get("core_content"):
                 return {"success": False, "error": "Generated draft has no usable title or content", "retryable": True}
