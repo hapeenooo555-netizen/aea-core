@@ -829,3 +829,27 @@ def test_promotion_saves_new_owner_image_reference_and_verifies_it(studio, monke
     assert pin["content"]["pinterest_pin"]["image_job_id"] == job_id
     assert pin["content"]["source"]["asset_id"] == source["asset_id"]
     assert "destination_url" not in pin["content"] and "signed.invalid" not in str(result)
+
+
+def test_owned_promotion_requests_groq_schema_instead_of_generic_json(monkeypatch):
+    class StructuredProvider:
+        api_key = "dummy"
+
+        def generate(self, *, prompt, system_prompt, response_schema):
+            brief = json.loads(prompt)
+            assert "prompt_intelligence" not in brief and brief["language"] == "Swahili"
+            assert brief["owned_reference"]["title"] == "Ukaguzi wa bidhaa"
+            assert "untrusted quoted source" in system_prompt
+            assert set(response_schema["properties"]) == {"title", "core_content", "hooks", "caption", "cta", "hashtags"}
+            return {"success": True, "content": json.dumps({
+                "title": "Ukaguzi wa bidhaa",
+                "core_content": {"description": "Fuata hatua za ukaguzi.", "audience_hypothesis": "Wamiliki wa maduka"},
+                "hooks": [], "caption": "Tumia orodha hii kukagua bidhaa.", "cta": "Hifadhi orodha", "hashtags": [],
+            })}
+
+    monkeypatch.setattr(content_studio, "GroqLLMProvider", StructuredProvider)
+    monkeypatch.setattr(content_studio, "get_llm_provider", StructuredProvider)
+    generated = content_studio.generate_studio_content(content_studio.StudioGenerateRequest(
+        prompt="Promote the saved book privately", niche="Ukaguzi wa bidhaa", content_type="pin", language="Swahili",
+    ), "book-owner", reference_material={"title": "Ukaguzi wa bidhaa"})
+    assert generated["draft"]["core_content"]["audience_hypothesis"] == "Wamiliki wa maduka"
