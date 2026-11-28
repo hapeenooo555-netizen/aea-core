@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from .approval_gateway import ApprovalGateway
 from .approval_resume_service import ApprovalResumeService
 from .capability_discovery import CapabilityDiscovery
@@ -19,6 +21,7 @@ from .connectors.registry import ConnectorRegistry
 from .memory_engine import AtlasMemoryEngine
 from .mission_execution_service import MissionExecutionService
 from .mission_engine import MissionEngine
+from .objective_semantics import SemanticObjective, grounded_intent, interpret_semantically
 from .p1_7_contracts import (
     ObjectiveParser,
     Observation,
@@ -221,10 +224,11 @@ class EmployeeVerticalSlice:
         mission_id = mission["id"]
         objective = ObjectiveParser().parse(goal, metadata)
         intent = interpret_studio_goal(goal, objective.content_inputs, objective.locale)
+        allow_semantic = self._client is not None and (metadata or {}).get("background_dispatch") is True
         stored_goal = (mission.get("description") or "").strip()
         if (
             stored_goal and stored_goal != goal.strip()
-            and (intent or interpret_studio_goal(stored_goal, {}, objective.locale))
+            and (allow_semantic or intent or interpret_studio_goal(stored_goal, {}, objective.locale))
         ):
             return {"success": False, "status": "FAIL", "error": "Objective differs from the saved mission."}
         discovered = self.discover_capabilities()
@@ -240,6 +244,26 @@ class EmployeeVerticalSlice:
                 "wait for approval before publishing",
             ))
         )
+        existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
+        semantic_checkpoint = (existing_execution or {}).get("result") or {}
+        saved_semantics = semantic_checkpoint.get("semantic_objective") or (
+            semantic_checkpoint.get("report") or {}
+        ).get("semantic_objective")
+        proposal = None
+        plan = [] if intent else self._build_plan(objective, discovered)
+        if allow_semantic and (saved_semantics is not None or (not intent and not plan and not gated_pin)):
+            available_tools = {tool["tool_name"] for tool in discovered["tools"]}
+            if saved_semantics is not None:
+                try:
+                    proposal = SemanticObjective.model_validate(saved_semantics)
+                except ValidationError:
+                    proposal = None
+                plan = []
+                intent = None
+            elif not existing_execution:
+                proposal = interpret_semantically(goal, available_tools)
+            if proposal:
+                intent = grounded_intent(proposal, goal, available_tools)
         if intent:
             source_mission_id = (metadata or {}).get("source_mission_id")
             plan = studio_plan(
@@ -249,7 +273,6 @@ class EmployeeVerticalSlice:
                 "open_saved_book", "revise_saved_book", "promote_saved_book", "inspect_product", "submit_product_listing",
             } else []
         else:
-            plan = self._build_plan(objective, discovered)
             # Keep the existing draft-first handling of approval-gated Pin requests.
             if gated_pin and not self._has_complete_pinterest_pin_inputs(metadata):
                 plan = self._pinterest_draft_plan(goal)
@@ -275,6 +298,8 @@ class EmployeeVerticalSlice:
             "required_user_action": None,
             "resume_information": None,
         }
+        if intent and proposal:
+            report["semantic_objective"] = proposal.model_dump()
         if intent and intent["intent"] == "studio_compound":
             return self._failed_report(report, "The combined request requires a workflow that is currently unavailable.")
         if intent and intent["intent"] == "create_studio_draft" and not intent.get("topic"):
@@ -306,7 +331,6 @@ class EmployeeVerticalSlice:
         report["validated_plan"] = sanitize_payload(validated_plan)
         report["selected_tools"] = [step.get("tool_name") for step in validated_plan]
 
-        existing_execution = self._execution.load_execution_for_mission(mission_id, self.owner_id)
         if existing_execution and existing_execution.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
             return self._resume_execution(mission_id, existing_execution, report, validated_plan, metadata)
 
@@ -321,7 +345,10 @@ class EmployeeVerticalSlice:
         report["execution_id"] = execution_id
         if not claim.get("created"):
             return self._resume_execution(mission_id, execution, report, validated_plan, metadata)
-        running = self._execution.update_execution_state(execution_id, self.owner_id, status="RUNNING")
+        running = self._execution.update_execution_state(
+            execution_id, self.owner_id, status="RUNNING",
+            result={"semantic_objective": report["semantic_objective"]} if "semantic_objective" in report else None,
+        )
         if not running.get("success"):
             return self._failed_report(report, running.get("error", "Execution start persistence failed"))
         return self._execute_plan(mission_id, execution_id, validated_plan, report, metadata)
@@ -544,6 +571,7 @@ class EmployeeVerticalSlice:
                 self.owner_id,
                 current_step_index=index + 1,
                 result=sanitize_payload({
+                    **({"semantic_objective": report["semantic_objective"]} if "semantic_objective" in report else {}),
                     "observation": observation.to_dict(),
                     "decision": decision,
                     "next_step": next_step,
@@ -602,7 +630,9 @@ class EmployeeVerticalSlice:
                     and attempt_index < self._max_decisions
                     and not (metadata or {}).get("_final_orchestration_attempt")
                 ):
-                    retry_update = self._execution.update_execution_state(execution_id, self.owner_id, status="RETRYING", retry_count=attempt_index + 1, result=sanitize_payload({"decision": decision, "next_step": step_name, "result": result}))
+                    retry_state = dict(state_update.get("execution", {}).get("result") or {})
+                    retry_state.update({"decision": decision, "next_step": step_name, "result": result})
+                    retry_update = self._execution.update_execution_state(execution_id, self.owner_id, status="RETRYING", retry_count=attempt_index + 1, result=sanitize_payload(retry_state))
                     if not retry_update.get("success"):
                         return self._failed_report(report, retry_update.get("error", "Retry state persistence failed"))
                     report["final_status"] = "RETRY"
