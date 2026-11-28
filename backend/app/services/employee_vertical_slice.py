@@ -246,7 +246,7 @@ class EmployeeVerticalSlice:
                 goal, intent,
                 source_mission_id=source_mission_id if isinstance(source_mission_id, str) else "",
             ) if intent.get("topic") or intent.get("price_tzs") or intent["intent"] in {
-                "open_saved_book", "revise_saved_book", "promote_saved_book",
+                "open_saved_book", "revise_saved_book", "promote_saved_book", "inspect_product", "submit_product_listing",
             } else []
         else:
             plan = self._build_plan(objective, discovered)
@@ -287,7 +287,7 @@ class EmployeeVerticalSlice:
                 ),
             })
             return {"success": False, "status": "WAIT_FOR_HUMAN_INPUT", "report": sanitize_payload(report)}
-        if intent and intent["intent"] == "prepare_book_product" and not intent["price_tzs"]:
+        if intent and intent["intent"] in {"prepare_book_product", "update_product_price"} and not intent["price_tzs"]:
             report.update({
                 "final_status": "WAIT_FOR_HUMAN_INPUT",
                 "missing_inputs": ["price_tzs"],
@@ -632,8 +632,9 @@ class EmployeeVerticalSlice:
         self, execution_id: str, report: dict[str, Any], completed_steps: dict[str, Any],
     ) -> dict[str, Any]:
         intent = report["understood_objective"].get("intent")
-        if intent == "prepare_book_product":
-            deliverable = completed_steps.get("verify_book_product")
+        if intent in {"prepare_book_product", "inspect_product", "update_product_price", "submit_product_listing"}:
+            step = {"prepare_book_product": "verify_book_product", "inspect_product": "resolve_product"}.get(intent, intent)
+            deliverable = completed_steps.get(step)
             if not deliverable or deliverable.get("verification") != "OWNER_SCOPED_PRODUCT_READBACK":
                 return self._failed_report(report, "Private product draft verification evidence is missing")
             report["outcome"] = "VERIFIED"

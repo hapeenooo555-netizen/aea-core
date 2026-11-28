@@ -853,3 +853,87 @@ def test_owned_promotion_requests_groq_schema_instead_of_generic_json(monkeypatc
         prompt="Promote the saved book privately", niche="Ukaguzi wa bidhaa", content_type="pin", language="Swahili",
     ), "book-owner", reference_material={"title": "Ukaguzi wa bidhaa"})
     assert generated["draft"]["core_content"]["audience_hypothesis"] == "Wamiliki wa maduka"
+
+
+def test_background_dispatch_persists_acceptance_and_refuses_cross_owner(studio, monkeypatch):
+    from fastapi import BackgroundTasks
+
+    database, provider = studio
+    api = FastAPI()
+    api.include_router(employee_router.router)
+    http = TestClient(api)
+    services = {}
+
+    def orchestration(owner, _client):
+        return services.setdefault(owner, MissionOrchestrationService(owner, employee=make_employee(owner, database)))
+
+    monkeypatch.setattr(employee_router, "_service", orchestration)
+    monkeypatch.setattr(employee_router, "AEAAgentRuntime", lambda owner, client: AEAAgentRuntime(
+        owner, orchestration=orchestration(owner, client),
+    ))
+    owner = "creator-a"
+    api.dependency_overrides[get_current_user_id] = lambda: owner
+    api.dependency_overrides[get_user_scoped_client] = lambda: database
+    jobs = []
+    monkeypatch.setattr(BackgroundTasks, "add_task", lambda self, fn, *args: jobs.append((fn, args)))
+
+    body = {"objective": "Write an e-book on business", "background": True, "idempotency_key": "detached-test"}
+    created = http.post("/employee/objective", json=body)
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["mission"]["status"] == "pending"
+    assert not provider.prompts
+    mission_id = payload["mission"]["id"]
+    url = f"/employee/missions/{mission_id}"
+    owner = "creator-b"
+    assert http.get(url).status_code == 404
+    assert http.post(url + "/dispatch").status_code == 404
+    owner = "creator-a"
+    assert http.get(url).json()["can_resume"]
+    assert http.post(url + "/dispatch").json()["scheduled"]
+    for job, args in jobs:
+        job(*args)
+    done = http.get(url).json()
+    assert done["mission"]["status"] == "completed" and not done["can_resume"]
+    assert done["mission"]["result"]["report"]["outcome"] == "VERIFIED"
+    assert len(provider.prompts) == len(database.rows) == 1
+
+
+def test_product_update_keeps_identity_and_rejects_stale_price_write(studio, monkeypatch):
+    from app.services.studio_product_actions import resolve_product, update_product_price
+
+    db, _ = studio
+    products = DraftDatabase()
+    owner = "book-owner"
+    row = {
+        "id": str(uuid4()), "owner_id": owner, "asset_id": str(uuid4()),
+        "title": "Warehouse Training", "price_amount": 2500, "currency": "TZS",
+        "completion_status": "draft", "status": "draft", "visibility": "private",
+        "marketplace_enabled": False, "updated_at": "2026-11-28T10:00:00Z",
+    }
+    products.rows.append(row)
+
+    class ProductQuery(DraftQuery):
+        def update(self, changes):
+            self.changes = changes
+            return self
+
+        def execute(self):
+            if hasattr(self, "changes"):
+                for item in self.database.rows:
+                    if all(item.get(key) == value for key, value in self.filters.items()):
+                        item.update(self.changes)
+            return super().execute()
+
+    empty = DraftDatabase()
+    monkeypatch.setattr(db, "table", lambda name: ProductQuery(products if name == "creator_products" else empty))
+    initial = resolve_product(db, owner, {"title": row["title"], "selection": "unique"})
+    goal = 'Rekebisha bei ya bidhaa yangu inayoitwa "Warehouse Training" hadi 3,100 TZS.'
+    result = make_employee(owner, db).run(goal)
+    assert result["status"] == "COMPLETE", result
+    assert result["report"]["deliverable"]["price_tzs"] == 3100
+    assert result["report"]["deliverable"]["product_id"] == row["id"]
+    assert len(result["report"]["deliverable"]["requirements"]) == 3
+    assert update_product_price(db, owner, initial, 2600)["waiting_input"]
+    assert resolve_product(db, "foreign-owner", {"title": row["title"], "selection": "unique"})["waiting_input"]
+    assert len(products.rows) == 1 and row["price_amount"] == 3100

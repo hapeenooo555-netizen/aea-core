@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_current_user_id, get_user_scoped_client
@@ -29,6 +29,7 @@ class ObjectiveRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str | None = None
     run_now: bool = False
+    background: bool = False
     locale: str = "en"
     timezone: str = "UTC"
     success_criteria: list[str] = Field(default_factory=list)
@@ -60,10 +61,15 @@ def _raise(result: dict[str, Any]) -> None:
 @router.post("/objective", status_code=status.HTTP_201_CREATED)
 def create_objective(
     body: ObjectiveRequest,
+    background_tasks: BackgroundTasks,
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
     """Turn an authenticated objective into a durable employee mission."""
+    if body.background and body.run_now:
+        raise HTTPException(status_code=422, detail="Choose background or immediate execution.")
+    if body.background and client is None:
+        raise HTTPException(status_code=503, detail="Authenticated task storage is unavailable.")
     request = RuntimeRequest(
         owner_id=owner_id,
         objective=body.objective,
@@ -86,7 +92,7 @@ def create_objective(
             "scheduled_at": body.scheduled_at.isoformat() if body.scheduled_at else None,
             "recurrence": body.recurrence,
             "dependencies": body.dependencies,
-            "metadata": body.metadata,
+            "metadata": {**body.metadata, "background_dispatch": body.background},
         },
     )
     if not result.get("success"):
@@ -97,8 +103,24 @@ def create_objective(
     if mission is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="Runtime accepted the request but mission could not be read back")
+    if body.background:
+        _schedule_background(_service(owner_id, client), mission, background_tasks)
     # Preserve the legacy response shape while exposing the canonical runtime envelope.
     return {"success": True, "mission": mission, "runtime": result}
+
+
+def _can_resume(service: MissionOrchestrationService, mission: dict[str, Any]) -> bool:
+    return bool((mission.get("metadata") or {}).get("background_dispatch") is True
+                and service.readiness(mission)["ready"])
+
+
+def _schedule_background(service: MissionOrchestrationService, mission: dict[str, Any],
+                         background_tasks: BackgroundTasks) -> bool:
+    if not _can_resume(service, mission):
+        return False
+    # The service claims the durable owner-scoped lease before executing tools.
+    background_tasks.add_task(service.run_mission, mission["id"])
+    return True
 
 
 @router.get("/missions")
@@ -124,10 +146,27 @@ async def get_employee_mission(
     owner_id: str = Depends(get_current_user_id),
     client: Any = Depends(get_user_scoped_client),
 ) -> dict[str, Any]:
-    mission = _service(owner_id, client).get_mission(mission_id)
+    service = _service(owner_id, client)
+    mission = service.get_mission(mission_id)
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    return {"success": True, "mission": mission}
+    return {"success": True, "mission": mission, "can_resume": _can_resume(service, mission)}
+
+
+@router.post("/missions/{mission_id}/dispatch", status_code=status.HTTP_202_ACCEPTED)
+def dispatch_employee_mission(
+    mission_id: str,
+    background_tasks: BackgroundTasks,
+    owner_id: str = Depends(get_current_user_id),
+    client: Any = Depends(get_user_scoped_client),
+) -> dict[str, Any]:
+    if client is None:
+        raise HTTPException(status_code=503, detail="Authenticated task storage is unavailable.")
+    service = _service(owner_id, client)
+    mission = service.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    return {"success": True, "scheduled": _schedule_background(service, mission, background_tasks)}
 
 
 @router.post("/missions/{mission_id}/run")
