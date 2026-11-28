@@ -937,3 +937,11 @@ def test_product_update_keeps_identity_and_rejects_stale_price_write(studio, mon
     assert update_product_price(db, owner, initial, 2600)["waiting_input"]
     assert resolve_product(db, "foreign-owner", {"title": row["title"], "selection": "unique"})["waiting_input"]
     assert len(products.rows) == 1 and row["price_amount"] == 3100
+
+
+def test_price_action_without_an_amount_only_requests_the_amount(studio):
+    database, _ = studio
+    result = make_employee("book-owner", database).run("Change the price of my latest product")
+    assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
+    assert result["report"]["missing_inputs"] == ["price_tzs"]
+    assert not result["report"]["executed_actions"]

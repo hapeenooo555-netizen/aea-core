@@ -13,7 +13,7 @@ _ACTIONS = {
     "inspect_product": re.compile(r"(?:show|inspect|check|review|nionyeshe|kagua)\s+" + _REFERENCE, re.I),
     "update_product_price": re.compile(
         r"(?:change|set|update|badili|weka|rekebisha)\s+(?:the\s+)?(?:price of|bei ya)\s+"
-        + _REFERENCE + r"\s+(?:to|at|kuwa|hadi|iwe)\s+(?P<price>(?:[0-9]{1,9}|[0-9]{1,3}(?:,[0-9]{3}){1,2}))\s*(?:TZS|TSh)", re.I
+        + _REFERENCE + r"(?:\s+(?:to|at|kuwa|hadi|iwe)\s+(?P<price>(?:[0-9]{1,9}|[0-9]{1,3}(?:,[0-9]{3}){1,2}))\s*(?:TZS|TSh))?", re.I
     ),
     "submit_product_listing": re.compile(
         r"(?:submit|tuma|wasilisha)\s+" + _REFERENCE
@@ -96,7 +96,9 @@ def resolve_product(client: Any, owner_id: str, payload: dict[str, str]) -> dict
     if payload["title"]:
         query = query.eq("title", payload["title"])
     rows = query.order("created_at", desc=True).order("id").limit(2).execute().data or []
-    if len(rows) != 1 and not (rows and payload["selection"] == "latest"):
+    if not rows:
+        return {"success": False, "waiting_input": True, "message": "No matching active product was found in My Store."}
+    if len(rows) > 1 and payload["selection"] != "latest":
         return {"success": False, "waiting_input": True,
                 "message": "Name the product in quotes so I can select it in My Store."}
     return _snapshot(client, owner_id, rows[0])
