@@ -1055,3 +1055,21 @@ def test_contextual_product_uses_verified_owner_and_current_product_id(studio, m
     assert resolve_product(database, "another-owner", payload)["waiting_input"]
     missions.rows[0]["result"]["report"]["outcome"] = "PARTIAL"
     assert resolve_product(database, owner, payload)["waiting_input"]
+
+
+@pytest.mark.parametrize(("goal", "expected"), [
+    ('Please send my product "Warehouse Training" back for review in Marketplace.', True),
+    ('Peleka bidhaa "Warehouse Training" kwa ukaguzi wa Marketplace tena.', True),
+    ('Tafadhali forward "Warehouse Training" kwa uhakiki wa Marketplace.', True),
+    ('Send "Warehouse Training" for Marketplace review and publish it.', False),
+    ('Send "Warehouse Training" for Marketplace review, not yet.', False),
+    ('How can I send "Warehouse Training" for Marketplace review?', False),
+    ('Send it for Marketplace review again.', False),
+])
+def test_explicit_review_recovery_is_limited_to_an_affirmative_named_request(goal, expected):
+    from app.services.objective_semantics import explicit_review_request, grounded_intent
+
+    candidate = explicit_review_request(goal)
+    tools = {"studio.resolve_product", "studio.submit_product_listing"}
+    recovered = grounded_intent(candidate, goal, tools) if candidate else None
+    assert (recovered is not None) == expected

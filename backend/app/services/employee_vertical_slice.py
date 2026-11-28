@@ -21,7 +21,7 @@ from .connectors.registry import ConnectorRegistry
 from .memory_engine import AtlasMemoryEngine
 from .mission_execution_service import MissionExecutionService
 from .mission_engine import MissionEngine
-from .objective_semantics import SemanticObjective, grounded_intent, interpret_semantically
+from .objective_semantics import SemanticObjective, explicit_review_request, grounded_intent, interpret_semantically
 from .p1_7_contracts import (
     ObjectiveParser,
     Observation,
@@ -250,6 +250,7 @@ class EmployeeVerticalSlice:
             semantic_checkpoint.get("report") or {}
         ).get("semantic_objective")
         proposal = None
+        semantic_status = None
         plan = [] if intent else self._build_plan(objective, discovered)
         if allow_semantic and (saved_semantics is not None or (not intent and not plan and not gated_pin)):
             available_tools = {tool["tool_name"] for tool in discovered["tools"]}
@@ -262,8 +263,24 @@ class EmployeeVerticalSlice:
                 intent = None
             elif not existing_execution:
                 proposal = interpret_semantically(goal, available_tools)
+                semantic_status = "provider_returned_proposal" if proposal else "provider_no_valid_proposal"
             if proposal:
                 intent = grounded_intent(proposal, goal, available_tools)
+                if not intent and semantic_status:
+                    semantic_status = "proposal_rejected"
+            if not intent and not existing_execution and (
+                not proposal or (not proposal.extra_actions and (
+                    proposal.operation == "unsupported" or (
+                        proposal.operation == "submit_product_listing" and proposal.affirmative
+                    )
+                ))
+            ):
+                local_proposal = explicit_review_request(goal)
+                if local_proposal:
+                    intent = grounded_intent(local_proposal, goal, available_tools)
+                    if intent:
+                        proposal = local_proposal
+                        semantic_status = "explicit_internal_review"
         if intent:
             source_mission_id = (metadata or {}).get("source_mission_id")
             plan = studio_plan(
@@ -300,6 +317,8 @@ class EmployeeVerticalSlice:
         }
         if intent and proposal:
             report["semantic_objective"] = proposal.model_dump()
+        if semantic_status:
+            report["semantic_status"] = semantic_status
         if intent and intent["intent"] == "studio_compound":
             return self._failed_report(report, "The combined request requires a workflow that is currently unavailable.")
         if intent and intent["intent"] == "create_studio_draft" and not intent.get("topic"):
