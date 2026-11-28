@@ -40,12 +40,14 @@ def product_intent(goal: str) -> dict[str, str] | None:
     return None
 
 
-def product_plan(intent: dict[str, str]) -> list[dict[str, Any]]:
+def product_plan(intent: dict[str, str], source_mission_id: str = "") -> list[dict[str, Any]]:
     action = intent["intent"]
     steps = [{
         "step_name": "resolve_product", "tool_name": "studio.resolve_product",
         "input": {"title": intent["title"], "selection": intent["selection"]},
     }]
+    if intent["selection"] == "context":
+        steps[0]["input"]["source_mission_id"] = source_mission_id
     if action == "update_product_price":
         steps += [{
             "step_name": "update_product_price", "tool_name": "studio.update_product_price",
@@ -93,7 +95,13 @@ def _snapshot(client: Any, owner_id: str, product: dict[str, Any]) -> dict[str, 
 
 def resolve_product(client: Any, owner_id: str, payload: dict[str, str]) -> dict[str, Any]:
     query = _products(client, owner_id).in_("status", ["draft", "listed"])
-    if payload["title"]:
+    if payload["selection"] == "context":
+        product_id = _product_from_verified_mission(client, owner_id, payload.get("source_mission_id", ""))
+        if not product_id:
+            return {"success": False, "waiting_input": True,
+                    "message": "Select a verified product task or name the product in quotes."}
+        query = query.eq("id", product_id)
+    elif payload["title"]:
         query = query.eq("title", payload["title"])
     rows = query.order("created_at", desc=True).order("id").limit(2).execute().data or []
     if not rows:
@@ -102,6 +110,28 @@ def resolve_product(client: Any, owner_id: str, payload: dict[str, str]) -> dict
         return {"success": False, "waiting_input": True,
                 "message": "Name the product in quotes so I can select it in My Store."}
     return _snapshot(client, owner_id, rows[0])
+
+
+def _product_from_verified_mission(client: Any, owner_id: str, source_mission_id: str) -> str | None:
+    try:
+        mission_id = str(UUID(source_mission_id))
+    except ValueError:
+        return None
+    rows = client.table("missions").select("id,owner_id,status,result").eq("id", mission_id).eq(
+        "owner_id", owner_id
+    ).eq("status", "completed").limit(1).execute().data or []
+    for row in rows:
+        if row.get("id") != mission_id or row.get("owner_id") != owner_id or row.get("status") != "completed":
+            continue
+        report = (row.get("result") or {}).get("report") or {}
+        deliverable = report.get("deliverable") or {}
+        product_id = deliverable.get("product_id")
+        if report.get("outcome") == "VERIFIED" and deliverable.get("verification") == "OWNER_SCOPED_PRODUCT_READBACK":
+            try:
+                return str(UUID(product_id)) if isinstance(product_id, str) else None
+            except ValueError:
+                return None
+    return None
 
 
 def update_product_price(client: Any, owner_id: str, source: dict[str, Any], price: int) -> dict[str, Any]:

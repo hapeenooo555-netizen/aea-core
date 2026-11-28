@@ -231,7 +231,7 @@ def register_studio_tools(registry: ToolRegistry) -> None:
         ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection", "source_mission_id")),
         ("studio.revise_book", "Translate an e-book or improve one chapter of its source version",
          ("operation", "language", "chapter")),
-        ("studio.resolve_product", "Read an owned product and listing readiness", ("title", "selection")),
+        ("studio.resolve_product", "Read an owned product and listing readiness", ("title", "selection", "source_mission_id")),
         ("studio.update_product_price", "Update the verified private product draft price", ("price_tzs",)),
         ("studio.submit_product_listing", "Submit a ready owned product for Marketplace review", ()),
         ("studio.prepare_book_product", "Save a private product draft for the verified owner's e-book", ("price_tzs",)),
@@ -260,7 +260,7 @@ def register_studio_tools(registry: ToolRegistry) -> None:
 
 def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "") -> list[dict[str, Any]]:
     if intent["intent"] in {"inspect_product", "update_product_price", "submit_product_listing"}:
-        return product_plan(intent)
+        return product_plan(intent, source_mission_id)
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]

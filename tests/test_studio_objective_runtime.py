@@ -945,3 +945,113 @@ def test_price_action_without_an_amount_only_requests_the_amount(studio):
     assert result["status"] == "WAIT_FOR_HUMAN_INPUT"
     assert result["report"]["missing_inputs"] == ["price_tzs"]
     assert not result["report"]["executed_actions"]
+
+
+@pytest.mark.parametrize(("goal", "reference", "title", "accepted"), [
+    ('Would you send the item called "Warehouse Training" back for Marketplace review?', "named", "Warehouse Training", True),
+    ('Peleka bidhaa "Warehouse Training" tena kwa uhakiki wa Marketplace.', "named", "Warehouse Training", True),
+    ('Tafadhali forward "Warehouse Training" kwa ukaguzi wa Marketplace.', "named", "Warehouse Training", True),
+    ("Submit it for review again.", "context", "", True),
+    ('Do not submit "Warehouse Training" for Marketplace review.', "named", "Warehouse Training", False),
+    ('Tuma "Warehouse Training" kwa ukaguzi, bila kuidhinisha.', "named", "Warehouse Training", False),
+    ('Tell me how to send "Warehouse Training" for Marketplace review.', "named", "Warehouse Training", False),
+    ('Send "Warehouse Training" for Marketplace review.', "named", "Other product", False),
+    ('Send the latest product for Marketplace review.', "latest", "", False),
+])
+def test_grounded_semantic_submission(goal, reference, title, accepted):
+    from app.services.objective_semantics import SemanticObjective, grounded_intent
+
+    proposal = SemanticObjective(
+        operation="submit_product_listing", reference=reference, title=title,
+        title_evidence=title, action_evidence=goal, affirmative=True, extra_actions=False,
+    )
+    tools = {"studio.resolve_product", "studio.submit_product_listing"}
+    assert (grounded_intent(proposal, goal, tools) is not None) == accepted
+    assert grounded_intent(proposal, goal, tools - {"studio.submit_product_listing"}) is None
+
+
+def test_semantic_plan_recovers_with_same_interpretation(studio, monkeypatch):
+    from app.services import employee_vertical_slice
+    from app.services.objective_semantics import SemanticObjective
+
+    database, _ = studio
+    mission_id = str(uuid4())
+    owner = "book-owner"
+    goal = 'Submit my product called "Warehouse Training" for Marketplace review again.'
+    calls = []
+    steps = []
+    assert interpret_studio_goal(goal, {}, "en") is None
+
+    def classify(text, _tools):
+        calls.append(text)
+        return SemanticObjective(operation="submit_product_listing", reference="named",
+                                 title="Warehouse Training", title_evidence="Warehouse Training",
+                                 action_evidence=goal, affirmative=True, extra_actions=False)
+
+    def run_step(tool, payload, dependencies, **_):
+        steps.append(tool)
+        if tool == "studio.resolve_product":
+            assert payload["title"] == "Warehouse Training"
+            return {"success": True, "title": payload["title"], "verification": "OWNER_SCOPED_PRODUCT_READBACK"}
+        assert dependencies["resolve_product"]["title"] == "Warehouse Training"
+        if steps.count(tool) == 1:
+            return {"success": False, "retryable": True, "error": "temporary provider timeout"}
+        return {"success": True, "listing_status": "approved", "verification": "OWNER_SCOPED_PRODUCT_READBACK"}
+
+    monkeypatch.setattr(employee_vertical_slice, "interpret_semantically", classify)
+    monkeypatch.setattr(employee_vertical_slice, "execute_studio_step", run_step)
+    metadata = {"background_dispatch": True}
+    first = make_employee(owner, database).run(goal, mission_id=mission_id, metadata=metadata)
+    assert first["status"] == "RETRY", first
+    replay = make_employee(owner, database).run(goal, mission_id=mission_id, metadata=metadata)
+    assert replay["status"] == "COMPLETE", replay
+    assert replay["report"]["deliverable"]["listing_status"] == "approved"
+    assert steps == ["studio.resolve_product", "studio.submit_product_listing", "studio.submit_product_listing"]
+    assert calls == [goal]
+
+
+def test_semantic_provider_contract_cannot_return_tools_or_permissions(monkeypatch):
+    from app.services import objective_semantics
+    from app.services.llm_provider import GroqLLMProvider
+
+    class Provider(GroqLLMProvider):
+        def generate(self, prompt, _, **kwargs):
+            assert json.loads(prompt)["available_operations"] == ["inspect_product"]
+            assert kwargs["response_schema"]["additionalProperties"] is False
+            assert kwargs["request_timeout"] == 12 and kwargs["model_limit"] == 3
+            return {"success": True, "content": json.dumps({
+                "operation": "inspect_product", "reference": "unspecified", "title": "",
+                "title_evidence": "", "action_evidence": "Assess readiness",
+                "affirmative": True, "extra_actions": False, "requires_approval": False,
+            })}
+
+    monkeypatch.setattr(objective_semantics, "get_llm_provider", Provider)
+    assert objective_semantics.interpret_semantically("Assess readiness", {"studio.resolve_product"}) is None
+
+
+def test_contextual_product_uses_verified_owner_and_current_product_id(studio, monkeypatch):
+    from app.services.studio_product_actions import resolve_product
+
+    database, _ = studio
+    owner, product_id, mission_id = "book-owner", str(uuid4()), str(uuid4())
+    products = DraftDatabase()
+    products.rows = [
+        {"id": product_id, "owner_id": owner, "asset_id": str(uuid4()),
+         "title": "Renamed product", "price_amount": 2900, "status": "listed",
+         "completion_status": "finished", "marketplace_enabled": True, "updated_at": "now"},
+        {"id": str(uuid4()), "owner_id": owner, "title": "Original title", "status": "listed"},
+    ]
+    missions = DraftDatabase()
+    missions.rows = [{"id": mission_id, "owner_id": owner, "status": "completed", "result": {
+        "report": {"outcome": "VERIFIED", "deliverable": {
+            "product_id": product_id, "verification": "OWNER_SCOPED_PRODUCT_READBACK",
+        }},
+    }}]
+    tables = {"creator_products": products, "missions": missions, "creator_marketplace_listings": DraftDatabase()}
+    monkeypatch.setattr(database, "table", lambda name: DraftQuery(tables[name]))
+    payload = {"title": "", "selection": "context", "source_mission_id": mission_id}
+    assert resolve_product(database, owner, payload)["title"] == "Renamed product"
+    assert resolve_product(database, owner, payload)["product_id"] == product_id
+    assert resolve_product(database, "another-owner", payload)["waiting_input"]
+    missions.rows[0]["result"]["report"]["outcome"] = "PARTIAL"
+    assert resolve_product(database, owner, payload)["waiting_input"]

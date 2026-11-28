@@ -120,6 +120,9 @@ class GroqLLMProvider(BaseLLMProvider):
     def generate(
         self, prompt: str, system_prompt: str | None = None,
         *, response_schema: dict[str, Any] | None = None,
+        request_timeout: float | None = None,
+        completion_limit: int | None = None,
+        model_limit: int | None = None,
     ) -> dict[str, Any]:
         if not self.api_key:
             return self._error_response("Missing GROQ_API_KEY")
@@ -130,7 +133,8 @@ class GroqLLMProvider(BaseLLMProvider):
             return self._error_response("Groq SDK not available")
 
         try:
-            client = groq.Groq(api_key=self.api_key)
+            options = {} if request_timeout is None else {"timeout": request_timeout, "max_retries": 0}
+            client = groq.Groq(api_key=self.api_key, **options)
         except Exception as exc:
             logger.error("Groq client initialization failed (%s)", type(exc).__name__)
             return self._error_response("Groq client initialization failed")
@@ -143,7 +147,7 @@ class GroqLLMProvider(BaseLLMProvider):
         models = (self.model, *self.fallback_models)
         last_rate_limited_model: str | None = None
         last_invalid_json_model: str | None = None
-        for model in models:
+        for model in models[:model_limit]:
             response_format: dict[str, Any] = {"type": "json_object"}
             if response_schema is not None and model in GROQ_STRICT_SCHEMA_MODELS:
                 response_format = {
@@ -155,6 +159,7 @@ class GroqLLMProvider(BaseLLMProvider):
                     model=model,
                     messages=messages,
                     response_format=response_format,
+                    **({"max_completion_tokens": completion_limit} if completion_limit is not None else {}),
                 )
             except Exception as exc:
                 status_code = self._status_code(exc)
