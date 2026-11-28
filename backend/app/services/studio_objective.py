@@ -16,6 +16,7 @@ from .p1_7_contracts import ToolContract, sanitize_payload
 from .tool_registry import ToolRegistry
 from .studio_book_quality import book_quality_issues, requested_book_title
 from .studio_book_revision import revise_book_content
+from .studio_product_actions import product_intent, product_plan, resolve_product, submit_product_listing, update_product_price
 from .studio_promotion import draft_promotion, generate_promotion_image, has_other_actions, pin_image_available, promotion_goal
 
 STUDIO_GENERATION_LEASE_SECONDS = 600
@@ -154,6 +155,9 @@ def _interpret_saved_book(goal: str) -> dict[str, Any] | None:
 
 def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dict[str, Any] | None:
     """Extract a supported deliverable and topic from a direct English or Swahili request."""
+    commerce = product_intent(goal)
+    if commerce:
+        return commerce
     if promotion_goal(goal):
         if has_other_actions(goal):
             return {"intent": "studio_compound", "content_type": "ebook"}
@@ -218,12 +222,18 @@ def interpret_studio_goal(goal: str, inputs: dict[str, Any], locale: str) -> dic
 
 
 def register_studio_tools(registry: ToolRegistry) -> None:
-    write_tools = {"studio.save_draft", "studio.prepare_book_product", "studio.generate_promotion_image"}
+    write_tools = {
+        "studio.save_draft", "studio.prepare_book_product", "studio.generate_promotion_image",
+        "studio.update_product_price", "studio.submit_product_listing",
+    }
     for name, description, properties in (
         ("studio.open_saved_book", "Find and read back an authenticated owner's existing e-book", ("title", "selection")),
         ("studio.resolve_book_source", "Retrieve the exact owned source version of a readable e-book", ("title", "selection", "source_mission_id")),
         ("studio.revise_book", "Translate an e-book or improve one chapter of its source version",
          ("operation", "language", "chapter")),
+        ("studio.resolve_product", "Read an owned product and listing readiness", ("title", "selection")),
+        ("studio.update_product_price", "Update the verified private product draft price", ("price_tzs",)),
+        ("studio.submit_product_listing", "Submit a ready owned product for Marketplace review", ()),
         ("studio.prepare_book_product", "Save a private product draft for the verified owner's e-book", ("price_tzs",)),
         ("studio.verify_book_product", "Read back the owner-scoped private product and its pricing", ()),
         ("studio.draft_promotion", "Draft promotion copy grounded in a saved book and saved preferences", ("language",)),
@@ -249,6 +259,8 @@ def register_studio_tools(registry: ToolRegistry) -> None:
 
 
 def studio_plan(goal: str, intent: dict[str, Any], *, source_mission_id: str = "") -> list[dict[str, Any]]:
+    if intent["intent"] in {"inspect_product", "update_product_price", "submit_product_listing"}:
+        return product_plan(intent)
     if intent["intent"] == "open_saved_book":
         return [{"step_name": "open_saved_book", "tool_name": "studio.open_saved_book",
                  "input": {"selection": intent["selection"], "title": intent["title"]}}]
@@ -366,6 +378,12 @@ def execute_studio_step(
             if not operation_key:
                 return {"success": False, "error": "Image generation requires a durable operation key."}
             return generate_promotion_image(dependencies["draft_promotion"], owner_id, client, operation_key)
+        if tool == "studio.resolve_product":
+            return resolve_product(client, owner_id, payload)
+        if tool == "studio.update_product_price":
+            return update_product_price(client, owner_id, dependencies["resolve_product"], int(payload["price_tzs"]))
+        if tool == "studio.submit_product_listing":
+            return submit_product_listing(client, owner_id, dependencies["resolve_product"])
         if tool == "studio.prepare_book_product":
             from .studio_book_commerce import prepare_book_product
 

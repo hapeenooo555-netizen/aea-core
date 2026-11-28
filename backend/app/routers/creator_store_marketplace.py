@@ -273,6 +273,9 @@ def submit_marketplace_listing(
             "currency": product.get("currency") or "TZS",
         }).select("*").execute())
     except Exception as exc:
+        existing = _one(db, "creator_marketplace_listings", "id,status", product_id=str(product_id), owner_id=owner_id)
+        if existing and existing.get("status") in {"pending", "approved"}:
+            return {"success": True, "listing": existing, "notice": "The existing listing was recovered."}
         raise HTTPException(status_code=409, detail="Marketplace listing request could not be saved.") from exc
     if not rows:
         raise HTTPException(status_code=502, detail="Database did not confirm listing request.")
